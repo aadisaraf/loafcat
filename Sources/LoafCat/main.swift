@@ -38,7 +38,7 @@ final class CatController: NSObject, NSApplicationDelegate {
     private var view: CatView!
     private var rig: Rig!
     private var atlas: Atlas!
-    private var tray: NSStatusItem!   // module-scope lifetime, or the icon vanishes
+    private var tray: NSStatusItem?   // created once; see buildTray
 
     private var lastTick = CFAbsoluteTimeGetCurrent()
     private var displayTimer: Timer?
@@ -105,6 +105,8 @@ final class CatController: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless()
 
         buildTray()
+        MainMenu.install(target: self, settings: #selector(openSettings), quit: #selector(quit))
+        DockPresence.apply()
         lastKeyCount = InputTelemetry.keyCount()
         lastScrollCount = InputTelemetry.scrollCount()
         registerModules()
@@ -118,10 +120,14 @@ final class CatController: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common)
         displayTimer = t
 
-        // `--settings` opens the window straight away. An accessory app's only
-        // affordance is a menu bar icon, so having a way to reach settings that
-        // does not involve finding that icon is worth one line.
-        if CommandLine.arguments.contains("--settings") { openSettings() }
+        // `--settings` opens the window straight away, and so does the very first
+        // launch. Starting an accessory app looks like nothing happening: no Dock
+        // bounce, no window, just one more small icon in a menu bar that already has
+        // fifteen. Showing settings once is how the first run says "I am running,
+        // here is where I live, here is how to turn me off."
+        let firstRun = !UserDefaults.standard.bool(forKey: "hasLaunched")
+        UserDefaults.standard.set(true, forKey: "hasLaunched")
+        if firstRun || CommandLine.arguments.contains("--settings") { openSettings() }
 
         print("""
         loafcat running
@@ -152,14 +158,35 @@ final class CatController: NSObject, NSApplicationDelegate {
     // loader resolve exactly the same paths this does.
     private static func themeDir(_ name: String) -> URL { Assets.themeDir(name) }
 
+    /// Creates the menu bar item. Exactly once, for the life of the process.
+    ///
+    /// Asking `NSStatusBar` for a second item and dropping the reference to the
+    /// first does NOT swap them in place: the old item is destroyed and the new one
+    /// is appended at the end of the bar. On a full menu bar -- and a notched
+    /// display has far less room than it looks -- the re-added item lands past the
+    /// edge and never comes back. That is why the cat kept vanishing after a theme
+    /// or size change: `reload()` used to rebuild the whole item, when all it
+    /// actually needed was a fresh menu.
     private func buildTray() {
-        tray = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        guard tray == nil else { return rebuildMenu() }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Lets macOS remember where the user dragged it, across launches.
+        item.autosaveName = "dev.loafcat.status"
+        item.isVisible = true
         if let glyph = Branding.trayImage() {
-            tray.button?.image = glyph
-            tray.button?.title = ""
+            item.button?.image = glyph
+            item.button?.title = ""
         } else {
-            tray.button?.title = "🐈"   // asset missing; a visible fallback beats none
+            item.button?.title = "🐈"   // asset missing; a visible fallback beats none
         }
+        tray = item
+        rebuildMenu()
+    }
+
+    /// Rebuilds only the menu. Safe to call as often as needed — the item itself,
+    /// and therefore its position in the bar, is untouched.
+    private func rebuildMenu() {
+        guard let tray else { return }
         // Quick actions only. Everything configurable lives in Settings -- a value
         // reachable from two places is a value that will eventually disagree with
         // itself, and a nested checkmark submenu was never a good way to pick a
@@ -192,6 +219,14 @@ final class CatController: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.show(host: self)
     }
 
+    /// Clicking the Dock icon, or opening the app again while it is already
+    /// running. Without this, launching loafcat a second time does nothing at all
+    /// and reads as the app being broken.
+    func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        openSettings()
+        return true
+    }
+
     @objc private func centre() {
         let vf = NSScreen.main!.visibleFrame
         let size = CatView.panelSize(atlas: atlas, scale: renderScale)
@@ -216,7 +251,7 @@ final class CatController: NSObject, NSApplicationDelegate {
                    width: size.width, height: size.height),
             display: true)
         wellness?.rebind(view: view)
-        buildTray()
+        rebuildMenu()   // NOT buildTray: replacing the status item loses its place
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
