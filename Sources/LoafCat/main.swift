@@ -133,6 +133,7 @@ final class CatController: NSObject, NSApplicationDelegate {
         modules.register(TypingModule())
         modules.register(HuntModule())
         modules.register(PettingModule())
+        modules.register(ScrollModule())
     }
 
     /// Assets live next to the executable in a packaged app, and at the repo root
