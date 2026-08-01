@@ -285,6 +285,8 @@ OVERLAY_G = {
     # two frames read as a twinkle rather than a blink.
     "spark_l": (6, 6),
     "spark_r": (43, 7),
+    "spark_l2": (13, 17),
+    "spark_r2": (36, 19),
     # Sweat drop, top-right. Reads as "oh no" without needing a face change.
     "sad": (42, 7),
     # Exclamation mark for "needs your permission". Deliberately the only red
@@ -346,6 +348,10 @@ def build_overlays():
         img = new_layer()
         star(img, *OVERLAY_G["spark_l"], arm=al, color="heart")
         star(img, *OVERLAY_G["spark_r"], arm=ar, color="heart")
+        # A second, smaller pair lower down, alternating opposite the first so the
+        # burst twinkles rather than pulsing as one block.
+        star(img, *OVERLAY_G["spark_l2"], arm=ar, color="accent")
+        star(img, *OVERLAY_G["spark_r2"], arm=al, color="accent")
         add(f"spark_{i}", img, follow="head")
 
     # --- errored: one sweat drop -----------------------------------------
@@ -402,7 +408,7 @@ def build_overlays():
 # able to restyle the whole reaction set without a rebuild.
 OVERLAY_ANIMS = {
     "think":      {"frames": ["think_1", "think_2", "think_3"], "fps": 2.5, "loop": True},
-    "celebrate":  {"frames": ["spark_1", "spark_2"], "fps": 6.0, "loop": True},
+    "celebrate":  {"frames": ["spark_1", "spark_2"], "fps": 9.0, "loop": True},
     "error":      {"frames": ["sad_1"], "fps": 1.0, "loop": True},
     "permission": {"frames": ["alert_1", "alert_2"], "fps": 3.0, "loop": True},
 }
@@ -418,18 +424,27 @@ OVERLAY_ANIMS = {
 # ---------------------------------------------------------------------------
 ANIM = {
     "hop": {
-        "duration": 2.2,
+        # Three bounces, each roughly 55% the height of the last, over a deep
+        # anticipation crouch. The crouch is what sells it: a jump that starts from
+        # a standing pose reads as the sprite being teleported upward, whereas one
+        # that compresses first reads as the cat pushing off. Peak is -38 on a 48px
+        # canvas -- most of a body height -- and well inside the 43px margin.
+        "duration": 2.6,
         "loop": False,
         "offset": [
-            [0.00, 0, 0], [0.10, 0, -10], [0.22, 0, -20], [0.34, 0, -26],
-            [0.46, 0, -20], [0.58, 0, -8], [0.66, 0, 0], [0.74, 0, 3],
-            [0.86, 0, -9], [1.00, 0, -14], [1.16, 0, -6], [1.28, 0, 0],
-            [2.20, 0, 0],
+            [0.00, 0, 0], [0.12, 0, 2],
+            [0.20, 0, -12], [0.30, 0, -28], [0.40, 0, -38],
+            [0.50, 0, -34], [0.60, 0, -20], [0.70, 0, -4], [0.76, 0, 2],
+            [0.86, 0, -12], [0.98, 0, -21], [1.10, 0, -12], [1.20, 0, 1],
+            [1.32, 0, -6], [1.42, 0, -11], [1.52, 0, -5], [1.60, 0, 0],
+            [2.60, 0, 0],
         ],
         "squash": [
-            [0.00, 0.94], [0.08, 1.10], [0.34, 1.02], [0.62, 1.06], [0.70, 0.90],
-            [0.80, 1.06], [1.00, 1.02], [1.24, 0.92], [1.34, 1.03], [1.50, 1.00],
-            [2.20, 1.00],
+            # Crouch, launch, stretch thin at the top of the arc, splat on landing.
+            [0.00, 1.00], [0.12, 0.86], [0.20, 1.16], [0.40, 1.10],
+            [0.62, 1.04], [0.74, 0.88], [0.82, 1.12], [0.98, 1.06],
+            [1.16, 0.92], [1.26, 1.08], [1.44, 1.03], [1.56, 0.96],
+            [1.64, 1.02], [1.80, 1.00], [2.60, 1.00],
         ],
     },
     # Error: sink, hold, then ease part-way back. The hold is what makes it read
