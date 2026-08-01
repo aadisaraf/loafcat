@@ -183,53 +183,15 @@ final class WellnessSuite {
 
     // MARK: - menu
 
-    /// Appends a "Wellness" submenu. Follows the same shape as the existing Size and
-    /// Cat menus: represented objects carry the value, checkmarks show the current one.
+    /// Quick actions only — the two things worth reaching without opening a window.
+    ///
+    /// Every interval, toggle and text field moved to Settings. A setting reachable
+    /// from two places is a setting that will eventually disagree with itself, and
+    /// nested checkmark submenus were never a good way to pick a number anyway.
     func addMenuItems(to menu: NSMenu) {
-        let root = NSMenuItem(title: "Wellness", action: nil, keyEquivalent: "")
-        let sub = NSMenu()
-
-        sub.addItem(intervalMenu(
-            title: "Stretch break", options: WellnessSettings.stretchOptions,
-            current: bus.settings.stretchMinutes, action: #selector(setStretch(_:))))
-        sub.addItem(intervalMenu(
-            title: "Hydration", options: WellnessSettings.hydrationOptions,
-            current: bus.settings.hydrationMinutes, action: #selector(setHydration(_:))))
-
-        let pom = NSMenuItem(title: "Pomodoro", action: nil, keyEquivalent: "")
-        let pomMenu = NSMenu()
-        add(to: pomMenu, title: pomodoro.isRunning ? "Pause" : "Start",
+        add(to: menu, title: "Stretch now", action: #selector(stretchNow))
+        add(to: menu, title: pomodoro.isRunning ? "Pause pomodoro" : "Start pomodoro",
             action: #selector(togglePomodoro))
-        add(to: pomMenu, title: "Reset", action: #selector(resetPomodoro))
-        pomMenu.addItem(.separator())
-        pomMenu.addItem(intervalMenu(
-            title: "Focus", options: WellnessSettings.focusOptions,
-            current: bus.settings.focusMinutes, action: #selector(setFocus(_:))))
-        pomMenu.addItem(intervalMenu(
-            title: "Break", options: WellnessSettings.breakOptions,
-            current: bus.settings.breakMinutes, action: #selector(setBreak(_:))))
-        pomMenu.addItem(intervalMenu(
-            title: "Rounds", options: WellnessSettings.roundOptions,
-            current: bus.settings.rounds, action: #selector(setRounds(_:)), unit: ""))
-        pom.submenu = pomMenu
-        sub.addItem(pom)
-
-        sub.addItem(.separator())
-        add(to: sub, title: "Stretch now", action: #selector(stretchNow))
-        add(to: sub, title: "Set reminder…", action: #selector(setReminder))
-        if bus.settings.reminderEnabled && !bus.settings.reminderTime.isEmpty {
-            add(to: sub, title: "Clear reminder (\(bus.settings.reminderTime))",
-                action: #selector(clearReminder))
-        }
-        add(to: sub, title: "Pin a note…", action: #selector(pinNote))
-        if !bus.settings.pinnedNote.isEmpty {
-            add(to: sub, title: "Unpin note", action: #selector(unpinNote))
-        }
-        let sound = add(to: sub, title: "Sound with reminders", action: #selector(toggleSound))
-        sound.state = bus.settings.soundEnabled ? .on : .off
-
-        root.submenu = sub
-        menu.addItem(root)
     }
 
     @discardableResult
@@ -240,58 +202,43 @@ final class WellnessSuite {
         return mi
     }
 
-    private func intervalMenu(title: String, options: [Int], current: Int,
-                              action: Selector, unit: String = " min") -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let m = NSMenu()
-        for v in options {
-            let mi = NSMenuItem(
-                title: v == 0 ? "Off" : "\(v)\(unit)", action: action, keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = v
-            mi.state = (v == current) ? .on : .off
-            m.addItem(mi)
-        }
-        item.submenu = m
-        // Show the current value on the parent row, so it reads without opening.
-        item.title = current == 0 ? "\(title): Off" : "\(title): \(current)\(unit)"
-        return item
-    }
+    // MARK: - the surface Settings drives
 
-    private func value(_ sender: Any?) -> Int? { (sender as? NSMenuItem)?.representedObject as? Int }
+    var settings: WellnessSettings { bus.settings }
+    var pomodoroRunning: Bool { pomodoro.isRunning }
+    var reminderTime: String { bus.settings.reminderTime }
 
-    @objc private func setStretch(_ s: NSMenuItem) {
-        guard let v = value(s) else { return }
-        bus.settings.stretchMinutes = v
+    /// Re-arms every timer from whatever the settings now say.
+    ///
+    /// Deliberately re-arms all three rather than taking a "which one changed"
+    /// argument: it costs nothing, and it means the settings window never has to
+    /// know which module owns which interval.
+    func settingsChanged() {
         stretch.settingsChanged()
-    }
-    @objc private func setHydration(_ s: NSMenuItem) {
-        guard let v = value(s) else { return }
-        bus.settings.hydrationMinutes = v
         hydration.settingsChanged()
-    }
-    @objc private func setFocus(_ s: NSMenuItem) {
-        guard let v = value(s) else { return }
-        bus.settings.focusMinutes = v
-        pomodoro.settingsChanged()
-    }
-    @objc private func setBreak(_ s: NSMenuItem) {
-        guard let v = value(s) else { return }
-        bus.settings.breakMinutes = v
-        pomodoro.settingsChanged()
-    }
-    @objc private func setRounds(_ s: NSMenuItem) {
-        guard let v = value(s) else { return }
-        bus.settings.rounds = v
         pomodoro.settingsChanged()
     }
 
-    @objc private func stretchNow() { stretch.trigger(reason: "menu") }
-    @objc private func togglePomodoro() { pomodoro.isRunning ? pomodoro.pause() : pomodoro.start() }
-    @objc private func resetPomodoro() { pomodoro.reset() }
-    @objc private func setReminder() { messages.promptForReminder() }
-    @objc private func clearReminder() { messages.clearReminder() }
-    @objc private func pinNote() { messages.promptForNote() }
-    @objc private func unpinNote() { messages.pin(nil) }
-    @objc private func toggleSound() { bus.settings.soundEnabled.toggle() }
+    /// Sets the daily reminder, normalising the time the same way the old dialog
+    /// did. Returns false when the text is not a time, so the caller can say so
+    /// rather than silently storing something that will never fire.
+    @discardableResult
+    func setReminder(time: String, text: String) -> Bool {
+        guard let (h, m) = MessageModule.parse(time) else { return false }
+        bus.settings.reminderTime = String(format: "%02d:%02d", h, m)
+        bus.settings.reminderText = text
+        bus.settings.reminderEnabled = true
+        return true
+    }
+
+    func pinNote(_ text: String?) {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        bus.settings.pinnedNote = trimmed ?? ""
+        messages.pin((trimmed?.isEmpty ?? true) ? nil : trimmed)
+    }
+
+    @objc func stretchNow() { stretch.trigger(reason: "menu") }
+    @objc func togglePomodoro() { pomodoro.isRunning ? pomodoro.pause() : pomodoro.start() }
+    @objc func resetPomodoro() { pomodoro.reset() }
+    @objc func clearReminder() { messages.clearReminder() }
 }

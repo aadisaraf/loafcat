@@ -44,7 +44,15 @@ on every theme or scale change while modules live for the whole session, so a
 captured reference is a dead one the first time somebody picks another cat. Publish
 through `CatStage.shared` instead: per-part offsets, heat, overlay instances, and a
 request for a keyframed animation. Read your tuning from `CatStage.shared.atlas` via
-`AtlasTuned`, which re-reads on a theme switch.
+`AtlasTuned`, which re-reads on a theme switch. The settings window is held to the
+same rule, which is why it reaches the app through the `SettingsHost` protocol.
+
+**3. A new option goes in Settings; the menu bar is for actions.** Add a control to
+the relevant `SettingsPane` (or a new pane), have the pane read and write it in
+`refresh()`, and expose whatever the module needs to apply it. Menu bar items are
+for things you *do* — stretch now, centre, quit — not for things you *set*. An
+option reachable from two places is an option that will eventually disagree with
+itself.
 
 ```
 Sources/LoafCat/
@@ -53,6 +61,8 @@ Sources/LoafCat/
   CatStage.swift    the mailbox modules publish through, and the keyframe clock
   Rig.swift         per-part transforms, springs, cursor tracking
   CatView.swift     CALayer compositor, hit mask
+  SettingsWindow.swift  every user-facing option, one pane per area
+  Branding.swift    asset paths, the icon, theme thumbnails
   Modules/*.swift   one file per feature
 tools/generate_art.py   the entire art pipeline
 tools/generate_icon.py  app icon + menu bar glyph, composited from the mono parts

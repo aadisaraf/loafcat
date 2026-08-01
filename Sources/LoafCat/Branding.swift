@@ -77,3 +77,45 @@ enum Branding {
             ?? "dev"
     }
 }
+
+/// Renders a theme's default pose, for the picker in Settings.
+///
+/// Composited from the theme's own atlas rather than from the `preview.png` the
+/// generator writes: the preview is a contact sheet on two backgrounds, and a
+/// thumbnail has to be the cat alone on transparency. Doing it from the atlas also
+/// means a community theme dropped into `assets/themes/` gets a correct thumbnail
+/// with nothing to generate.
+enum ThemeThumbnail {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(theme: String, scale: CGFloat) -> NSImage? {
+        let key = "\(theme)@\(Int(scale))"
+        if let hit = cache[key] { return hit }
+        guard let atlas = try? Atlas.load(from: Assets.themeDir(theme)) else { return nil }
+
+        let side = Int(atlas.canvas * scale)
+        guard let ctx = CGContext(
+            data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        // Nearest, always. Any smoothing here turns the outline the art pipeline
+        // exists to keep crisp into a grey haze.
+        ctx.interpolationQuality = .none
+
+        for name in atlas.order {
+            // Lids are the blink frame, not the default pose.
+            guard !name.hasPrefix("lid_"), let part = atlas.parts[name] else { continue }
+            // The atlas measures from the top-left, y-down; CGContext is y-up.
+            let y = atlas.canvas - part.origin.y - part.size.height
+            ctx.draw(part.image, in: CGRect(
+                x: part.origin.x * scale, y: y * scale,
+                width: part.size.width * scale, height: part.size.height * scale))
+        }
+
+        guard let cg = ctx.makeImage() else { return nil }
+        let image = NSImage(cgImage: cg, size: NSSize(width: side, height: side))
+        cache[key] = image
+        return image
+    }
+}
