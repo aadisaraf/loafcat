@@ -50,8 +50,22 @@
       "w": 16,
       "h": 17
     },
+    "tail_hot": {
+      "file": "parts/tail_hot.png",
+      "x": 30,
+      "y": 30,
+      "w": 16,
+      "h": 17
+    },
     "body": {
       "file": "parts/body.png",
+      "x": 12,
+      "y": 27,
+      "w": 24,
+      "h": 18
+    },
+    "body_hot": {
+      "file": "parts/body_hot.png",
       "x": 12,
       "y": 27,
       "w": 24,
@@ -64,8 +78,22 @@
       "w": 10,
       "h": 8
     },
+    "paw_l_hot": {
+      "file": "parts/paw_l_hot.png",
+      "x": 13,
+      "y": 39,
+      "w": 10,
+      "h": 8
+    },
     "paw_r": {
       "file": "parts/paw_r.png",
+      "x": 25,
+      "y": 39,
+      "w": 10,
+      "h": 8
+    },
+    "paw_r_hot": {
+      "file": "parts/paw_r_hot.png",
       "x": 25,
       "y": 39,
       "w": 10,
@@ -78,6 +106,13 @@
       "w": 15,
       "h": 19
     },
+    "ear_l_hot": {
+      "file": "parts/ear_l_hot.png",
+      "x": 10,
+      "y": 0,
+      "w": 15,
+      "h": 19
+    },
     "ear_r": {
       "file": "parts/ear_r.png",
       "x": 24,
@@ -85,8 +120,22 @@
       "w": 15,
       "h": 19
     },
+    "ear_r_hot": {
+      "file": "parts/ear_r_hot.png",
+      "x": 24,
+      "y": 0,
+      "w": 15,
+      "h": 19
+    },
     "head": {
       "file": "parts/head.png",
+      "x": 9,
+      "y": 8,
+      "w": 30,
+      "h": 22
+    },
+    "head_hot": {
+      "file": "parts/head_hot.png",
       "x": 9,
       "y": 8,
       "w": 30,
@@ -140,6 +189,96 @@
       "y": 25,
       "w": 24,
       "h": 6
+    },
+    "steam": {
+      "file": "parts/steam.png",
+      "x": 39,
+      "y": 14,
+      "w": 7,
+      "h": 9
+    },
+    "heart": {
+      "file": "parts/heart.png",
+      "x": 20,
+      "y": 13,
+      "w": 9,
+      "h": 8
+    }
+  },
+  "behaviour": {
+    "hunt.accel_gain_per_frame": 9e-07,
+    "hunt.accel_min": 12000.0,
+    "hunt.attack": 0.12,
+    "hunt.body_lean": 1.2,
+    "hunt.crouch": 1.1,
+    "hunt.decay_per_frame": 0.82,
+    "hunt.lean": 2.6,
+    "hunt.paw_reach": 1.6,
+    "hunt.recover": 0.4,
+    "hunt.reset": 0.35,
+    "hunt.reverse_bonus": 0.62,
+    "hunt.reverse_dot": -0.28,
+    "hunt.reverse_lag": 0.06,
+    "hunt.reverse_refractory": 0.09,
+    "hunt.reverse_speed": 520.0,
+    "hunt.speed_gain_per_frame": 3.4e-05,
+    "hunt.speed_min": 300.0,
+    "hunt.squash": 0.93,
+    "hunt.trigger": 1.0,
+    "hunt.wiggle_amp": 0.7,
+    "hunt.wiggle_hz": 5.5,
+    "overheat.curve": 1.5,
+    "overheat.ease_per_frame": 0.1,
+    "overheat.kps_max": 14.0,
+    "overheat.kps_min": 4.0,
+    "overheat.state_at": 0.55,
+    "overheat.steam_at": 0.3,
+    "overheat.steam_period": 0.85,
+    "overheat.steam_rise": 11.0,
+    "pet.attack": 0.14,
+    "pet.ellipse_scale": 1.0,
+    "pet.heart_drift": 2.5,
+    "pet.heart_period": 0.55,
+    "pet.heart_rise": 12.0,
+    "pet.lean": 2.4,
+    "pet.leave_delay": 0.26,
+    "pet.move_min": 14.0,
+    "pet.purr_amp": 0.7,
+    "pet.purr_hz": 9.0,
+    "pet.squash": 0.97,
+    "pet.stop_delay": 0.42,
+    "scroll.attack": 0.06,
+    "scroll.bob": 2.0,
+    "scroll.bob_hz": 4.5,
+    "scroll.decay": 0.18,
+    "scroll.hold": 0.52,
+    "scroll.paw": 1.6,
+    "typing.attack": 0.1,
+    "typing.body_bob": 0.8,
+    "typing.burst_keys": 5.0,
+    "typing.burst_window": 2.0,
+    "typing.decay": 0.16,
+    "typing.paw_lift": 2.4,
+    "typing.paw_period": 0.17,
+    "typing.paw_reach": 1.4,
+    "typing.release_delay": 0.18,
+    "typing.squash": 0.03
+  },
+  "hot": [
+    "tail",
+    "body",
+    "paw_l",
+    "paw_r",
+    "ear_l",
+    "ear_r",
+    "head"
+  ],
+  "overlays": {
+    "steam": {
+      "slots": 3
+    },
+    "heart": {
+      "slots": 3
     }
   },
   "pivots": {

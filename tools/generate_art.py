@@ -54,6 +54,102 @@ PALETTE = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Behaviour -- the tuning table for every reaction, shipped inside cat.json.
+#
+# It lives here for the same reason the geometry does: rule 1 of the architecture is
+# that no behaviour constant is typed into a .swift file. Keeping the numbers in the
+# atlas means a theme can ship a lazier or a twitchier cat without a rebuild, a
+# tuning pass is a JSON diff rather than a recompile, and a future Windows port reads
+# exactly the same table.
+#
+# Units are seconds, LOGICAL pixels (the 48px canvas, not screen points) and logical
+# px/sec. Anything named `*_per_frame` is quoted at a nominal 60fps and normalised by
+# dt at runtime, so the 120Hz tick behaves identically.
+# ---------------------------------------------------------------------------
+BEHAVIOUR = {
+    # --- kneading -----------------------------------------------------------
+    # The gate: react only once `burst_keys` land inside `burst_window`. Since the
+    # runtime hands modules a sliding-window RATE, that condition is exactly
+    # kps >= burst_keys / burst_window -- an isolated keypress cannot reach it.
+    "typing.burst_keys": 5.0,
+    "typing.burst_window": 2.0,
+    "typing.release_delay": 0.18,   # back to idle this long after the last key
+    "typing.paw_period": 0.17,      # one paw stroke; paws alternate each stroke
+    "typing.paw_lift": 2.4,
+    "typing.paw_reach": 1.4,
+    "typing.body_bob": 0.8,
+    "typing.squash": 0.03,
+    "typing.attack": 0.10,          # seconds to reach full amplitude
+    "typing.decay": 0.16,           # seconds to fall back out of it
+
+    # --- overheat -----------------------------------------------------------
+    # A continuous curve, never a binary state. Zero below kps_min so ordinary
+    # typing never reddens the cat; 1.0 at kps_max. The exponent front-loads the
+    # curve's flat part into the middle of the range, so the tint only becomes
+    # obvious when the typing is genuinely frantic.
+    "overheat.kps_min": 4.0,
+    "overheat.kps_max": 14.0,
+    "overheat.curve": 1.5,
+    "overheat.ease_per_frame": 0.10,
+    "overheat.state_at": 0.55,      # heat above which overheat outranks kneading
+    "overheat.steam_at": 0.30,
+    "overheat.steam_period": 0.85,
+    "overheat.steam_rise": 11.0,
+
+    # --- hunting ------------------------------------------------------------
+    # An energy accumulator that rewards REVERSALS, not speed. A straight sweep
+    # only ever earns the speed term, whose ceiling (gain * excess / (1 - decay))
+    # is deliberately below the trigger; a wiggle earns reversal bonuses on top and
+    # crosses it within two or three direction changes.
+    "hunt.decay_per_frame": 0.82,
+    "hunt.speed_min": 300.0,
+    "hunt.speed_gain_per_frame": 0.000034,
+    "hunt.reverse_lag": 0.06,       # compare against velocity this long ago
+    "hunt.reverse_dot": -0.28,      # cos of ~106 degrees
+    "hunt.reverse_speed": 520.0,
+    "hunt.reverse_bonus": 0.62,
+    "hunt.reverse_refractory": 0.09,
+    "hunt.accel_min": 12000.0,
+    "hunt.accel_gain_per_frame": 0.0000009,
+    "hunt.trigger": 1.0,
+    "hunt.reset": 0.35,             # not 0 -- keep stalking cheap to re-trigger
+    "hunt.crouch": 1.1,
+    "hunt.recover": 0.4,
+    "hunt.attack": 0.12,
+    "hunt.squash": 0.93,
+    "hunt.lean": 2.6,
+    "hunt.body_lean": 1.2,
+    "hunt.paw_reach": 1.6,
+    "hunt.wiggle_hz": 5.5,          # the haunch-wiggle before a pounce
+    "hunt.wiggle_amp": 0.7,
+
+    # --- petting ------------------------------------------------------------
+    # The hit region is an ellipse over the head, sized from the head part's own
+    # rectangle in this atlas rather than from a number typed into Swift.
+    "pet.ellipse_scale": 1.0,
+    "pet.move_min": 14.0,           # logical px/sec; a parked cursor is not petting
+    "pet.stop_delay": 0.42,
+    "pet.leave_delay": 0.26,
+    "pet.lean": 2.4,
+    "pet.purr_hz": 9.0,
+    "pet.purr_amp": 0.7,
+    "pet.squash": 0.97,
+    "pet.attack": 0.14,
+    "pet.heart_period": 0.55,
+    "pet.heart_rise": 12.0,
+    "pet.heart_drift": 2.5,
+
+    # --- scrolling ----------------------------------------------------------
+    "scroll.hold": 0.52,
+    "scroll.bob": 2.0,
+    "scroll.bob_hz": 4.5,
+    "scroll.paw": 1.6,
+    "scroll.attack": 0.06,
+    "scroll.decay": 0.18,
+}
+
+
 THEMES = {
     "cream": {"palette": {}},   # the default defined in PALETTE above
 
@@ -121,6 +217,10 @@ def apply_theme(name):
         PALETTE[k] = v
     for k, v in t.get("geometry", {}).items():
         G[k] = v
+    # A theme may retune the cat as well as recolour it -- a big-eyed mono cat
+    # arguably wants a wider petting ellipse than a shaded one.
+    for k, v in t.get("behaviour", {}).items():
+        BEHAVIOUR[k] = v
     global THEME_CFG
     THEME_CFG = t
     WHITE_PARTS = t.get("white_parts", set())
@@ -412,8 +512,79 @@ ORDER = [
     "face",
 ]
 
+# ---------------------------------------------------------------------------
+# Overheat: a palette remap, not a second set of drawings.
+#
+# The palette was locked with `hot`/`hot_sh` reserved for exactly this, and the
+# remap is why the state costs no new art: we re-run the SAME generator with the
+# coat keys pointed at the hot ones, so every hot part is pixel-for-pixel its base
+# part with different ink. Because only colours change, the alpha -- and therefore
+# the crop box -- is identical, which is what lets the runtime cross-fade the two
+# images as one stationary layer pair.
+#
+# `coat_hi` maps to `hot` rather than to a third red: adding a `hot_hi` would take
+# the locked palette to 17 colours, and a flushed cat losing its key-lit rim is the
+# correct read anyway.
+# ---------------------------------------------------------------------------
+HOT_REMAP = {"coat_hi": "hot", "coat": "hot", "coat_sh": "hot_sh"}
 
-def crop_and_write(parts):
+# Sprites that are not part of the cat's body: they appear above it, in numbers,
+# and move independently. Kept out of ORDER so they never enter the draw stack or
+# the click-through mask. `slots` is how many may be on screen at once, which is
+# how many layers the view preallocates -- overlays must never allocate per frame.
+OVERLAYS = {"steam": 3, "heart": 3}
+
+
+def build_hot_parts():
+    """Re-runs the generator with the coat keys remapped to the hot ones."""
+    saved = {k: PALETTE[k] for k in HOT_REMAP}
+    for k, v in HOT_REMAP.items():
+        PALETTE[k] = PALETTE[v]
+    try:
+        return build_parts()
+    finally:
+        PALETTE.update(saved)
+
+
+def build_overlay_parts():
+    """Steam and hearts. Both are drawn INSIDE the 48px canvas on purpose.
+
+    The panel is exactly one canvas square, so anything a module animates outside
+    it is clipped by the window server and simply never appears. The anchors below
+    are therefore chosen with headroom: steam beside the head (the ears already own
+    the space directly above it) and hearts on the brow, each with ~11px of clear
+    canvas to rise into.
+    """
+    out = {}
+
+    # steam: three puffs of falling size, curling up and to the right
+    img = new_layer()
+    for cx, cy, r in ((42, 20, 2.4), (43.4, 17.6, 1.7), (41.4, 16.0, 1.2)):
+        fill_spans(img, disc_spans(cx, cy, r), "accent")
+    outline(img)
+    out["steam"] = img
+
+    # heart: the classic 7x6 pixel heart, outlined like every other part
+    img = new_layer()
+    rows = [
+        ".XX.XX.",
+        "XXXXXXX",
+        "XXXXXXX",
+        ".XXXXX.",
+        "..XXX..",
+        "...X...",
+    ]
+    for dy, row in enumerate(rows):
+        for dx, ch in enumerate(row):
+            if ch == "X":
+                px(img, 21 + dx, 14 + dy, "heart")
+    outline(img)
+    out["heart"] = img
+
+    return out
+
+
+def crop_and_write(parts, hot_parts=None, overlay_parts=None):
     """Writes tight-cropped PNGs plus the atlas.
 
     Cropping keeps the atlas small, and the recorded offset is what lets the runtime
@@ -425,20 +596,40 @@ def crop_and_write(parts):
         "palette": {k: "#%02X%02X%02X%02X" % v for k, v in PALETTE.items()},
         "order": [n for n in ORDER if n not in HIDDEN],
         "parts": {},
+        "behaviour": dict(sorted(BEHAVIOUR.items())),
     }
-    for name in [n for n in ORDER if n not in HIDDEN]:
-        img = parts[name]
-        bbox = img.getbbox()
-        if bbox is None:
-            continue
-        cropped = img.crop(bbox)
-        path = os.path.join(PARTS, f"{name}.png")
-        cropped.save(path)
+
+    def write(name, img, bbox=None):
+        """Writes one part. An explicit bbox pins a variant to its base's grid."""
+        box = bbox or img.getbbox()
+        if box is None:
+            return None
+        img.crop(box).save(os.path.join(PARTS, f"{name}.png"))
         atlas["parts"][name] = {
             "file": f"parts/{name}.png",
-            "x": bbox[0], "y": bbox[1],
-            "w": bbox[2] - bbox[0], "h": bbox[3] - bbox[1],
+            "x": box[0], "y": box[1],
+            "w": box[2] - box[0], "h": box[3] - box[1],
         }
+        return box
+
+    for name in [n for n in ORDER if n not in HIDDEN]:
+        bbox = write(name, parts[name])
+        if bbox is None:
+            continue
+        # Overheat variant, if the remap actually changed this part. Cropped with
+        # the BASE part's box, not its own, so the two images are the same size at
+        # the same origin and the cross-fade cannot shift a pixel.
+        hot = (hot_parts or {}).get(name)
+        if hot is not None and hot.tobytes() != parts[name].tobytes():
+            write(f"{name}_hot", hot, bbox)
+            atlas.setdefault("hot", []).append(name)
+
+    atlas["overlays"] = {}
+    for name, slots in OVERLAYS.items():
+        img = (overlay_parts or {}).get(name)
+        if img is None or write(name, img) is None:
+            continue
+        atlas["overlays"][name] = {"slots": slots}
 
     # Pivots: the point each part rotates/scales about. Named, because a magic
     # number in the runtime is unreadable and a wrong pivot is invisible in a
@@ -487,7 +678,7 @@ def main():
     apply_theme(theme)
     print(f"theme: {theme}")
     parts = build_parts()
-    atlas = crop_and_write(parts)
+    atlas = crop_and_write(parts, build_hot_parts(), build_overlay_parts())
 
     # Contact sheet: the default pose at 1x/2x/4x/8x, on light and dark, plus the
     # silhouette. These are the readability tests -- if the cat fails any of them
@@ -518,7 +709,13 @@ def main():
     for n in atlas["order"]:
         if n in atlas["parts"]:
             p = atlas["parts"][n]
-            print(f"  {n:<10} {p['w']:>2}x{p['h']:<2} at ({p['x']:>2},{p['y']:>2})")
+            hot = " +hot" if n in atlas.get("hot", []) else ""
+            print(f"  {n:<10} {p['w']:>2}x{p['h']:<2} at ({p['x']:>2},{p['y']:>2}){hot}")
+    for n, cfg in atlas["overlays"].items():
+        p = atlas["parts"][n]
+        print(f"  {n:<10} {p['w']:>2}x{p['h']:<2} at ({p['x']:>2},{p['y']:>2})"
+              f"  overlay x{cfg['slots']}")
+    print(f"  behaviour  {len(atlas['behaviour'])} tuning constants")
 
 
 if __name__ == "__main__":
