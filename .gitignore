@@ -7,6 +7,9 @@ build/
 # Spike build output — regenerate with the per-spike build.sh
 spikes/*/build/
 
+# Python bytecode — generate_icon.py imports generate_art.py, which makes one
+__pycache__/
+
 # macOS
 .DS_Store
 

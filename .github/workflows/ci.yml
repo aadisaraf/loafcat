@@ -31,6 +31,10 @@ jobs:
           for theme in mono tuxedo cream; do
             python3 tools/generate_art.py --theme "$theme" > /dev/null
           done
+          # The icon composites the mono theme's own parts, so it has to be checked
+          # by the same rule -- otherwise the cat could change and the icon quietly
+          # keep showing the old one.
+          python3 tools/generate_icon.py > /dev/null
           if ! git diff --quiet -- assets/; then
             echo "::error::assets/ differs after regeneration — art must come from tools/generate_art.py"
             git diff --stat -- assets/
