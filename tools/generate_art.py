@@ -948,22 +948,19 @@ BEHAVIOUR = {
         "deadzone_px": 4,
         # Stretch is driven by how long the cat has hung, NOT by drag distance.
         "stretch_hold_ms": 900,
+        # Distance that must be travelled ACROSS the head before petting counts is
+        # in the "pet" block; this block is the drag.
         # Gravity droop while held: springs here and stays, so a motionless cat
         # hangs a little instead of sitting at full stretch forever.
-        "hang_rest": 0.34,
+        "hang_rest": 0.60,
         "hang_stiffness": 40,
         "hang_damping": 0.82,
         # How hard it is being thrown around. Rises fast, relaxes slower, decays
         # to nothing when the pointer stops.
-        "yank_speed_ref": 900,
+        "yank_speed_ref": 380,
         "yank_attack": 14.0,
         "yank_release": 3.2,
-        # Sideways pull. A gel stretches along its axis of travel; the vertical
-        # never fully yields because gravity is still there.
-        "horizontal_gain": 0.85,
-        "vertical_yield": 0.55,
-        "dir_smoothing": 12.0,
-        "stretch_max": 1.00,
+        "stretch_max": 1.75,
         # Release spring. Authored at 60Hz as v += -0.13*x; v *= 0.78; x += v --
         # stiffness is that 0.13 expressed per second squared (0.13 * 60 * 60).
         "release_stiffness": 468,

@@ -1,5 +1,41 @@
 import AppKit
 
+/// How dramatic the drag deformation is. Purely a taste setting.
+enum DragFeel: String, CaseIterable {
+    case subtle, normal, springy
+
+    var label: String {
+        switch self {
+        case .subtle: return "Subtle"
+        case .normal: return "Normal"
+        case .springy: return "Springy"
+        }
+    }
+
+    /// Multipliers on the atlas baseline rather than replacements, so a theme that
+    /// retunes the feel keeps these three meaningful instead of silently drifting.
+    /// `normal` is 1.0 by definition — the shipped tuning IS the normal preset.
+    var hangScale: CGFloat {
+        switch self {
+        case .subtle: return 0.58
+        case .normal: return 1.0
+        case .springy: return 1.35
+        }
+    }
+    var maxScale: CGFloat {
+        switch self {
+        case .subtle: return 0.58
+        case .normal: return 1.0
+        case .springy: return 1.38
+        }
+    }
+
+    static var current: DragFeel {
+        DragFeel(rawValue: UserDefaults.standard.string(forKey: "dragFeel") ?? "normal")
+            ?? .normal
+    }
+}
+
 /// Picking the cat up.
 ///
 /// Three coupled behaviours that share a grab but simulate independently:
@@ -75,6 +111,9 @@ final class DragModule: CatModule {
             stretchHoldMs = v("stretch_hold_ms", stretchHoldMs)
             stretchMax = v("stretch_max", stretchMax)
             hangRest = v("hang_rest", hangRest)
+            let feel = DragFeel.current
+            hangRest *= feel.hangScale
+            stretchMax *= feel.maxScale
             hangStiffness = v("hang_stiffness", hangStiffness)
             hangDamping = v("hang_damping", hangDamping)
             yankSpeedRef = v("yank_speed_ref", yankSpeedRef)

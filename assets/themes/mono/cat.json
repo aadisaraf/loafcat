@@ -648,15 +648,13 @@
   "behaviour": {
     "drag": {
       "deadzone_px": 4,
-      "dir_smoothing": 12.0,
       "grab_max_y": 34,
       "grab_min_y": 26,
       "hang_damping": 0.82,
-      "hang_rest": 0.34,
+      "hang_rest": 0.6,
       "hang_stiffness": 40,
       "head_lag_px": 1.5,
       "head_swing_share": 0.08,
-      "horizontal_gain": 0.85,
       "landing_squash_gain": 0.5,
       "pad_px": 12,
       "release_damping": 0.78,
@@ -665,7 +663,7 @@
       "release_velocity_gain": 0.35,
       "shadow_shrink": 0.65,
       "stretch_hold_ms": 900,
-      "stretch_max": 1.0,
+      "stretch_max": 1.75,
       "swing_accel_cap": 20,
       "swing_damping_drag": 0.86,
       "swing_damping_free": 0.962,
@@ -677,10 +675,9 @@
       "swing_spring_drag": 0.018,
       "swing_spring_free": 0.003,
       "swing_vel_smoothing": 0.35,
-      "vertical_yield": 0.55,
       "yank_attack": 14.0,
       "yank_release": 3.2,
-      "yank_speed_ref": 900
+      "yank_speed_ref": 380
     },
     "hunt": {
       "accel_gain_per_frame": 9e-07,

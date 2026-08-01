@@ -191,6 +191,19 @@ final class CatController: NSObject, NSApplicationDelegate {
         sizeItem.submenu = sizeMenu
         menu.addItem(sizeItem)
 
+        let feelItem = NSMenuItem(title: "Drag feel", action: nil, keyEquivalent: "")
+        let feelMenu = NSMenu()
+        for f in DragFeel.allCases {
+            let mi = NSMenuItem(
+                title: f.label, action: #selector(setDragFeel(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = f.rawValue
+            mi.state = (DragFeel.current == f) ? .on : .off
+            feelMenu.addItem(mi)
+        }
+        feelItem.submenu = feelMenu
+        menu.addItem(feelItem)
+
         let themeItem = NSMenuItem(title: "Cat", action: nil, keyEquivalent: "")
         let themeMenu = NSMenu()
         for name in Self.availableThemes() {
@@ -229,6 +242,12 @@ final class CatController: NSObject, NSApplicationDelegate {
         renderScale = CGFloat(s)
         UserDefaults.standard.set(s, forKey: "scale")
         reload()
+    }
+
+    @objc private func setDragFeel(_ sender: NSMenuItem) {
+        guard let v = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(v, forKey: "dragFeel")
+        reload()   // modules re-read their tuning when the rig is rebuilt
     }
 
     @objc private func setTheme(_ sender: NSMenuItem) {

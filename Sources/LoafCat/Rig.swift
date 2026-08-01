@@ -309,10 +309,14 @@ final class Rig {
             // sliding apart and tearing the silhouette open.
             let top = part.origin.y
             let bottom = top + part.size.height
-            let stretchedTop = top + drop(top)
-            let stretchedBottom = bottom + drop(bottom)
+            // Snap the stretched extent to whole LOGICAL pixels before deriving
+            // the scale factor. A continuous factor puts some source rows on two
+            // device pixels and others on one, which reads as smearing -- worse the
+            // further it stretches. Quantising here keeps every row the same size.
+            let stretchedTop = (top + drop(top)).rounded()
+            let stretchedBottom = (bottom + drop(bottom)).rounded()
             let height = max(bottom - top, 0.0001)
-            let k = (stretchedBottom - stretchedTop) / height
+            let k = max(stretchedBottom - stretchedTop, 1) / height
 
             // CatView scales about the atlas pivot, so back out the translation
             // that re-lands the part's top edge where the hang wants it.
@@ -320,13 +324,6 @@ final class Rig {
             tr.offset.y += stretchedTop - (pivotY + (top - pivotY) * k)
             tr.scale.height *= k
 
-            // Horizontal elongation, with the vertical squeezed to conserve
-            // volume. Without the inverse the cat visibly gains mass when swung.
-            if dragStretchX != 0 {
-                let kx = 1 + dragStretchX
-                tr.scale.width *= kx
-                tr.scale.height /= sqrt(kx)
-            }
 
         case .shadow:
             // A lifted cat casts a smaller contact shadow. Selling the lift is
