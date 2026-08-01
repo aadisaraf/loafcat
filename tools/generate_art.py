@@ -234,6 +234,154 @@ G = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Overlays -- the small status glyphs that float beside the head.
+#
+# They live in the top corners because the cat already fills the 48x48 canvas
+# edge to edge (ears touch y=0, the contact shadow touches y=47). There is no
+# room *above* the head, and the window is exactly the canvas, so anything drawn
+# outside it would be clipped by the window server. The two top corners are the
+# only free real estate, and a thought-bubble trail rising to the top-right is
+# the reading the arrangement already suggests.
+#
+# Every coordinate is checked against the head superellipse and the ear polygons
+# so a glyph never collides with the silhouette or its baked outline.
+# ---------------------------------------------------------------------------
+OVERLAY_G = {
+    # Thought-bubble trail, drawn cumulatively: 1 dot, then 2, then 3.
+    "think_dots": [(40, 10, 1), (43, 6, 2), (46, 1, 2)],   # (x, y, side)
+    # Four-point sparkles either side of the head. Arms alternate long/short so
+    # two frames read as a twinkle rather than a blink.
+    "spark_l": (6, 6),
+    "spark_r": (43, 7),
+    # Sweat drop, top-right. Reads as "oh no" without needing a face change.
+    "sad": (42, 7),
+    # Exclamation mark for "needs your permission". Deliberately the only red
+    # glyph in the set -- it is the one the user has to act on.
+    "alert": (43, 2),
+}
+
+
+def block(img, x0, y0, x1, y1, color):
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            px(img, x, y, color)
+
+
+def star(img, cx, cy, arm, color):
+    """A four-point star: centre pixel plus four arms. Pixel-art sparkle."""
+    px(img, cx, cy, color)
+    for d in range(1, arm + 1):
+        px(img, cx - d, cy, color)
+        px(img, cx + d, cy, color)
+        px(img, cx, cy - d, color)
+        px(img, cx, cy + d, color)
+
+
+def build_overlays():
+    """The status glyph set. Never part of ORDER, so it never enters the hit mask
+    and never shows up in the default pose or the silhouette test."""
+    ov = {}
+
+    # --- thinking: an accumulating trail of dots -------------------------
+    for n in (1, 2, 3):
+        img = new_layer()
+        for (x, y, side) in OVERLAY_G["think_dots"][:n]:
+            block(img, x, y, x + side - 1, y + side - 1, "accent")
+        outline(img)
+        ov[f"think_{n}"] = img
+
+    # --- celebrating: sparkles, alternating which side is bigger ---------
+    for i, (al, ar) in enumerate(((2, 1), (1, 2)), start=1):
+        img = new_layer()
+        star(img, *OVERLAY_G["spark_l"], arm=al, color="heart")
+        star(img, *OVERLAY_G["spark_r"], arm=ar, color="heart")
+        ov[f"spark_{i}"] = img
+
+    # --- errored: one sweat drop -----------------------------------------
+    img = new_layer()
+    dx, dy = OVERLAY_G["sad"]
+    px(img, dx, dy - 1, "accent")
+    block(img, dx - 1, dy, dx + 1, dy + 1, "accent")
+    px(img, dx, dy + 2, "accent")
+    outline(img)
+    ov["sad_1"] = img
+
+    # --- needs permission: a bouncing exclamation mark --------------------
+    ax, ay = OVERLAY_G["alert"]
+    for i, lift in enumerate((0, 1), start=1):
+        img = new_layer()
+        top = ay - lift
+        block(img, ax, top, ax + 1, top + 4, "hot")      # the bar
+        block(img, ax, top + 6, ax + 1, top + 7, "hot")  # the dot
+        outline(img)
+        ov[f"alert_{i}"] = img
+
+    return ov
+
+
+# Which glyph sequence plays for which agent state, and how fast. Timing lives
+# here rather than in Swift for the same reason geometry does: a theme should be
+# able to restyle the whole reaction set without a rebuild.
+OVERLAY_ANIMS = {
+    "think":      {"frames": ["think_1", "think_2", "think_3"], "fps": 2.5, "loop": True},
+    "celebrate":  {"frames": ["spark_1", "spark_2"], "fps": 6.0, "loop": True},
+    "error":      {"frames": ["sad_1"], "fps": 1.0, "loop": True},
+    "permission": {"frames": ["alert_1", "alert_2"], "fps": 3.0, "loop": True},
+}
+
+# ---------------------------------------------------------------------------
+# Body animation curves. Sampled by the runtime; keyframes are [t_seconds, x, y]
+# for offsets (logical px, y-DOWN like the rest of the atlas) and [t, factor]
+# for squash, where 1.0 is neutral and <1 is compressed.
+#
+# `hop` is the headline one: a 13-keyframe double-hop over 2.2s peaking at -26px.
+# The second bounce is deliberately about half the height of the first and lands
+# early -- a symmetric double-hop reads as a bug, an asymmetric one reads as joy.
+# ---------------------------------------------------------------------------
+ANIM = {
+    "hop": {
+        "duration": 2.2,
+        "loop": False,
+        "offset": [
+            [0.00, 0, 0], [0.10, 0, -10], [0.22, 0, -20], [0.34, 0, -26],
+            [0.46, 0, -20], [0.58, 0, -8], [0.66, 0, 0], [0.74, 0, 3],
+            [0.86, 0, -9], [1.00, 0, -14], [1.16, 0, -6], [1.28, 0, 0],
+            [2.20, 0, 0],
+        ],
+        "squash": [
+            [0.00, 0.94], [0.08, 1.10], [0.34, 1.02], [0.62, 1.06], [0.70, 0.90],
+            [0.80, 1.06], [1.00, 1.02], [1.24, 0.92], [1.34, 1.03], [1.50, 1.00],
+            [2.20, 1.00],
+        ],
+    },
+    # Error: sink, hold, then ease part-way back. The hold is what makes it read
+    # as dejection rather than a stumble.
+    "slump": {
+        "duration": 2.0,
+        "loop": False,
+        "offset": [[0.00, 0, 0], [0.18, 0, 2], [0.50, 0, 3], [1.60, 0, 3], [2.00, 0, 1]],
+        "squash": [[0.00, 1.00], [0.20, 0.90], [1.60, 0.90], [2.00, 0.96]],
+    },
+    # Needs permission: a small repeating startle. Loops until the user answers,
+    # because a one-shot would be missed by anyone not looking at that moment.
+    "alert": {
+        "duration": 0.9,
+        "loop": True,
+        "offset": [[0.00, 0, 0], [0.18, 0, -3], [0.36, 0, 0], [0.90, 0, 0]],
+        "squash": [[0.00, 1.00], [0.12, 1.06], [0.30, 0.96], [0.45, 1.00], [0.90, 1.00]],
+    },
+    # Thinking: a 1px drift, slower than the breath so the two never phase-lock
+    # into one bigger motion.
+    "think": {
+        "duration": 1.6,
+        "loop": True,
+        "offset": [[0.00, 0, 0], [0.40, 0, -1], [0.80, 0, 0], [1.20, 0, 1], [1.60, 0, 0]],
+        "squash": [[0.00, 1.00], [0.40, 1.01], [0.80, 1.00], [1.20, 0.99], [1.60, 1.00]],
+    },
+}
+
+
 def disc_spans(cx, cy, r):
     spans = {}
     for y in range(int(cy - r) - 1, int(cy + r) + 2):
@@ -464,7 +612,21 @@ BEHAVIOUR = {
 }
 
 
-def crop_and_write(parts):
+def write_part(img, name):
+    """Tight-crops one layer to a PNG and returns its atlas entry, or None if the
+    layer is empty."""
+    bbox = img.getbbox()
+    if bbox is None:
+        return None
+    img.crop(bbox).save(os.path.join(PARTS, f"{name}.png"))
+    return {
+        "file": f"parts/{name}.png",
+        "x": bbox[0], "y": bbox[1],
+        "w": bbox[2] - bbox[0], "h": bbox[3] - bbox[1],
+    }
+
+
+def crop_and_write(parts, overlays):
     """Writes tight-cropped PNGs plus the atlas.
 
     Cropping keeps the atlas small, and the recorded offset is what lets the runtime
@@ -478,18 +640,20 @@ def crop_and_write(parts):
         "parts": {},
     }
     for name in [n for n in ORDER if n not in HIDDEN]:
-        img = parts[name]
-        bbox = img.getbbox()
-        if bbox is None:
-            continue
-        cropped = img.crop(bbox)
-        path = os.path.join(PARTS, f"{name}.png")
-        cropped.save(path)
-        atlas["parts"][name] = {
-            "file": f"parts/{name}.png",
-            "x": bbox[0], "y": bbox[1],
-            "w": bbox[2] - bbox[0], "h": bbox[3] - bbox[1],
-        }
+        entry = write_part(parts[name], name)
+        if entry is not None:
+            atlas["parts"][name] = entry
+
+    # Overlays are kept OUT of "order" on purpose: order drives both the draw
+    # loop and the click-through hit mask, and a thought bubble must not make
+    # empty corner pixels clickable.
+    ov_parts = {}
+    for name, img in sorted(overlays.items()):
+        entry = write_part(img, name)
+        if entry is not None:
+            ov_parts[name] = entry
+    atlas["overlays"] = {"parts": ov_parts, "anims": OVERLAY_ANIMS}
+    atlas["anim"] = ANIM
 
     # Pivots: the point each part rotates/scales about. Named, because a magic
     # number in the runtime is unreadable and a wrong pivot is invisible in a
@@ -539,7 +703,8 @@ def main():
     apply_theme(theme)
     print(f"theme: {theme}")
     parts = build_parts()
-    atlas = crop_and_write(parts)
+    overlays = build_overlays()
+    atlas = crop_and_write(parts, overlays)
 
     # Contact sheet: the default pose at 1x/2x/4x/8x, on light and dark, plus the
     # silhouette. These are the readability tests -- if the cat fails any of them
@@ -563,8 +728,21 @@ def main():
     solid.resize((CANVAS * 8, CANVAS * 8), Image.NEAREST).save(
         os.path.join(OUT, "preview_silhouette.png"))
 
+    # Overlay contact sheet: the glyphs composited over the default pose, so a
+    # collision with the ears or the head outline is visible at a glance rather
+    # than only once the app is running.
+    base = composite(parts)
+    strip = Image.new("RGBA", (CANVAS * len(overlays), CANVAS), (0, 0, 0, 0))
+    for i, name in enumerate(sorted(overlays)):
+        strip.paste(Image.alpha_composite(base, overlays[name]), (CANVAS * i, 0))
+    dark = Image.new("RGBA", strip.size, (28, 28, 32, 255))
+    Image.alpha_composite(dark, strip).resize(
+        (strip.width * 4, strip.height * 4), Image.NEAREST
+    ).save(os.path.join(OUT, "preview_overlays.png"))
+
     used = {p for p in atlas["parts"]}
     print(f"wrote {len(used)} parts -> {PARTS}")
+    print(f"overlays -> {sorted(atlas['overlays']['parts'])}")
     print(f"atlas -> {os.path.join(OUT, 'cat.json')}")
     print(f"preview -> {os.path.join(OUT, 'preview.png')}")
     for n in atlas["order"]:
