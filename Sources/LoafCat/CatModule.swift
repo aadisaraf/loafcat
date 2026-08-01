@@ -87,7 +87,9 @@ struct ModuleOutput {
     var overlay: String?
 
     /// When set AND this module wins the state contest, every other module's
-    /// squash, offset and overlay is discarded for the frame.
+    /// squash, offset and overlay is discarded for the frame — and so is
+    /// everything any module posted to `CatStage`'s per-part channels, which is
+    /// why an exclusive module must express itself through this struct alone.
     ///
     /// Priority alone only decides which *state* wins; the numbers still blend. A
     /// stretch break needs the stronger guarantee — the cat is the size of the
@@ -146,7 +148,15 @@ final class ModuleRegistry {
     ///
     /// Unless the winner asked to be exclusive, in which case it is the only module
     /// that contributes anything this frame.
+    ///
+    /// The shared stage is cleared before the modules run and sealed after, so a
+    /// module reading `CatStage.shared.state` during its own update sees the
+    /// PREVIOUS frame's winner. That one-frame lag is what lets a module yield to
+    /// dragging without knowing which module owns dragging.
     func update(_ ctx: TickContext) -> ModuleOutput {
+        let stage = CatStage.shared
+        stage.beginFrame()
+
         var outputs: [ModuleOutput] = []
         outputs.reserveCapacity(modules.count)
         var best = -1
@@ -173,6 +183,11 @@ final class ModuleRegistry {
             combined.squash = winner.squash
             combined.offset = winner.offset
             if let o = winner.overlay { overlays.append(o) }
+            // Same rule, applied to the other channel modules write on. Priority
+            // decided the state; `exclusive` is the stronger claim that nothing
+            // else is on screen, and a stray paw offset or puff of steam would
+            // break it exactly as visibly as a stray squash.
+            stage.discardPartChannels()
         } else {
             for out in outputs {
                 combined.squash *= out.squash
@@ -182,7 +197,44 @@ final class ModuleRegistry {
             }
         }
         combined.state = state
+        stage.endFrame(state: state, bodyOffset: combined.offset)
+        logState(ctx)
         return combined
+    }
+
+    // --- --debug-state ------------------------------------------------------
+    // Prints the winning state and every metric the modules publish, so behaviour
+    // can be checked from a log rather than by a human watching a cat. Off unless
+    // asked for, and rate-limited, because this runs on the 120Hz tick.
+
+    private let debugging = CommandLine.arguments.contains("--debug-state")
+    private let launched = CFAbsoluteTimeGetCurrent()
+    private var lastLog: CFAbsoluteTime = 0
+    private var lastLoggedState: CatState?
+
+    private func logState(_ ctx: TickContext) {
+        guard debugging else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        let changed = lastLoggedState != state
+        guard changed || now - lastLog >= 0.1 else { return }
+        lastLog = now
+        lastLoggedState = state
+
+        let stage = CatStage.shared
+        let metrics = stage.metrics.keys.sorted()
+            .map { "\($0)=\(Self.n(stage.metrics[$0] ?? 0))" }
+            .joined(separator: " ")
+        var line = "[state] t=\(Self.n(CGFloat(now - launched)))"
+        line += " \(Self.pad(state.rawValue, 11)) by=\(Self.pad(stateOwner, 8))"
+        line += " kps=\(Self.n(ctx.keysPerSecond)) heat=\(Self.n(stage.heat)) \(metrics)"
+        if !overlays.isEmpty { line += " fx=\(overlays.joined(separator: ","))" }
+        if changed { line += "  <-" }
+        FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+    }
+
+    private static func n(_ v: CGFloat) -> String { String(format: "%.2f", Double(v)) }
+    private static func pad(_ s: String, _ w: Int) -> String {
+        s.count >= w ? s : s + String(repeating: " ", count: w - s.count)
     }
 
     func mouseDown(at point: CGPoint) -> Bool {

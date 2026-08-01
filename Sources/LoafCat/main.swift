@@ -134,6 +134,10 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// single line plus a single new file under Modules/.
     private func registerModules() {
         modules.register(DragModule(panel: panel, registry: modules))
+        modules.register(TypingModule())
+        modules.register(HuntModule())
+        modules.register(PettingModule())
+        modules.register(ScrollModule())
         modules.register(AgentModule.shared)
         wellness = WellnessSuite(
             atlas: atlas, view: view, panel: panel, registry: modules)

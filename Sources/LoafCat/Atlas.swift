@@ -1,5 +1,59 @@
 import AppKit
 
+/// The tuning table from `cat.json`.
+///
+/// Modules read every threshold, duration and gain they use from here rather than
+/// declaring it, which is what makes rule 1 ("no behaviour constant in Swift") true
+/// of features and not only of geometry. Retuning the cat is then a JSON diff, and a
+/// theme can ship a lazier or a twitchier one without a rebuild.
+///
+/// Keyed by module id and then by constant name — `behaviour.drag.hold_time`,
+/// `behaviour.hunt.trigger` — which groups a feature's tuning the way the generator
+/// writes it and the way a theme would override it.
+///
+/// A class, not a struct, only so the missing-key warning can dedupe without a
+/// global.
+final class Behaviour {
+    private let values: [String: [String: CGFloat]]
+    private var warned = Set<String>()
+
+    init(_ raw: [String: Any]) {
+        // Parsed value by value rather than with one big cast: JSONSerialization
+        // hands back NSNumber, and a whole-dictionary cast to [String: Double]
+        // fails silently for any theme that writes an integer where a float was
+        // expected — which would drop a module's whole tuning block without a word.
+        var out: [String: [String: CGFloat]] = [:]
+        for (module, consts) in (raw as? [String: [String: Any]] ?? [:]) {
+            var parsed: [String: CGFloat] = [:]
+            for (key, value) in consts {
+                if let n = value as? NSNumber { parsed[key] = CGFloat(n.doubleValue) }
+            }
+            out[module] = parsed
+        }
+        values = out
+    }
+
+    /// One constant, or nil when this theme does not carry it.
+    func value(_ module: String, _ key: String) -> CGFloat? { values[module]?[key] }
+
+    /// A REQUIRED constant, addressed as `"module.key"`.
+    ///
+    /// A missing key means the theme's art predates the module asking for it. Warn
+    /// loudly, once — a silent zero would make the cat behave bizarrely for a reason
+    /// nobody could find. Callers read these in `retune`, once per theme, so the
+    /// string split never happens on the 120Hz path.
+    func f(_ dotted: String) -> CGFloat {
+        let parts = dotted.split(separator: ".", maxSplits: 1)
+        if parts.count == 2, let v = value(String(parts[0]), String(parts[1])) { return v }
+        if warned.insert(dotted).inserted {
+            FileHandle.standardError.write(
+                "atlas: behaviour key '\(dotted)' missing — rerun tools/generate_art.py\n"
+                    .data(using: .utf8)!)
+        }
+        return 0
+    }
+}
+
 /// The atlas is the contract between the art pipeline and the runtime.
 ///
 /// Everything the cat knows about its own body comes from `cat.json` — part
@@ -54,12 +108,25 @@ struct Atlas {
     }
     let wellness: Wellness
 
-    /// Status glyphs (thinking dots, sparkles, sweat drop, exclamation mark).
+    /// Everything drawn above the cat that is not part of its body: the status
+    /// glyphs (thinking dots, sparkles, sweat drop, exclamation mark) and the
+    /// reaction sprites (steam, hearts).
     ///
-    /// Kept out of `order` and therefore out of the draw loop and the hit mask —
-    /// an overlay is drawn only while something asks for it, and must never make
-    /// an empty corner pixel clickable.
-    let overlays: [String: Part]
+    /// Deliberately a separate table from `parts`, and absent from `order`, so an
+    /// overlay enters neither the draw stack nor the click-through hit mask — a
+    /// thought bubble must never make an empty corner pixel clickable.
+    struct Overlay {
+        let part: Part
+        /// How many of this sprite may be on screen at once. The view preallocates
+        /// exactly this many layers, so an overlay never allocates during a frame.
+        let slots: Int
+        /// The body part whose offset this sprite rides, if any. A status glyph
+        /// pinned to the head drifts with the head turn instead of sitting rigidly
+        /// in the corner; steam and hearts carry their own motion and follow
+        /// nothing. Named in `cat.json`, so which is which is not a Swift decision.
+        let follow: String?
+    }
+    let overlays: [String: Overlay]
 
     /// Which glyph sequence plays for which named state, and how fast.
     let overlayAnimations: [String: OverlayAnimation]
@@ -128,6 +195,11 @@ struct Atlas {
         }
     }
 
+    /// Base part names that ship an `<name>_hot` overheat variant — the same pixels
+    /// with the coat palette remapped, so the two crop identically and can be
+    /// cross-faded in place.
+    let hotParts: Set<String>
+
     /// Eye geometry, needed for pupil tracking. `maxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     struct Eye {
@@ -138,17 +210,18 @@ struct Atlas {
     }
     let eye: Eye
 
-    /// Per-module behaviour tuning, keyed by module id then by constant name.
+    /// Every threshold, duration and magnitude the modules run on, keyed by module
+    /// id then by constant name.
     ///
     /// The atlas does not interpret any of it — it is a passthrough so that a
     /// module's timings and magnitudes live in `cat.json` beside the geometry they
     /// act on, rather than as literals in Swift. A theme with a heavier cat can
     /// therefore hang and swing differently without a recompile.
-    let behaviour: [String: [String: CGFloat]]
+    let behaviour: Behaviour
 
     /// One tuning constant, with the fallback used when a theme does not override it.
     func tune(_ module: String, _ key: String, _ fallback: CGFloat) -> CGFloat {
-        behaviour[module]?[key] ?? fallback
+        behaviour.value(module, key) ?? fallback
     }
 
     enum LoadError: Error, CustomStringConvertible {
@@ -184,11 +257,14 @@ struct Atlas {
 
         // Overlays are optional: a theme generated before status glyphs existed
         // still loads, it just never shows one.
-        var overlays: [String: Part] = [:]
+        var overlays: [String: Overlay] = [:]
         var overlayAnims: [String: OverlayAnimation] = [:]
         if let ov = root["overlays"] as? [String: Any] {
             for (name, def) in (ov["parts"] as? [String: [String: Any]] ?? [:]) {
-                overlays[name] = try loadPart(named: name, def: def, in: dir)
+                overlays[name] = Overlay(
+                    part: try loadPart(named: name, def: def, in: dir),
+                    slots: max(def["slots"] as? Int ?? 1, 1),
+                    follow: def["follow"] as? String)
             }
             for (name, def) in (ov["anims"] as? [String: [String: Any]] ?? [:]) {
                 overlayAnims[name] = OverlayAnimation(
@@ -229,23 +305,14 @@ struct Atlas {
             maxOffset: eyeDef["max_offset"] as? Double ?? 1,
             centers: centers)
 
-        // Parsed value by value rather than with one big cast: JSONSerialization
-        // hands back NSNumber, and a whole-dictionary cast to [String: Double]
-        // fails silently for any theme that writes an integer where a float was
-        // expected — which would drop a module's whole tuning block without a word.
-        var behaviour: [String: [String: CGFloat]] = [:]
-        for (module, consts) in (root["behaviour"] as? [String: [String: Any]] ?? [:]) {
-            var parsed: [String: CGFloat] = [:]
-            for (key, value) in consts {
-                if let n = value as? NSNumber { parsed[key] = CGFloat(n.doubleValue) }
-            }
-            behaviour[module] = parsed
-        }
-
         let layoutDef = root["layout"] as? [String: Any] ?? [:]
         let layout = Layout(
             padX: layoutDef["pad_x"] as? Int ?? 0,
             padY: layoutDef["pad_y"] as? Int ?? 0)
+
+        // Only advertise a hot variant whose art actually loaded, or the view would
+        // build a cross-fade layer for an image that is not there.
+        let hot = Set((root["hot"] as? [String] ?? []).filter { parts["\($0)_hot"] != nil })
 
         return Atlas(
             canvas: canvas, order: order, parts: parts, pivots: pivots,
@@ -254,8 +321,9 @@ struct Atlas {
             wellness: loadWellness(root),
             overlays: overlays, overlayAnimations: overlayAnims,
             animations: animations,
+            hotParts: hot,
             eye: eye,
-            behaviour: behaviour)
+            behaviour: Behaviour(root["behaviour"] as? [String: Any] ?? [:]))
     }
 
     private static func loadPart(

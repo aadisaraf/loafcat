@@ -27,69 +27,6 @@ struct Spring {
     }
 }
 
-/// The channel a module uses to ask for a keyframed reaction, and the clock that
-/// plays it.
-///
-/// A shared object rather than a constructor argument for one concrete reason:
-/// the rig and the view are thrown away and rebuilt on every theme or scale
-/// change, while modules live for the lifetime of the app. Handing a module a
-/// reference to the rig would leave it holding a dead one the first time somebody
-/// picks a different cat.
-///
-/// Main thread only. Modules take network input on a background queue, but the
-/// decision to start an animation is made in `update(_:)`, which is the tick.
-final class Stage {
-    static let shared = Stage()
-    private init() {}
-
-    private(set) var atlas: Atlas?
-    private var current: String?
-    private var startedAt: CFTimeInterval = 0
-    private var overlayName: String?
-
-    /// Displacement already handed to the window server, in PHYSICAL points.
-    ///
-    /// It lives here rather than in the view because the view is what gets
-    /// rebuilt mid-animation; keeping the applied value alongside the clock is
-    /// what lets the next view finish the move instead of stranding the panel a
-    /// few pixels off the floor.
-    var appliedOffset = CGPoint.zero
-
-    func adopt(_ a: Atlas) { atlas = a }
-
-    /// How long a named animation runs, straight from the atlas. Modules ask this
-    /// rather than hardcoding a duration, so "how long is the hop" has exactly one
-    /// answer and it is in `cat.json`.
-    func duration(of name: String) -> Double { atlas?.animations[name]?.duration ?? 0 }
-
-    /// Asks for an animation and its overlay. Restarting only on a *change* is
-    /// what makes this callable every frame — a module can state what it wants
-    /// 120 times a second without ever resetting the clock.
-    func request(_ name: String?, overlay: String?) {
-        if name != current {
-            current = name
-            startedAt = CACurrentMediaTime()
-        }
-        overlayName = overlay
-    }
-
-    /// Whole-body offset (logical px, y-down) and squash for this instant.
-    func sample() -> (offset: CGPoint, squash: CGFloat) {
-        guard let name = current, let anim = atlas?.animations[name] else {
-            return (.zero, 1.0)
-        }
-        return anim.sample(at: CACurrentMediaTime() - startedAt)
-    }
-
-    /// The overlay PART to draw right now, resolved through the flipbook, or nil.
-    func overlayFrame() -> String? {
-        guard let name = overlayName, let anim = atlas?.overlayAnimations[name] else {
-            return nil
-        }
-        return anim.frame(at: CACurrentMediaTime() - startedAt)
-    }
-}
-
 /// Owns the per-part transforms and the animation state that produces them.
 ///
 /// The rig never redraws art. Every motion here is a transform of the same parts,
@@ -180,8 +117,10 @@ final class Rig {
     init(atlas: Atlas) {
         self.atlas = atlas
         // The stage outlives the rig, so it is re-pointed at whatever theme is
-        // current rather than owning one.
-        Stage.shared.adopt(atlas)
+        // current rather than owning one. The rig is the one object that both
+        // launch and a theme switch construct, which makes it the right place to
+        // tell the modules which cat they are now driving.
+        CatStage.shared.publish(atlas: atlas)
         // The pupil may travel exactly as far as the sclera allows, no further —
         // a pupil that clips outside its eye is the classic rig tell.
         self.pupilRange = atlas.eye.maxOffset
@@ -251,6 +190,11 @@ final class Rig {
         let sx = 1.0 / sqrt(sy)
         let bodyLift = (sy - 1.0) * 8.0
 
+        // What the feature modules asked for this frame. They post offsets to the
+        // stage rather than reaching into the rig, so several can move the same part
+        // in one frame and simply add.
+        let stage = CatStage.shared
+
         for name in atlas.order {
             var tr = Transform()
 
@@ -298,6 +242,31 @@ final class Rig {
                 break
             }
             applyDrag(to: &tr, part: name)
+
+            // Module channels, layered on top of the ambient rig. The head channel
+            // reaches everything parented to the head, or a lean would tear the face
+            // off; the shadow takes only the horizontal component, because a cat
+            // bobbing upward should not drag its contact shadow into the air.
+            switch name {
+            case "head", "ear_l", "ear_r", "face", "eye_l", "eye_r",
+                 "pupil_l", "pupil_r", "lid_l", "lid_r":
+                tr.offset.x += stage.headOffset.x
+                tr.offset.y += stage.headOffset.y
+            case "paw_l":
+                tr.offset.x += stage.pawOffsetL.x
+                tr.offset.y += stage.pawOffsetL.y
+            case "paw_r":
+                tr.offset.x += stage.pawOffsetR.x
+                tr.offset.y += stage.pawOffsetR.y
+            case "tail":
+                tr.offset.x += stage.tailOffset.x
+                tr.offset.y += stage.tailOffset.y
+            default:
+                break
+            }
+            tr.offset.x += stage.bodyOffset.x
+            if name != "shadow" { tr.offset.y += stage.bodyOffset.y }
+
             t[name] = tr
         }
         transforms = t

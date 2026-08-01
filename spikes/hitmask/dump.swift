@@ -5,7 +5,7 @@ import AppKit
 // of the same layout: if the PNGs differ, one of them is wrong.
 //
 // Build: swiftc -o /tmp/bubbledump spikes/hitmask/dump.swift \
-//          Sources/LoafCat/{Atlas,CatView,Rig,PixelCanvas,SpeechBubble}.swift
+//          Sources/LoafCat/{Atlas,CatStage,CatModule,CatView,Rig,PixelCanvas,SpeechBubble}.swift
 
 _ = NSApplication.shared
 

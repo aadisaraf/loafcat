@@ -28,9 +28,20 @@ final class CatView: NSView {
     /// stretch break can magnify the whole rig with one transform.
     private let container = CALayer()
 
-    /// One layer per status glyph, all hidden until something asks for one. They
-    /// are added after every body layer, so they always composite on top.
-    private var overlayLayers: [String: CALayer] = [:]
+    /// The overheat coat, one layer per coat part, pinned exactly on top of its base
+    /// and cross-faded by opacity.
+    ///
+    /// This is why overheat costs no runtime art work: the `_hot` image is the same
+    /// pixels with the coat palette remapped, so it crops to the identical box and
+    /// needs the identical transform. A CIFilter colour matrix would have been the
+    /// obvious alternative and is worse on both counts — an offscreen pass per layer
+    /// at 120Hz, and arbitrary off-palette intermediate colours.
+    private var hotLayers: [String: CALayer] = [:]
+
+    /// Preallocated layers for the overlay sprites — steam, hearts and the agent's
+    /// status glyphs alike — so an overlay never allocates inside a frame. All
+    /// hidden until a module posts an instance for one.
+    private var overlaySlots: [String: [CALayer]] = [:]
 
     /// Integer only. A fractional scale is the fastest way to make pixel art look
     /// like mush, and it cannot be fixed downstream.
@@ -138,6 +149,15 @@ final class CatView: NSView {
             let l = addLayer(for: part)
             layers[name] = l
 
+            // The overheat coat, immediately above its base so it stays inside the
+            // draw order — a hot head must still sit behind the eyes.
+            if atlas.hotParts.contains(name), let hot = atlas.parts["\(name)_hot"] {
+                let h = addLayer(for: hot)
+                h.isHidden = true
+                h.opacity = 0
+                hotLayers[name] = h
+            }
+
             if atlas.wellness.tintParts.contains(name) {
                 // A colour wash masked by the part's own alpha. Cheaper and more
                 // predictable than a compositing filter, and — because the mask is
@@ -162,12 +182,16 @@ final class CatView: NSView {
                 tintLayers.append(tint)
             }
         }
-        // Overlays last: draw order is sublayer order, and a thought bubble that
-        // slid behind an ear would look like a rendering fault.
-        for (name, part) in atlas.overlays.sorted(by: { $0.key < $1.key }) {
-            let l = addLayer(for: part)
-            l.isHidden = true
-            overlayLayers[name] = l
+        // Overlays last: draw order is sublayer order, and steam, hearts or a
+        // thought bubble sliding behind an ear would look like a rendering fault.
+        // Sorted so the layer order is the same on every launch, and preallocated
+        // to the sprite's slot count so an overlay never allocates inside a frame.
+        for (name, overlay) in atlas.overlays.sorted(by: { $0.key < $1.key }) {
+            overlaySlots[name] = (0..<overlay.slots).map { _ in
+                let l = addLayer(for: overlay.part)
+                l.isHidden = true
+                return l
+            }
         }
     }
 
@@ -388,56 +412,17 @@ final class CatView: NSView {
         var out: [String: CGPoint] = [:]
         for (name, l) in layers { out[name] = l.position }
         for (name, l) in auxLayers { out["aux:" + name] = l.position }
-        for (name, l) in overlayLayers { out["overlay:" + name] = l.position }
+        for (name, l) in hotLayers { out["hot:" + name] = l.position }
+        for (name, slots) in overlaySlots {
+            for (i, l) in slots.enumerated() { out["overlay:\(name)#\(i)"] = l.position }
+        }
         out["#container"] = container.position
         return out
     }
 
-    /// Moves the whole panel to follow the stage's keyframed offset.
-    ///
-    /// The hop has to move the *window*, not the layers: the cat fills the 48x48
-    /// canvas edge to edge and the window is exactly the canvas, so a -26px leap
-    /// drawn inside it would simply have its head cut off. Applied as a delta
-    /// against a remembered value rather than as an absolute origin, so it
-    /// composes with anything else that moves the panel (a drag, "Centre on
-    /// screen") instead of fighting it.
-    ///
-    /// The contact shadow rides along, which is not what a shadow does. At this
-    /// size the alternative — a shadow that stays behind while the body leaves —
-    /// reads as two sprites rather than one leaping cat, so the rig sells the
-    /// lift through the inverse shadow scale in `squash` instead.
-    private func applyStageOffset() {
-        guard let win = window else { return }
-        let want = Stage.shared.sample().offset
-        // Rounded on LOGICAL pixels before scaling, the same rule as every part
-        // position. Rounding after the multiply still lands on fractional logical
-        // pixels and makes the art crawl at 2x and 3x.
-        let target = CGPoint(x: want.x.rounded() * scale, y: want.y.rounded() * scale)
-        let applied = Stage.shared.appliedOffset
-        let dx = target.x - applied.x
-        // The atlas thinks y-down; the screen is y-up.
-        let dy = -(target.y - applied.y)
-        guard dx != 0 || dy != 0 else { return }
-        win.setFrameOrigin(NSPoint(x: win.frame.origin.x + dx, y: win.frame.origin.y + dy))
-        Stage.shared.appliedOffset = target
-    }
-
-    /// Shows at most one status glyph, carried by the head so it drifts with the
-    /// head turn instead of sitting rigidly in the corner.
-    private func syncOverlays() {
-        let active = Stage.shared.overlayFrame()
-        let headOffset = rig.transforms["head"]?.offset ?? .zero
-        for (name, l) in overlayLayers {
-            let on = (name == active)
-            l.isHidden = !on
-            guard on, let part = atlas.overlays[name] else { continue }
-            l.position = containerPosition(for: part, offset: headOffset)
-        }
-    }
-
     /// Pushes the rig's transforms onto the layers. Called once per frame.
     func sync() {
-        applyStageOffset()
+        let heat = min(max(CatStage.shared.heat, 0), 1)
         CATransaction.begin()
         CATransaction.setDisableActions(true)   // no implicit animation; we drive it
         for (name, l) in layers {
@@ -459,8 +444,56 @@ final class CatView: NSView {
             } else if !CATransform3DIsIdentity(l.transform) {
                 l.transform = CATransform3DIdentity
             }
+
+            // The hot coat is the same art on the same grid, so it copies the base
+            // layer's geometry outright rather than recomputing it.
+            if let h = hotLayers[name] {
+                h.isHidden = t.hidden || heat < 0.004
+                if !h.isHidden {
+                    h.position = l.position
+                    h.transform = l.transform
+                    h.opacity = Float(heat)
+                }
+            }
         }
+
         syncOverlays()
         CATransaction.commit()
+    }
+
+    /// Places whatever the modules asked for into the preallocated slots. Anything
+    /// beyond a sprite's slot count is dropped rather than allocated for.
+    ///
+    /// One path for every overlay: the reaction sprites, which carry their own
+    /// motion, and the agent's status glyphs, which name a body part to `follow` in
+    /// the atlas and so drift with the head turn instead of sitting rigidly in the
+    /// corner. Which of the two a sprite is, is data rather than a branch here.
+    private func syncOverlays() {
+        var used: [String: Int] = [:]
+        for inst in CatStage.shared.overlays {
+            guard let overlay = atlas.overlays[inst.part],
+                  let slots = overlaySlots[inst.part] else { continue }
+            let i = used[inst.part, default: 0]
+            guard i < slots.count else { continue }
+            used[inst.part] = i + 1
+
+            let l = slots[i]
+            let a = min(max(inst.alpha, 0), 1)
+            l.isHidden = a < 0.004
+            guard !l.isHidden else { continue }
+            l.opacity = Float(a)
+
+            var offset = inst.offset
+            if let follow = overlay.follow, let t = rig.transforms[follow] {
+                offset.x += t.offset.x
+                offset.y += t.offset.y
+            }
+            // Straight through the same rounding as every body part, so an overlay
+            // is never the thing that shimmers.
+            l.position = containerPosition(for: overlay.part, offset: offset)
+        }
+        for (name, slots) in overlaySlots {
+            for i in used[name, default: 0]..<slots.count { slots[i].isHidden = true }
+        }
     }
 }

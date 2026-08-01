@@ -11,8 +11,8 @@ import AppKit
 // Drives the SAME CatView the app uses, over the exact geometry main.swift feeds
 // it: viewPoint = mouseLocation - panel.frame.origin.
 //
-// Build: swiftc -o /tmp/hitmask spikes/hitmask/check.swift \
-//          Sources/LoafCat/{Atlas,CatView,Rig,PixelCanvas,SpeechBubble}.swift
+// Build: swiftc -o /tmp/hitmask spikes/hitmask/main.swift \
+//          Sources/LoafCat/{Atlas,CatStage,CatModule,CatView,Rig,PixelCanvas,SpeechBubble}.swift
 
 // AppKit needs a window-server connection before NSView will behave.
 _ = NSApplication.shared

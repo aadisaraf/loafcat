@@ -112,4 +112,65 @@ The confusion is real and worth naming: a `CGContext`'s **user space** is y-up w
 - **A bug that a dilation can hide is a bug that will not be found by looking.** The hit mask needs the kind of check that does not depend on a human noticing 6px — see `spikes/hitmask`, which asserts the interactive area is exactly the mask area × scale², at 2x/3x/4x and under the stretch break's magnification.
 - Anything that composes pixel art at 1x should be dumped as ASCII and diffed against the generator's own preview. Two implementations of the same layout disagreeing is a much louder signal than one implementation looking slightly off.
 
-**Reproduce:** `swiftc -o /tmp/hitmask Sources/LoafCat/{Atlas,CatView,Rig,PixelCanvas,SpeechBubble}.swift spikes/hitmask/main.swift && /tmp/hitmask mono`
+**Reproduce:** `swiftc -o /tmp/hitmask Sources/LoafCat/{Atlas,CatStage,CatModule,CatView,Rig,PixelCanvas,SpeechBubble}.swift spikes/hitmask/main.swift && /tmp/hitmask mono`
+
+---
+
+## S4 — Separating a cat-toy wiggle from a fast cursor sweep
+
+**Question:** hunting has to fire when the cursor is waggled like a toy and stay silent when it merely crosses the screen quickly. Is speed enough to tell them apart, and if not, what is?
+
+**Method:** `reactions/` links the real reaction modules and drives them in real time at 120Hz through the same signal path `main.swift` builds — 1.5s sliding keystroke window, cursor in logical pixels relative to the cat's centre, same EMA on velocity. Eleven scenarios, each asserting states that must appear and states that must not.
+
+### Result: **speed is not just insufficient, it points the wrong way.**
+
+| Gesture | Peak speed (logical px/s) | Peak accumulator | Hunts? |
+|---|---:|---:|---|
+| 1700pt straight sweeps, 0.45s each | **2769** | 0.40 | no |
+| ±120pt wiggle at 5Hz | **1416** | 1.13 | yes |
+| slow aimless mousing | 287 | 0.00 | no |
+
+Re-run after the merge with the agent and wellness modules linked in alongside: all eleven scenarios still pass, and the numbers move only in the last digit of the speed columns, which is genuine 120Hz jitter — the harness runs in real time on purpose.
+
+**The gesture that must trigger is half the speed of the gesture that must not.** Any threshold on `|v|` gets this exactly backwards. What separates them is direction reversals, so the accumulator's reversal bonus (0.62 per turn) has to dominate its speed term, whose ceiling is bounded by construction at `excess × gain / (1 − decay)` and lands at 0.40 for the fastest plausible sweep.
+
+Two details that are not obvious:
+
+- **Compare headings across ~60ms, not across one frame.** At 120Hz, after the EMA the frame-to-frame angle is mostly smoothing noise.
+- **A reversal needs a refractory window.** One real turn spans several frames and otherwise gets paid for four or five times, which lets a single flick trigger a pounce.
+
+Confirmed live against the running app, driven by `CGWarpMouseCursorPosition`: straight sweeps peaked at 2089 logical px/s with the accumulator at 0.39 and **0** hunting frames; a 5Hz wiggle peaked at 1692 and hunted in **42 of 52** sampled frames.
+
+**Trap:** a warp is instantaneous, so moving the cursor between test phases is an infinite-speed reversal and fires the very detector under test. The driver has to glide, not teleport. The first live run "failed" entirely on this.
+
+**Reproduce:** `./reactions/build.sh && ./reactions/build/ReactionSpike` from the repo root.
+
+---
+
+## S5 — Proving the art does not crawl
+
+**Question:** the pixel-art rule is that every offset rounds to a whole *logical* pixel before scaling. After adding per-part module offsets and free-floating overlay sprites, does it still hold at 2x/3x/4x?
+
+**Method:** three approaches, in order of how well they worked.
+
+1. **Screen-grab the running app and check every pixel is on-palette.** Useless here — several cats from parallel sessions sit at the same default screen position, so every capture is a composite of all of them.
+2. **Render the layer tree offscreen and check the same thing.** Removes the desktop from the question but measures Core Graphics' colour management and edge anti-aliasing as much as our geometry, and the rig's breathing is a deliberately fractional *scale* that blends edges by design. ~50% "off-palette" pixels, all of it noise. No conclusion available.
+3. **Walk the layer tree and assert every position and bound is an exact multiple of the render scale.** This is the actual claim, tested directly.
+
+**A trap the first version fell into.** It walked `view.layer!.sublayers` — one level. Once the padded panel put every part inside a centred *container* layer, that one level was the container and nothing else: 28,800 coordinates, all trivially on-grid, a vacuous PASS. The check now recurses, which is also what brings the overheat coats, the overlay slots and the wellness tint sublayers into it. **A harness that passes for the wrong reason is worse than one that fails.**
+
+### Result: **grid intact — 6.7M coordinates, zero off-grid.**
+
+60 simulated seconds per configuration at 120Hz, 3 themes × 3 scales. The first 30s is a pure idle soak; the second 30s drives every module channel at deliberately fractional amplitudes (`sin(t·3.1)·2.37 + 0.41`), because a rounding bug hides completely at integer offsets.
+
+| | coordinates checked | off-grid | worst error |
+|---|---:|---:|---:|
+| mono / tuxedo / cream at 2x, 3x, 4x | 6,706,476 | **0** | 0.000000 lpx |
+
+Re-measured after both feature branches were merged, with the recursive walk and the real padded panel size (2x: 256×268pt, not 96×96).
+
+The one fractional transform left is the squash/breathe **scale** on the body and shadow. It is applied about a pivot rather than by translation, it predates this work, and it is what breathing *is*.
+
+**Worth knowing:** don't test this by rendering and comparing colours. The claim is about geometry; test the geometry.
+
+**Reproduce:** `./pixelgrid/build.sh && ./pixelgrid/build/PixelGridSpike` from the repo root.

@@ -728,10 +728,11 @@ final class AgentModule: NSObject, CatModule {
 
     func update(_ ctx: TickContext) -> ModuleOutput {
         let now = CFAbsoluteTimeGetCurrent()
+        let stage = CatStage.shared
         // Durations come from the atlas, so "how long is the hop" has one answer
         // and it is in cat.json next to the keyframes that define it.
-        let hop = Stage.shared.duration(of: "hop")
-        let slump = Stage.shared.duration(of: "slump")
+        let hop = stage.duration(of: "hop")
+        let slump = stage.duration(of: "slump")
 
         lock.lock()
         expire(now)
@@ -764,16 +765,30 @@ final class AgentModule: NSObject, CatModule {
         // Only touch the stage while we have something to say, or on the one frame
         // where we stop having something to say.
         guard want != nil || lastRequested != nil else { return .none }
-        Stage.shared.request(want?.anim, overlay: want?.overlay)
+        stage.request(want?.anim, overlay: want?.overlay)
         lastRequested = want?.anim
 
         var out = ModuleOutput()
         out.state = want?.state
         out.overlay = want?.overlay
         if want != nil {
-            let sampled = Stage.shared.sample()
+            let sampled = stage.sample()
             out.squash = sampled.squash
+            // The whole-body offset, including the −26px apex of the hop. It goes
+            // through `ModuleOutput` like any other module's motion, which the rig
+            // then applies to the layers — the panel carries a transparent margin
+            // far taller than the leap, so nothing is clipped and the window never
+            // has to move. The contact shadow stays on the floor, because the rig
+            // withholds the vertical component from it.
             out.offset = sampled.offset
+
+            // The status glyph, resolved through the flipbook and posted like any
+            // other overlay so the view has exactly one overlay path. Its drift
+            // with the head turn comes from `follow` in the atlas, not from here.
+            if let frame = stage.overlayFrame() {
+                stage.overlays.append(
+                    OverlayInstance(part: frame, offset: .zero, alpha: 1))
+            }
         }
         return out
     }

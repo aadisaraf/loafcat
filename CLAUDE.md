@@ -39,10 +39,18 @@ typing a pixel offset into a `.swift` file, it belongs in the atlas.
 own file and register it. This keeps parallel work from colliding in one file, and
 it means a feature can be removed by deleting one file.
 
+**A module must never hold a `Rig` or a `CatView`.** Both are thrown away and rebuilt
+on every theme or scale change while modules live for the whole session, so a
+captured reference is a dead one the first time somebody picks another cat. Publish
+through `CatStage.shared` instead: per-part offsets, heat, overlay instances, and a
+request for a keyframed animation. Read your tuning from `CatStage.shared.atlas` via
+`AtlasTuned`, which re-reads on a theme switch.
+
 ```
 Sources/LoafCat/
   main.swift        app lifecycle, panel, menu bar, the 120Hz tick   <- rarely edit
   Atlas.swift       loads cat.json + part PNGs                        <- rarely edit
+  CatStage.swift    the mailbox modules publish through, and the keyframe clock
   Rig.swift         per-part transforms, springs, cursor tracking
   CatView.swift     CALayer compositor, hit mask
   Modules/*.swift   one file per feature

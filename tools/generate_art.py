@@ -144,6 +144,12 @@ def apply_theme(name):
         PALETTE[k] = v
     for k, v in t.get("geometry", {}).items():
         G[k] = v
+    # A theme may retune the cat as well as recolour it -- a big-eyed mono cat
+    # arguably wants a wider petting ellipse than a shaded one. Merged per module
+    # rather than replaced, so overriding one constant does not drop the rest of
+    # that module's block.
+    for module, consts in t.get("behaviour", {}).items():
+        BEHAVIOUR.setdefault(module, {}).update(consts)
     global THEME_CFG
     THEME_CFG = t
     WHITE_PARTS = t.get("white_parts", set())
@@ -302,9 +308,28 @@ def star(img, cx, cy, arm, color):
 
 
 def build_overlays():
-    """The status glyph set. Never part of ORDER, so it never enters the hit mask
-    and never shows up in the default pose or the silhouette test."""
+    """Every sprite drawn ABOVE the cat but not part of it: the agent status glyphs
+    and the reaction sprites.
+
+    None of them is in ORDER, so none enters the draw stack, the hit mask, the
+    default pose or the silhouette test -- a thought bubble must never make an empty
+    corner pixel clickable.
+
+    Each carries its own staging:
+      `slots`  how many may be on screen at once. The view preallocates exactly this
+               many layers, so an overlay never allocates inside a frame.
+      `follow` a body part whose offset the sprite rides. A status glyph pinned to
+               the head drifts with the head turn instead of sitting rigidly in the
+               corner; steam and hearts carry their own motion and follow nothing.
+
+    Every sprite is drawn INSIDE the 48px canvas on purpose. The cat's own
+    coordinates are the contract with the runtime, and a sprite placed outside them
+    would depend on how much transparent margin the panel happens to carry.
+    """
     ov = {}
+
+    def add(name, img, slots=1, follow=None):
+        ov[name] = {"img": img, "slots": slots, "follow": follow}
 
     # --- thinking: an accumulating trail of dots -------------------------
     for n in (1, 2, 3):
@@ -312,14 +337,14 @@ def build_overlays():
         for (x, y, side) in OVERLAY_G["think_dots"][:n]:
             block(img, x, y, x + side - 1, y + side - 1, "accent")
         outline(img)
-        ov[f"think_{n}"] = img
+        add(f"think_{n}", img, follow="head")
 
     # --- celebrating: sparkles, alternating which side is bigger ---------
     for i, (al, ar) in enumerate(((2, 1), (1, 2)), start=1):
         img = new_layer()
         star(img, *OVERLAY_G["spark_l"], arm=al, color="heart")
         star(img, *OVERLAY_G["spark_r"], arm=ar, color="heart")
-        ov[f"spark_{i}"] = img
+        add(f"spark_{i}", img, follow="head")
 
     # --- errored: one sweat drop -----------------------------------------
     img = new_layer()
@@ -328,7 +353,7 @@ def build_overlays():
     block(img, dx - 1, dy, dx + 1, dy + 1, "accent")
     px(img, dx, dy + 2, "accent")
     outline(img)
-    ov["sad_1"] = img
+    add("sad_1", img, follow="head")
 
     # --- needs permission: a bouncing exclamation mark --------------------
     ax, ay = OVERLAY_G["alert"]
@@ -338,7 +363,34 @@ def build_overlays():
         block(img, ax, top, ax + 1, top + 4, "hot")      # the bar
         block(img, ax, top + 6, ax + 1, top + 7, "hot")  # the dot
         outline(img)
-        ov[f"alert_{i}"] = img
+        add(f"alert_{i}", img, follow="head")
+
+    # --- overheating: three puffs of falling size, curling up and right ---
+    # Beside the head rather than above it: the ears already own that space, and
+    # this leaves ~11px of clear canvas to rise into.
+    img = new_layer()
+    for cx, cy, r in ((42, 20, 2.4), (43.4, 17.6, 1.7), (41.4, 16.0, 1.2)):
+        fill_spans(img, disc_spans(cx, cy, r), "accent")
+    outline(img)
+    add("steam", img, slots=3)
+
+    # --- being petted: the classic 7x6 pixel heart, outlined like every
+    # other part, anchored on the brow with room to float up.
+    img = new_layer()
+    rows = [
+        ".XX.XX.",
+        "XXXXXXX",
+        "XXXXXXX",
+        ".XXXXX.",
+        "..XXX..",
+        "...X...",
+    ]
+    for dy, row in enumerate(rows):
+        for dx, ch in enumerate(row):
+            if ch == "X":
+                px(img, 21 + dx, 14 + dy, "heart")
+    outline(img)
+    add("heart", img, slots=3)
 
     return ov
 
@@ -857,15 +909,38 @@ ORDER = [
     "face",
 ]
 
+# ---------------------------------------------------------------------------
+# Overheat: a palette remap, not a second set of drawings.
+#
+# The palette was locked with `hot`/`hot_sh` reserved for exactly this, and the
+# remap is why the state costs no new art: we re-run the SAME generator with the
+# coat keys pointed at the hot ones, so every hot part is pixel-for-pixel its base
+# part with different ink. Because only colours change, the alpha -- and therefore
+# the crop box -- is identical, which is what lets the runtime cross-fade the two
+# images as one stationary layer pair.
+#
+# `coat_hi` maps to `hot` rather than to a third red: adding a `hot_hi` would take
+# the locked palette to 17 colours, and a flushed cat losing its key-lit rim is the
+# correct read anyway.
+# ---------------------------------------------------------------------------
+HOT_REMAP = {"coat_hi": "hot", "coat": "hot", "coat_sh": "hot_sh"}
 
+# ---------------------------------------------------------------------------
 # Per-module behaviour tuning, emitted into the atlas so that no timing or
 # magnitude constant has to live in Swift (see CLAUDE.md, architecture rule 1).
-# The runtime reads these by module id; anything a theme omits falls back to the
-# default compiled into the module.
+# Keeping the numbers here means a theme can ship a lazier or a twitchier cat
+# without a rebuild, a tuning pass is a JSON diff rather than a recompile, and a
+# future Windows port reads exactly the same table.
 #
-# Drag constants are quoted in the units the runtime uses: logical pixels, and
-# "per 60Hz frame" for the spring/damping terms, which the runtime converts to
-# be frame-rate independent at our 120Hz tick.
+# The runtime reads these by module id, then by constant name. A module that needs
+# a key the theme does not carry says so loudly on stderr; the drag module, which
+# predates that rule, still falls back to a default compiled into itself.
+#
+# Units are seconds, LOGICAL pixels (the 48px canvas, not screen points) and
+# logical px/sec. Anything named `*_per_frame` — including the drag springs — is
+# quoted at a nominal 60fps and normalised by dt at runtime, so the 120Hz tick
+# behaves identically.
+# ---------------------------------------------------------------------------
 BEHAVIOUR = {
     "drag": {
         # A click only becomes a drag once the pointer clears this, or every
@@ -906,24 +981,130 @@ BEHAVIOUR = {
         # side for the duration of a drag; see DragModule.
         "pad_px": 12,
     },
+
+    # --- kneading -----------------------------------------------------------
+    # The gate: react only once `burst_keys` land inside `burst_window`. Since the
+    # runtime hands modules a sliding-window RATE, that condition is exactly
+    # kps >= burst_keys / burst_window -- an isolated keypress cannot reach it.
+    "typing": {
+        "burst_keys": 5.0,
+        "burst_window": 2.0,
+        "release_delay": 0.18,   # back to idle this long after the last key
+        "paw_period": 0.17,      # one paw stroke; paws alternate each stroke
+        "paw_lift": 2.4,
+        "paw_reach": 1.4,
+        "body_bob": 0.8,
+        "squash": 0.03,
+        "attack": 0.10,          # seconds to reach full amplitude
+        "decay": 0.16,           # seconds to fall back out of it
+    },
+
+    # --- overheat -----------------------------------------------------------
+    # A continuous curve, never a binary state. Zero below kps_min so ordinary
+    # typing never reddens the cat; 1.0 at kps_max. The exponent front-loads the
+    # curve's flat part into the middle of the range, so the tint only becomes
+    # obvious when the typing is genuinely frantic.
+    "overheat": {
+        "kps_min": 4.0,
+        "kps_max": 14.0,
+        "curve": 1.5,
+        "ease_per_frame": 0.10,
+        "state_at": 0.55,        # heat above which overheat outranks kneading
+        "steam_at": 0.30,
+        "steam_period": 0.85,
+        "steam_rise": 11.0,
+    },
+
+    # --- hunting ------------------------------------------------------------
+    # An energy accumulator that rewards REVERSALS, not speed. A straight sweep
+    # only ever earns the speed term, whose ceiling (gain * excess / (1 - decay))
+    # is deliberately below the trigger; a wiggle earns reversal bonuses on top and
+    # crosses it within two or three direction changes.
+    "hunt": {
+        "decay_per_frame": 0.82,
+        "speed_min": 300.0,
+        "speed_gain_per_frame": 0.000034,
+        "reverse_lag": 0.06,     # compare against velocity this long ago
+        "reverse_dot": -0.28,    # cos of ~106 degrees
+        "reverse_speed": 520.0,
+        "reverse_bonus": 0.62,
+        "reverse_refractory": 0.09,
+        "accel_min": 12000.0,
+        "accel_gain_per_frame": 0.0000009,
+        "trigger": 1.0,
+        "reset": 0.35,           # not 0 -- keep stalking cheap to re-trigger
+        "crouch": 1.1,
+        "recover": 0.4,
+        "attack": 0.12,
+        "squash": 0.93,
+        "lean": 2.6,
+        "body_lean": 1.2,
+        "paw_reach": 1.6,
+        "wiggle_hz": 5.5,        # the haunch-wiggle before a pounce
+        "wiggle_amp": 0.7,
+    },
+
+    # --- petting ------------------------------------------------------------
+    # The hit region is an ellipse over the head, sized from the head part's own
+    # rectangle in this atlas rather than from a number typed into Swift.
+    "pet": {
+        "ellipse_scale": 1.0,
+        "move_min": 14.0,        # logical px/sec; a parked cursor is not petting
+        "stop_delay": 0.42,
+        "leave_delay": 0.26,
+        "lean": 2.4,
+        "purr_hz": 9.0,
+        "purr_amp": 0.7,
+        "squash": 0.97,
+        "attack": 0.14,
+        "heart_period": 0.55,
+        "heart_rise": 12.0,
+        "heart_drift": 2.5,
+    },
+
+    # --- scrolling ----------------------------------------------------------
+    "scroll": {
+        "hold": 0.52,
+        "bob": 2.0,
+        "bob_hz": 4.5,
+        "paw": 1.6,
+        "attack": 0.06,
+        "decay": 0.18,
+    },
 }
 
 
-def write_part(img, name):
+def write_part(img, name, bbox=None):
     """Tight-crops one layer to a PNG and returns its atlas entry, or None if the
-    layer is empty."""
-    bbox = img.getbbox()
-    if bbox is None:
+    layer is empty.
+
+    An explicit `bbox` pins a variant to its base part's grid instead of cropping
+    it to its own, which is what keeps an overheat coat exactly on top of the coat
+    it replaces.
+    """
+    box = bbox or img.getbbox()
+    if box is None:
         return None
-    img.crop(bbox).save(os.path.join(PARTS, f"{name}.png"))
+    img.crop(box).save(os.path.join(PARTS, f"{name}.png"))
     return {
         "file": f"parts/{name}.png",
-        "x": bbox[0], "y": bbox[1],
-        "w": bbox[2] - bbox[0], "h": bbox[3] - bbox[1],
+        "x": box[0], "y": box[1],
+        "w": box[2] - box[0], "h": box[3] - box[1],
     }
 
 
-def crop_and_write(parts, overlays):
+def build_hot_parts():
+    """Re-runs the generator with the coat keys remapped to the hot ones."""
+    saved = {k: PALETTE[k] for k in HOT_REMAP}
+    for k, v in HOT_REMAP.items():
+        PALETTE[k] = PALETTE[v]
+    try:
+        return build_parts()
+    finally:
+        PALETTE.update(saved)
+
+
+def crop_and_write(parts, overlays, hot_parts=None):
     """Writes tight-cropped PNGs plus the atlas.
 
     Cropping keeps the atlas small, and the recorded offset is what lets the runtime
@@ -938,17 +1119,33 @@ def crop_and_write(parts, overlays):
     }
     for name in [n for n in ORDER if n not in HIDDEN]:
         entry = write_part(parts[name], name)
-        if entry is not None:
-            atlas["parts"][name] = entry
+        if entry is None:
+            continue
+        atlas["parts"][name] = entry
+        # Overheat variant, if the remap actually changed this part. Cropped with
+        # the BASE part's box, not its own, so the two images are the same size at
+        # the same origin and the cross-fade cannot shift a pixel.
+        hot = (hot_parts or {}).get(name)
+        if hot is not None and hot.tobytes() != parts[name].tobytes():
+            bbox = (entry["x"], entry["y"],
+                    entry["x"] + entry["w"], entry["y"] + entry["h"])
+            hot_entry = write_part(hot, f"{name}_hot", bbox)
+            if hot_entry is not None:
+                atlas["parts"][f"{name}_hot"] = hot_entry
+                atlas.setdefault("hot", []).append(name)
 
-    # Overlays are kept OUT of "order" on purpose: order drives both the draw
-    # loop and the click-through hit mask, and a thought bubble must not make
-    # empty corner pixels clickable.
+    # Overlays live in their own table rather than in "parts", and are kept OUT of
+    # "order" on purpose: order drives both the draw loop and the click-through hit
+    # mask, and a thought bubble must not make empty corner pixels clickable.
     ov_parts = {}
-    for name, img in sorted(overlays.items()):
-        entry = write_part(img, name)
-        if entry is not None:
-            ov_parts[name] = entry
+    for name, spec in sorted(overlays.items()):
+        entry = write_part(spec["img"], name)
+        if entry is None:
+            continue
+        entry["slots"] = spec["slots"]
+        if spec["follow"]:
+            entry["follow"] = spec["follow"]
+        ov_parts[name] = entry
     atlas["overlays"] = {"parts": ov_parts, "anims": OVERLAY_ANIMS}
     atlas["anim"] = ANIM
 
@@ -970,7 +1167,11 @@ def crop_and_write(parts, overlays):
         "max_offset": round(G["eye_l"]["r"] - G["pupil_r_px"] - 0.2, 2),
         "centers": {"l": [18, 22], "r": [30, 22]},
     }
-    atlas["behaviour"] = BEHAVIOUR
+    # Sorted so a retune shows up as a diff of the numbers, not of the ordering.
+    atlas["behaviour"] = {
+        module: dict(sorted(consts.items()))
+        for module, consts in sorted(BEHAVIOUR.items())
+    }
 
     # Transparent margin the runtime adds around the cat canvas. The cat's own
     # coordinates never change -- everything above is still in 0..CANVAS -- so a
@@ -1093,7 +1294,7 @@ def main():
     print(f"theme: {theme}")
     parts = build_parts()
     overlays = build_overlays()
-    atlas = crop_and_write(parts, overlays)
+    atlas = crop_and_write(parts, overlays, build_hot_parts())
 
     # Contact sheet: the default pose at 1x/2x/4x/8x, on light and dark, plus the
     # silhouette. These are the readability tests -- if the cat fails any of them
@@ -1139,7 +1340,8 @@ def main():
     base = composite(parts)
     strip = Image.new("RGBA", (CANVAS * len(overlays), CANVAS), (0, 0, 0, 0))
     for i, name in enumerate(sorted(overlays)):
-        strip.paste(Image.alpha_composite(base, overlays[name]), (CANVAS * i, 0))
+        strip.paste(
+            Image.alpha_composite(base, overlays[name]["img"]), (CANVAS * i, 0))
     dark = Image.new("RGBA", strip.size, (28, 28, 32, 255))
     Image.alpha_composite(dark, strip).resize(
         (strip.width * 4, strip.height * 4), Image.NEAREST
@@ -1153,7 +1355,15 @@ def main():
     for n in atlas["order"]:
         if n in atlas["parts"]:
             p = atlas["parts"][n]
-            print(f"  {n:<10} {p['w']:>2}x{p['h']:<2} at ({p['x']:>2},{p['y']:>2})")
+            hot = " +hot" if n in atlas.get("hot", []) else ""
+            print(f"  {n:<10} {p['w']:>2}x{p['h']:<2} at ({p['x']:>2},{p['y']:>2}){hot}")
+    for n, p in sorted(atlas["overlays"]["parts"].items()):
+        follow = f" follows {p['follow']}" if "follow" in p else ""
+        print(f"  {n:<10} {p['w']:>2}x{p['h']:<2} at ({p['x']:>2},{p['y']:>2})"
+              f"  overlay x{p['slots']}{follow}")
+    n_tune = sum(len(v) for v in atlas["behaviour"].values())
+    print(f"  behaviour  {n_tune} tuning constants in "
+          f"{len(atlas['behaviour'])} blocks")
 
 
 if __name__ == "__main__":
