@@ -77,6 +77,10 @@ final class Rig {
     // its shape, the torso elongates, and the paws and tail hang furthest. So the
     // drag gets its own channel that is DISTRIBUTED by each part's depth below
     // the held point, rather than fighting the uniform clamp.
+    /// Size of one device pixel in logical units — 1/renderScale. The rig is told
+    /// rather than asking the view, since it must not hold one.
+    var quantum: CGFloat = 0.5
+
     private(set) var dragStretch: CGFloat = 0
 
     /// Horizontal elongation, for when the cat is being swung sideways.
@@ -312,14 +316,20 @@ final class Rig {
             // sliding apart and tearing the silhouette open.
             let top = part.origin.y
             let bottom = top + part.size.height
-            // Snap the stretched extent to whole LOGICAL pixels before deriving
-            // the scale factor. A continuous factor puts some source rows on two
-            // device pixels and others on one, which reads as smearing -- worse the
-            // further it stretches. Quantising here keeps every row the same size.
-            let stretchedTop = (top + drop(top)).rounded()
-            let stretchedBottom = (bottom + drop(bottom)).rounded()
+            // Snap the stretched extent to the physical pixel grid before deriving
+            // the scale factor. An unquantised factor puts some source rows on two
+            // device pixels and others on one, which reads as smearing.
+            //
+            // Quantising to whole DEVICE pixels rather than whole logical ones
+            // matters: logical quantisation is equally crisp but its steps are
+            // `renderScale` device pixels tall, so a long settle visibly ratchets.
+            // Device quantisation lands on the same physical grid with steps 2-3x
+            // finer, which is the difference between settling and snapping.
+            let q = max(quantum, 0.0001)
+            let stretchedTop = ((top + drop(top)) / q).rounded() * q
+            let stretchedBottom = ((bottom + drop(bottom)) / q).rounded() * q
             let height = max(bottom - top, 0.0001)
-            let k = max(stretchedBottom - stretchedTop, 1) / height
+            let k = max(stretchedBottom - stretchedTop, q) / height
 
             // CatView scales about the atlas pivot, so back out the translation
             // that re-lands the part's top edge where the hang wants it.

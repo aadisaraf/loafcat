@@ -970,12 +970,12 @@ BEHAVIOUR = {
         # Gravity droop while held: springs here and stays, so a motionless cat
         # hangs a little instead of sitting at full stretch forever.
         "hang_rest": 0.60,
-        "hang_rate": 6.0,   # exponential approach; a spring here would overshoot
+        "hang_rate": 3.5,   # exponential approach; a spring here would overshoot
         # How hard it is being thrown around. Rises fast, relaxes slower, decays
         # to nothing when the pointer stops.
         "yank_speed_ref": 380,
         "yank_attack": 14.0,
-        "yank_release": 3.2,
+        "yank_release": 1.5,
         # Smooths the drag speed before it drives the yank. Raw per-tick speed at
         # 120Hz is noise, and the whole-pixel quantiser downstream turns noise into
         # visible flicker.
