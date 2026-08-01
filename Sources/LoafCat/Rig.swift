@@ -70,6 +70,42 @@ final class Rig {
     // --- squash / stretch --------------------------------------------------
     private(set) var squash: CGFloat = 1.0
 
+    // --- drag deformation ---------------------------------------------------
+    // `squash` is a single uniform number clamped to 0.88...1.14, which is right
+    // for breathing and for a landing thump but cannot express being held up by
+    // the scruff: that is not a uniform scale, it is a gradient. The head keeps
+    // its shape, the torso elongates, and the paws and tail hang furthest. So the
+    // drag gets its own channel that is DISTRIBUTED by each part's depth below
+    // the held point, rather than fighting the uniform clamp.
+    private(set) var dragStretch: CGFloat = 0
+    private var dragGrabY: CGFloat = 0
+    private var dragLeanPx: CGFloat = 0
+    private var dragHeadLagPx: CGFloat = 0
+    private var dragHeadSwingShare: CGFloat = 0
+    private var dragShadowShrink: CGFloat = 0
+
+    /// Vertical extent of the drawn cat, taken from the atlas rather than assumed,
+    /// so depth normalises correctly for a theme whose cat is a different height.
+    private let inkTop: CGFloat
+    private let inkBottom: CGFloat
+
+    /// Which deformation rule a part follows. Keyed by name, matching how
+    /// `rebuild` already dispatches — the names are the atlas's contract.
+    private enum DragGroup {
+        case head    // head, ears, face, eyes, pupils, lids: rigid, so the face
+                     // never shears apart into separate pieces
+        case soft    // body, paws, tail: elongate to span their stretched extent
+        case shadow  // stays on the ground and shrinks as the cat leaves it
+    }
+
+    private static func dragGroup(_ name: String) -> DragGroup {
+        switch name {
+        case "shadow": return .shadow
+        case "body", "tail", "paw_l", "paw_r": return .soft
+        default: return .head
+        }
+    }
+
     struct Transform {
         var offset = CGPoint.zero
         var scale = CGSize(width: 1, height: 1)
@@ -83,6 +119,18 @@ final class Rig {
         // The pupil may travel exactly as far as the sclera allows, no further —
         // a pupil that clips outside its eye is the classic rig tell.
         self.pupilRange = atlas.eye.maxOffset
+
+        // Measured, not assumed: the shadow is excluded because it is cast ON the
+        // floor rather than part of the body, and including it would put the
+        // bottom of the pendulum below the paws.
+        var top = CGFloat.greatestFiniteMagnitude
+        var bottom: CGFloat = 0
+        for (name, part) in atlas.parts where name != "shadow" {
+            top = min(top, part.origin.y)
+            bottom = max(bottom, part.origin.y + part.size.height)
+        }
+        self.inkTop = top.isFinite ? top : 0
+        self.inkBottom = max(bottom, self.inkTop + 1)
     }
 
     /// `cursor` is the cursor position relative to the cat's centre, in logical px.
@@ -183,9 +231,81 @@ final class Rig {
             default:
                 break
             }
+            applyDrag(to: &tr, part: name)
             t[name] = tr
         }
         transforms = t
+    }
+
+    /// Folds the hang and the swing into a part's transform.
+    ///
+    /// Two independent effects share one pass because both are functions of the
+    /// same quantity: how far below the held point the part sits.
+    private func applyDrag(to tr: inout Transform, part name: String) {
+        guard dragStretch != 0 || dragLeanPx != 0 else { return }
+        guard let part = atlas.parts[name] else { return }
+
+        let group = Self.dragGroup(name)
+        let hang = inkBottom - dragGrabY
+
+        // --- vertical: the hang -------------------------------------------
+        // Displacement grows with distance BELOW the held point; anything above
+        // it is being supported and does not fall.
+        func drop(_ y: CGFloat) -> CGFloat { dragStretch * max(0, y - dragGrabY) }
+
+        switch group {
+        case .head:
+            // Rigid, and deliberately barely moves: a head that stretched with
+            // the body would drag the eyes and muzzle out of register. The small
+            // lag is what stops it reading as bolted on.
+            tr.offset.y += dragStretch * dragHeadLagPx
+
+        case .soft:
+            // Scale the part to exactly span its own stretched extent, so the
+            // torso ELONGATES to bridge the gap instead of the head and paws
+            // sliding apart and tearing the silhouette open.
+            let top = part.origin.y
+            let bottom = top + part.size.height
+            let stretchedTop = top + drop(top)
+            let stretchedBottom = bottom + drop(bottom)
+            let height = max(bottom - top, 0.0001)
+            let k = (stretchedBottom - stretchedTop) / height
+
+            // CatView scales about the atlas pivot, so back out the translation
+            // that re-lands the part's top edge where the hang wants it.
+            let pivotY = atlas.pivot(for: name).y
+            tr.offset.y += stretchedTop - (pivotY + (top - pivotY) * k)
+            tr.scale.height *= k
+
+        case .shadow:
+            // A lifted cat casts a smaller contact shadow. Selling the lift is
+            // most of what makes the drag read as vertical at all.
+            let shrink = 1 - min(1, dragStretch) * dragShadowShrink
+            tr.scale.width *= max(shrink, 0.05)
+        }
+
+        // --- horizontal: the swing ----------------------------------------
+        // Depth-quadratic, so the top barely moves and the bottom swings fully.
+        // The brief says each part's share is proportional to d^2 - dPrev^2; those
+        // increments telescope, so a part's CUMULATIVE share is just d^2 — which
+        // is what gets applied here.
+        //
+        // Rounded to a whole logical pixel: this is an integer perpendicular
+        // shear, never a rotation. Rotating a pixel-art layer resamples it off
+        // the grid and the jaggies are unrecoverable.
+        if dragLeanPx != 0 {
+            let share: CGFloat
+            if group == .shadow {
+                share = 0                       // the floor does not swing
+            } else if group == .head {
+                share = dragHeadSwingShare      // a pixel of drift, no more
+            } else {
+                let anchorY = atlas.pivot(for: name).y
+                let d = min(max((anchorY - dragGrabY) / max(hang, 0.0001), 0), 1)
+                share = d * d
+            }
+            tr.offset.x += (dragLeanPx * share).rounded()
+        }
     }
 
     /// Drives squash directly — used by drag, landing and the agent-done hop.
@@ -193,5 +313,37 @@ final class Rig {
         // Clamped hard. Beyond this range pixel art stops reading as the same
         // character and starts reading as a rendering bug.
         squash = min(max(v, 0.88), 1.14)
+    }
+
+    /// Drives the hang and the swing. Separate from `setSquash` because this one
+    /// is a gradient down the body rather than a single uniform number, and
+    /// because it legitimately needs to exceed the uniform squash clamp.
+    ///
+    /// - Parameters:
+    ///   - stretch: how much longer the hanging part of the cat is, as a
+    ///     fraction. 0 is at rest.
+    ///   - grabY: the held point in atlas coordinates, y-down.
+    ///   - leanPx: horizontal travel of the LOWEST part, in logical pixels.
+    ///     Distributed upward as an integer shear.
+    ///   - headLagPx: how far the head trails the body at full stretch.
+    ///   - headSwingShare: the head's fixed share of the swing.
+    ///   - shadowShrink: how much of the contact shadow is lost at full stretch.
+    func setDrag(
+        stretch: CGFloat, grabY: CGFloat, leanPx: CGFloat,
+        headLagPx: CGFloat, headSwingShare: CGFloat, shadowShrink: CGFloat
+    ) {
+        dragStretch = max(0, stretch)
+        dragGrabY = min(max(grabY, inkTop), inkBottom - 1)
+        dragLeanPx = leanPx
+        dragHeadLagPx = headLagPx
+        dragHeadSwingShare = headSwingShare
+        dragShadowShrink = shadowShrink
+    }
+
+    /// Clears the drag channel. Cheaper and more obvious at the call site than
+    /// passing six zeroes.
+    func clearDrag() {
+        dragStretch = 0
+        dragLeanPx = 0
     }
 }
