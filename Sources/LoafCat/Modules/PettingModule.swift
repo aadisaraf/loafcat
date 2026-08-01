@@ -36,6 +36,11 @@ final class PettingModule: CatModule, AtlasTuned {
     private var lastStroke: CFAbsoluteTime = 0
     private var leftAt: CFAbsoluteTime?
     private var elapsed: CGFloat = 0
+
+    /// Logical pixels travelled inside the head region since arriving. Petting
+    /// engages only once this clears `strokeMin`.
+    private var stroked: CGFloat = 0
+    private var strokeMin: CGFloat = 14
     private var heartPhase: CGFloat = 0
 
     func retune(_ atlas: Atlas) {
@@ -54,6 +59,7 @@ final class PettingModule: CatModule, AtlasTuned {
         stopDelay = Double(b.f("pet.stop_delay"))
         leaveDelay = Double(b.f("pet.leave_delay"))
         lean = b.f("pet.lean")
+        strokeMin = b.f("pet.stroke_min_px")
         purrHz = b.f("pet.purr_hz")
         purrAmp = b.f("pet.purr_amp")
         petSquash = b.f("pet.squash")
@@ -89,11 +95,23 @@ final class PettingModule: CatModule, AtlasTuned {
         let inside = u * u + w * w <= 1
         let moving = hypot(ctx.cursorVelocity.x, ctx.cursorVelocity.y) >= moveMin
 
+        // Being inside and moving is not yet petting. Merely crossing the cat on
+        // the way somewhere else does both, and the cat purring at a cursor in
+        // transit reads as broken. Require a deliberate stroke: some distance
+        // actually travelled ACROSS the head before it counts.
         if inside {
             leftAt = nil
-            if moving { lastStroke = now }
+            if moving {
+                stroked += hypot(ctx.cursorVelocity.x, ctx.cursorVelocity.y) * ctx.dt
+                if stroked >= strokeMin { lastStroke = now }
+            } else {
+                // Parked mid-stroke: bleed the credit away so resuming after a long
+                // pause needs a fresh stroke rather than one twitch.
+                stroked = max(0, stroked - strokeMin * ctx.dt / max(stopDelay, 0.001))
+            }
         } else if leftAt == nil {
             leftAt = now
+            stroked = 0     // arriving again starts the stroke over
         }
 
         let stalled = now - lastStroke > stopDelay
@@ -102,6 +120,7 @@ final class PettingModule: CatModule, AtlasTuned {
 
         amp += ((petting ? 1 : 0) - amp) * (1 - exp(-ctx.dt / attack))
         stage.metric("pet.in", inside ? 1 : 0)
+        stage.metric("pet.stroked", stroked)
         stage.metric("pet.amp", amp)
         guard amp > 0.002 else { return .none }
 

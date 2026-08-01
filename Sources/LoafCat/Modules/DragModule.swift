@@ -35,7 +35,16 @@ final class DragModule: CatModule {
     private struct Tuning {
         var deadzonePx: CGFloat = 4
         var stretchHoldMs: CGFloat = 900
-        var stretchMax: CGFloat = 0.32
+        var stretchMax: CGFloat = 1.00
+        var hangRest: CGFloat = 0.34
+        var hangStiffness: CGFloat = 40
+        var hangDamping: CGFloat = 0.82
+        var yankSpeedRef: CGFloat = 900
+        var yankAttack: CGFloat = 14
+        var yankRelease: CGFloat = 3.2
+        var horizontalGain: CGFloat = 0.85
+        var verticalYield: CGFloat = 0.55
+        var dirSmoothing: CGFloat = 12
         var releaseStiffness: CGFloat = 468
         var releaseDamping: CGFloat = 0.78
         var releaseVelocityGain: CGFloat = 0.35
@@ -65,6 +74,15 @@ final class DragModule: CatModule {
             deadzonePx = v("deadzone_px", deadzonePx)
             stretchHoldMs = v("stretch_hold_ms", stretchHoldMs)
             stretchMax = v("stretch_max", stretchMax)
+            hangRest = v("hang_rest", hangRest)
+            hangStiffness = v("hang_stiffness", hangStiffness)
+            hangDamping = v("hang_damping", hangDamping)
+            yankSpeedRef = v("yank_speed_ref", yankSpeedRef)
+            yankAttack = v("yank_attack", yankAttack)
+            yankRelease = v("yank_release", yankRelease)
+            horizontalGain = v("horizontal_gain", horizontalGain)
+            verticalYield = v("vertical_yield", verticalYield)
+            dirSmoothing = v("dir_smoothing", dirSmoothing)
             releaseStiffness = v("release_stiffness", releaseStiffness)
             releaseDamping = v("release_damping", releaseDamping)
             releaseVelocityGain = v("release_velocity_gain", releaseVelocityGain)
@@ -96,6 +114,14 @@ final class DragModule: CatModule {
     private var pendingDelta = CGPoint.zero
     private var grabY: CGFloat = 30
     private var heldSeconds: CGFloat = 0
+
+    /// Gravity droop while held. Separate from `yank` so the two can settle
+    /// independently -- see the comment in the .dragging case.
+    private var hang = Spring(stiffness: 40, damping: 0.82)
+    private var yank: CGFloat = 0
+    private var stretchX: CGFloat = 0
+    private var dragDir = CGPoint.zero
+    private var lastHShare: CGFloat = 0
 
     // --- hang ---------------------------------------------------------------
     private var stretch: CGFloat = 0
@@ -193,6 +219,10 @@ final class DragModule: CatModule {
     private func beginDrag() {
         phase = .dragging
         heldSeconds = 0
+        hang.snap(to: 0)
+        yank = 0
+        stretchX = 0
+        dragDir = .zero
         stretch = 0
         angle = 0
         angVel = 0
@@ -245,11 +275,44 @@ final class DragModule: CatModule {
 
         case .dragging:
             heldSeconds += dt
-            // HOLD TIME, not drag distance. Hold still and the cat still stretches.
-            let holdT = min(1, heldSeconds * 1000 / max(t.stretchHoldMs, 1))
-            stretch = easeInOutCubic(holdT) * t.stretchMax
-
             let moved = consumePointer(ctx)
+
+            // Two components, because a single hold-time ramp could only ever
+            // increase -- so the cat reached full stretch and stayed there for as
+            // long as you held it, with no way to relax.
+            //
+            //   hang  gravity. Springs to a modest resting droop and stays.
+            //   yank  how hard it is being thrown around right now. Rises fast,
+            //         falls slower, and decays to nothing when you stop moving.
+            //
+            // Together: pick it up and it droops; whip it about and it elongates;
+            // hold still and it settles back to the droop; drop it and it springs
+            // home. That is the shape the original has.
+            let speed = hypot(moved.x, moved.y) / max(dt, 0.0001)
+            hang.stiffness = t.hangStiffness
+            hang.damping = t.hangDamping
+            hang.step(to: t.hangRest, dt: dt)
+
+            let headroom = max(t.stretchMax - t.hangRest, 0)
+            let yankTarget = min(speed / max(t.yankSpeedRef, 1), 1) * headroom
+            // Asymmetric: a yank must register on the frame it happens, but
+            // relaxing slowly is what makes it read as weight rather than a snap.
+            let rate = yankTarget > yank ? t.yankAttack : t.yankRelease
+            yank += (yankTarget - yank) * min(1, rate * dt)
+
+            stretch = min(hang.value + yank, t.stretchMax)
+
+            // Which way is it being pulled? Smoothed, or pointer jitter flips the
+            // axis every frame. Gravity keeps a floor under the vertical share, so
+            // a purely sideways drag still hangs a little.
+            dragDir.x += (moved.x - dragDir.x) * min(1, t.dirSmoothing * dt)
+            dragDir.y += (moved.y - dragDir.y) * min(1, t.dirSmoothing * dt)
+            let mag = hypot(dragDir.x, dragDir.y)
+            let hShare = mag > 0.01 ? abs(dragDir.x) / mag : 0
+            lastHShare = hShare
+            stretchX = stretch * hShare * t.horizontalGain
+            stretch *= 1 - hShare * t.verticalYield
+
             stepSwing(dt: dt, f: f, pointerDX: moved.x, dragging: true)
 
             // main.swift toggles this from the silhouette every tick, and the
@@ -268,6 +331,11 @@ final class DragModule: CatModule {
                 release.snap(to: 0)
             }
             stretch = release.value
+            // The horizontal channel rides the same spring so the cat cannot land
+            // still elongated sideways.
+            stretchX = release.value * lastHShare * t.horizontalGain
+            yank = 0
+            hang.snap(to: 0)
             _ = consumePointer(nil)
             stepSwing(dt: dt, f: f, pointerDX: 0, dragging: false)
 
@@ -285,6 +353,7 @@ final class DragModule: CatModule {
         // being uniform is right for an impact, where the whole cat compresses.
         v.rig.setDrag(
             stretch: max(0, stretch),
+            stretchX: max(0, stretchX),
             grabY: grabY,
             leanPx: sin(angle) * t.swingLengthPx,
             headLagPx: t.headLagPx,
@@ -441,7 +510,7 @@ private final class Demo {
             return String(repeating: " ", count: max(0, width - text.count)) + text
         }
         print("t=\(f(t, 3, 7)) \(s.phase.padding(toLength: 4, withPad: " ", startingAt: 0))"
-              + " hold=\(f(s.holdT, 3, 6))"
+              + " hold=\(f(s.holdT, 3, 6)) sx=\(f(s.stretchX, 3, 6))"
               + " stretch=\(f(s.stretch, 4, 7))"
               + " dropPx=\(f(s.dropPx, 2, 6))"
               + " squash=\(f(s.squash, 3, 6))"
@@ -482,7 +551,7 @@ extension DragModule {
 
     /// Read-only snapshot for the scripted demo and any future debug overlay.
     fileprivate var debugState:
-        (phase: String, holdT: CGFloat, stretch: CGFloat, dropPx: CGFloat,
+        (phase: String, holdT: CGFloat, stretchX: CGFloat, stretch: CGFloat, dropPx: CGFloat,
          squash: CGFloat, angleDeg: CGFloat, angVel: CGFloat, leanPx: CGFloat) {
         let name: String
         switch phase {
@@ -495,6 +564,7 @@ extension DragModule {
         let bottom = view.map { inkBottom($0.atlas) } ?? 47
         return (name,
                 phase == .dragging ? hold : 0,
+                stretchX,
                 stretch,
                 max(0, stretch) * max(0, bottom - grabY),
                 1 + min(0, stretch) * t.landingSquashGain,

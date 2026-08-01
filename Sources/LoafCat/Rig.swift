@@ -78,6 +78,14 @@ final class Rig {
     // drag gets its own channel that is DISTRIBUTED by each part's depth below
     // the held point, rather than fighting the uniform clamp.
     private(set) var dragStretch: CGFloat = 0
+
+    /// Horizontal elongation, for when the cat is being swung sideways.
+    ///
+    /// A gel stretches along the axis it is being pulled, not always downward.
+    /// Kept as a separate channel rather than rotating the hang, because rotating
+    /// pixel art destroys the grid -- so we decompose the pull into a vertical
+    /// component (this rig already had) and a horizontal one (this).
+    private(set) var dragStretchX: CGFloat = 0
     private var dragGrabY: CGFloat = 0
     private var dragLeanPx: CGFloat = 0
     private var dragHeadLagPx: CGFloat = 0
@@ -277,7 +285,7 @@ final class Rig {
     /// Two independent effects share one pass because both are functions of the
     /// same quantity: how far below the held point the part sits.
     private func applyDrag(to tr: inout Transform, part name: String) {
-        guard dragStretch != 0 || dragLeanPx != 0 else { return }
+        guard dragStretch != 0 || dragLeanPx != 0 || dragStretchX != 0 else { return }
         guard let part = atlas.parts[name] else { return }
 
         let group = Self.dragGroup(name)
@@ -311,6 +319,14 @@ final class Rig {
             let pivotY = atlas.pivot(for: name).y
             tr.offset.y += stretchedTop - (pivotY + (top - pivotY) * k)
             tr.scale.height *= k
+
+            // Horizontal elongation, with the vertical squeezed to conserve
+            // volume. Without the inverse the cat visibly gains mass when swung.
+            if dragStretchX != 0 {
+                let kx = 1 + dragStretchX
+                tr.scale.width *= kx
+                tr.scale.height /= sqrt(kx)
+            }
 
         case .shadow:
             // A lifted cat casts a smaller contact shadow. Selling the lift is
@@ -364,10 +380,11 @@ final class Rig {
     ///   - headSwingShare: the head's fixed share of the swing.
     ///   - shadowShrink: how much of the contact shadow is lost at full stretch.
     func setDrag(
-        stretch: CGFloat, grabY: CGFloat, leanPx: CGFloat,
+        stretch: CGFloat, stretchX: CGFloat = 0, grabY: CGFloat, leanPx: CGFloat,
         headLagPx: CGFloat, headSwingShare: CGFloat, shadowShrink: CGFloat
     ) {
         dragStretch = max(0, stretch)
+        dragStretchX = max(0, stretchX)
         dragGrabY = min(max(grabY, inkTop), inkBottom - 1)
         dragLeanPx = leanPx
         dragHeadLagPx = headLagPx
@@ -379,6 +396,7 @@ final class Rig {
     /// passing six zeroes.
     func clearDrag() {
         dragStretch = 0
+        dragStretchX = 0
         dragLeanPx = 0
     }
 }
