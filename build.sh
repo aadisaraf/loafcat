@@ -31,11 +31,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Globbed, not listed: a hardcoded file list means every new module breaks the
+# build until someone remembers to add it here. main.swift goes last because it
+# holds the top-level code.
+SOURCES=$(find Sources/LoafCat -name '*.swift' ! -name 'main.swift' | sort)
 swiftc -O \
   -o "$APP/Contents/MacOS/LoafCat" \
-  Sources/LoafCat/Atlas.swift \
-  Sources/LoafCat/Rig.swift \
-  Sources/LoafCat/CatView.swift \
+  $SOURCES \
   Sources/LoafCat/main.swift 2>&1 | grep -v "^$" || true
 
 if [ ! -f "$APP/Contents/MacOS/LoafCat" ]; then

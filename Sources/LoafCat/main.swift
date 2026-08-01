@@ -46,7 +46,16 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// Typing rate over a sliding window, for kneading and overheat.
     private var keyStamps: [CFAbsoluteTime] = []
     private var lastKeyCount: UInt32 = 0
+    private var lastScrollCount: UInt32 = 0
     private let keyWindow: CFAbsoluteTime = 1.5
+
+    /// Features live here, one file each. See CatModule.swift.
+    let modules = ModuleRegistry()
+
+    /// Smoothed cursor velocity, in logical px/sec. Raw frame-to-frame deltas are
+    /// far too noisy for a velocity threshold to be usable.
+    private var smoothedVelocity = CGPoint.zero
+    private var lastCursor: CGPoint?
 
     /// Integer only -- a fractional scale turns pixel art to mush and cannot be
     /// fixed downstream. 2x is ~96pt, which is the size desktop pets settle on.
@@ -94,6 +103,8 @@ final class CatController: NSObject, NSApplicationDelegate {
 
         buildTray()
         lastKeyCount = InputTelemetry.keyCount()
+        lastScrollCount = InputTelemetry.scrollCount()
+        registerModules()
 
         // One 120Hz timer drives everything: cursor tracking, click-through
         // hit-testing, typing rate. Polling rather than event monitors is what
@@ -114,6 +125,12 @@ final class CatController: NSObject, NSApplicationDelegate {
         Quit from the menu bar cat, or Ctrl+C.
         """)
         fflush(stdout)
+    }
+
+    /// Every feature is registered here and nowhere else. Adding one should be a
+    /// single line plus a single new file under Modules/.
+    private func registerModules() {
+        // (modules are added on feature branches)
     }
 
     /// Assets live next to the executable in a packaged app, and at the repo root
@@ -254,7 +271,37 @@ final class CatController: NSObject, NSApplicationDelegate {
             // Flip: screen y is up, the rig thinks in y-down like the atlas.
             y: -(mouse.y - centre.y) / renderScale)
 
-        rig.update(dt: dt, cursor: cursor)
+        // Exponential moving average. Raw per-frame deltas at 120Hz are far too
+        // noisy for any velocity threshold to be usable against.
+        if let prev = lastCursor, dt > 0 {
+            let vx = (cursor.x - prev.x) / dt
+            let vy = (cursor.y - prev.y) / dt
+            let a: CGFloat = 0.25
+            smoothedVelocity.x += (vx - smoothedVelocity.x) * a
+            smoothedVelocity.y += (vy - smoothedVelocity.y) * a
+        }
+        lastCursor = cursor
+
+        let scroll = InputTelemetry.scrollCount()
+        let scrollDelta = scroll &- lastScrollCount
+        lastScrollCount = scroll
+
+        let ctx = TickContext(
+            dt: dt,
+            cursor: cursor,
+            cursorVelocity: smoothedVelocity,
+            cursorOnCat: onCat,
+            keysPerSecond: CGFloat(Double(keyStamps.count) / keyWindow),
+            // Guard against the counter wrapping or a huge burst after a stall.
+            scrollDelta: scrollDelta < 1000 ? scrollDelta : UInt32(0),
+            secondsSinceKey: InputTelemetry.secondsSinceKey(),
+            frame: frame,
+            scale: renderScale)
+
+        let out = modules.update(ctx)
+        rig.setSquash(out.squash)
+        rig.update(dt: dt, cursor: cursor,
+                   isBlinkSuppressed: modules.state == .sleeping)
         view.sync()
     }
 }
