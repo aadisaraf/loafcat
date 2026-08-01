@@ -23,6 +23,26 @@ final class CatView: NSView {
     private(set) var hitMask: [Bool]
     private let maskDilation = 6
 
+    /// Spare logical pixels on every side of the canvas.
+    ///
+    /// The cat's ink fills the 48px canvas edge to edge — measured, rows 0 to 46 of
+    /// 48 — so a hanging stretch or a swing has literally nowhere to go and would
+    /// be sliced off by the window. A module that deforms the cat past the canvas
+    /// grows the panel and sets this to match; the art then sits inset inside the
+    /// bigger view instead of moving. 0 at rest, so nothing changes when idle.
+    var padding: CGFloat = 0 {
+        didSet { if padding != oldValue { sync() } }
+    }
+
+    /// Where mouse events go. Set by whichever module handles them, so that
+    /// main.swift does not have to know that dragging exists.
+    weak var modules: ModuleRegistry?
+
+    /// Screen position of the last mouse event, for computing drag deltas.
+    /// Taken from the screen rather than the window because the window MOVES
+    /// during a drag, which makes locationInWindow deltas meaningless.
+    private var lastMouseScreen: CGPoint?
+
     init(atlas: Atlas, rig: Rig, scale: CGFloat) {
         self.atlas = atlas
         self.rig = rig
@@ -121,22 +141,67 @@ final class CatView: NSView {
 
     /// True when a point in view coordinates lands on (or near) the cat.
     func isOnCat(viewPoint: CGPoint) -> Bool {
+        return atlasPoint(viewPoint: viewPoint) != nil
+    }
+
+    /// A point in view coordinates as ATLAS coordinates — logical pixels, y-down —
+    /// or nil when it is not on the cat.
+    ///
+    /// Modules are handed atlas coordinates so they can reason in the same space
+    /// as the rig and cat.json, and never have to know about scale or padding.
+    func atlasPoint(viewPoint: CGPoint) -> CGPoint? {
         let side = Int(atlas.canvas)
-        let lx = Int(viewPoint.x / scale)
-        // View coords are y-up; the mask is y-down.
-        let ly = side - 1 - Int(viewPoint.y / scale)
-        guard lx >= 0, lx < side, ly >= 0, ly < side else { return false }
-        return hitMask[ly * side + lx]
+        let pad = Int(padding)
+        let lx = Int(viewPoint.x / scale) - pad
+        // View coords are y-up; the mask is y-down. The padding shifts the art up
+        // within the enlarged view, so it shifts the mask lookup with it.
+        let ly = (side + pad) - 1 - Int(viewPoint.y / scale)
+        guard lx >= 0, lx < side, ly >= 0, ly < side else { return nil }
+        guard hitMask[ly * side + lx] else { return nil }
+        return CGPoint(x: CGFloat(lx), y: CGFloat(ly))
     }
 
     /// Atlas coordinates are y-down from the top-left; AppKit view coordinates are
     /// y-up from the bottom-left. Converting here, once, keeps every other file able
     /// to think purely in atlas space.
     private func viewPosition(for part: Atlas.Part, offset: CGPoint) -> CGPoint {
-        let ax = (part.origin.x + offset.x).rounded()
+        // Rounded on LOGICAL pixels, and the padding is a whole number of them, so
+        // insetting the art cannot introduce a fractional position.
+        let ax = (part.origin.x + offset.x).rounded() + padding
         let ay = (part.origin.y + offset.y).rounded()
-        let flippedY = atlas.canvas - ay - part.size.height
+        let flippedY = atlas.canvas + padding - ay - part.size.height
         return CGPoint(x: ax * scale, y: flippedY * scale)
+    }
+
+    // MARK: - Mouse
+
+    // The panel is non-activating, so without this the first click on the cat is
+    // spent bringing the app forward instead of reaching the module.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        lastMouseScreen = NSEvent.mouseLocation
+        guard let p = atlasPoint(viewPoint: convert(event.locationInWindow, from: nil)),
+              modules?.mouseDown(at: p) == true
+        else { return }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let now = NSEvent.mouseLocation
+        defer { lastMouseScreen = now }
+        guard let prev = lastMouseScreen else { return }
+        // Logical pixels, y-down, to match the atlas convention every module uses.
+        modules?.mouseDragged(by: CGPoint(
+            x: (now.x - prev.x) / scale,
+            y: -(now.y - prev.y) / scale))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        lastMouseScreen = nil
+        // Deliberately not gated on hit-testing: a release outside the silhouette
+        // is still a release, and swallowing it would strand the cat mid-drag.
+        let p = atlasPoint(viewPoint: convert(event.locationInWindow, from: nil))
+        modules?.mouseUp(at: p ?? .zero)
     }
 
     /// Pushes the rig's transforms onto the layers. Called once per frame.
