@@ -84,3 +84,58 @@ The full state machine ran off these alone: `alert → kneading → OVERHEAT 62%
 2. **Only `.combinedSessionState` is safe to read.** Querying `.hidSystemState` or `.privateState` **blocks indefinitely** for an unprivileged process — the call never returns and never prompts, so the app just hangs with no diagnostic.
 
 **Reproduce:** `./permissions/build.sh && open ./permissions/build/PermissionSpike.app` — must be `open`, not a shell launch, or the reading is contaminated. Output at `~/loafcat-permission-spike.log`.
+
+---
+
+## S3 — Separating a cat-toy wiggle from a fast cursor sweep
+
+**Question:** hunting has to fire when the cursor is waggled like a toy and stay silent when it merely crosses the screen quickly. Is speed enough to tell them apart, and if not, what is?
+
+**Method:** `reactions/` links the real reaction modules and drives them in real time at 120Hz through the same signal path `main.swift` builds — 1.5s sliding keystroke window, cursor in logical pixels relative to the cat's centre, same EMA on velocity. Eleven scenarios, each asserting states that must appear and states that must not.
+
+### Result: **speed is not just insufficient, it points the wrong way.**
+
+| Gesture | Peak speed (logical px/s) | Peak accumulator | Hunts? |
+|---|---:|---:|---|
+| 1700pt straight sweeps, 0.45s each | **2768** | 0.40 | no |
+| ±120pt wiggle at 5Hz | **1459** | 1.13 | yes, at 0.79s |
+| slow aimless mousing | 287 | 0.00 | no |
+
+**The gesture that must trigger is half the speed of the gesture that must not.** Any threshold on `|v|` gets this exactly backwards. What separates them is direction reversals, so the accumulator's reversal bonus (0.62 per turn) has to dominate its speed term, whose ceiling is bounded by construction at `excess × gain / (1 − decay)` and lands at 0.40 for the fastest plausible sweep.
+
+Two details that are not obvious:
+
+- **Compare headings across ~60ms, not across one frame.** At 120Hz, after the EMA the frame-to-frame angle is mostly smoothing noise.
+- **A reversal needs a refractory window.** One real turn spans several frames and otherwise gets paid for four or five times, which lets a single flick trigger a pounce.
+
+Confirmed live against the running app, driven by `CGWarpMouseCursorPosition`: straight sweeps peaked at 2089 logical px/s with the accumulator at 0.39 and **0** hunting frames; a 5Hz wiggle peaked at 1692 and hunted in **42 of 52** sampled frames.
+
+**Trap:** a warp is instantaneous, so moving the cursor between test phases is an infinite-speed reversal and fires the very detector under test. The driver has to glide, not teleport. The first live run "failed" entirely on this.
+
+**Reproduce:** `./reactions/build.sh && ./reactions/build/ReactionSpike` from the repo root.
+
+---
+
+## S4 — Proving the art does not crawl
+
+**Question:** the pixel-art rule is that every offset rounds to a whole *logical* pixel before scaling. After adding per-part module offsets and free-floating overlay sprites, does it still hold at 2x/3x/4x?
+
+**Method:** three approaches, in order of how well they worked.
+
+1. **Screen-grab the running app and check every pixel is on-palette.** Useless here — several cats from parallel sessions sit at the same default screen position, so every capture is a composite of all of them.
+2. **Render the layer tree offscreen and check the same thing.** Removes the desktop from the question but measures Core Graphics' colour management and edge anti-aliasing as much as our geometry, and the rig's breathing is a deliberately fractional *scale* that blends edges by design. ~50% "off-palette" pixels, all of it noise. No conclusion available.
+3. **Walk `view.layer!.sublayers` and assert every position and bound is an exact multiple of the render scale.** This is the actual claim, tested directly.
+
+### Result: **grid intact — 4.4M coordinates, zero off-grid.**
+
+60 simulated seconds per configuration at 120Hz, 3 themes × 3 scales. The first 30s is a pure idle soak; the second 30s drives every module channel at deliberately fractional amplitudes (`sin(t·3.1)·2.37 + 0.41`), because a rounding bug hides completely at integer offsets.
+
+| | coordinates checked | off-grid | worst error |
+|---|---:|---:|---:|
+| mono / tuxedo / cream at 2x, 3x, 4x | 4,404,036 | **0** | 0.000000 lpx |
+
+The one fractional transform left is the squash/breathe **scale** on the body and shadow. It is applied about a pivot rather than by translation, it predates this work, and it is what breathing *is*.
+
+**Worth knowing:** don't test this by rendering and comparing colours. The claim is about geometry; test the geometry.
+
+**Reproduce:** `./pixelgrid/build.sh && ./pixelgrid/build/PixelGridSpike` from the repo root.
