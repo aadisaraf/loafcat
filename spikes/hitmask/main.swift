@@ -139,5 +139,44 @@ for scale in [CGFloat(2), 3, 4] {
           "\(h3) vs \(hits) interactive points")
 }
 
+// ---------------------------------------------------------------------------
+// Shimmer: 60 seconds of idle at 120Hz, checking that every layer lands on a whole
+// LOGICAL pixel. Crawl is not something you can reliably see in a screenshot diff
+// -- breathing and blinking change the picture legitimately -- but it has exactly
+// one cause, and that cause is checkable: a position that is not a whole multiple
+// of the render scale.
+print("\nshimmer: 60s idle at 120Hz")
+for scale in [CGFloat(2), 3, 4] {
+    let rig = Rig(atlas: atlas)
+    let view = CatView(atlas: atlas, rig: rig, scale: scale)
+    view.setFrameSize(CatView.panelSize(atlas: atlas, scale: scale))
+    if let b = atlas.bubble, let r = b.render("Water break!"),
+       let cg = r.image.cgImage() {
+        view.setAux("bubble", image: cg, atlasOrigin: b.origin(for: r),
+                    size: CGSize(width: r.image.width, height: r.image.height))
+    }
+
+    var offenders: [String: CGPoint] = [:]
+    let dt: CGFloat = 1.0 / 120.0
+    var t: CGFloat = 0
+    for frame in 0..<(120 * 60) {
+        t += dt
+        // A slowly wandering cursor, so the springs never settle and every
+        // intermediate value gets exercised rather than just the resting pose.
+        let cursor = CGPoint(x: sin(t * 0.7) * 260, y: cos(t * 0.43) * 190)
+        rig.setSquash(1 + sin(t * 1.9) * 0.09)
+        rig.update(dt: dt, cursor: cursor)
+        view.sync()
+        if frame % 7 != 0 { continue }      // sampling; positions are deterministic
+        for (name, p) in view.debugLayerPositions() {
+            let onGrid = (p.x / scale) == (p.x / scale).rounded()
+                && (p.y / scale) == (p.y / scale).rounded()
+            if !onGrid { offenders[name] = p }
+        }
+    }
+    check("@\(Int(scale))x every layer on a whole logical pixel", offenders.isEmpty,
+          offenders.isEmpty ? "" : "\(offenders)")
+}
+
 print(failures == 0 ? "\nPASS" : "\n\(failures) FAILURES")
 exit(failures == 0 ? 0 : 1)

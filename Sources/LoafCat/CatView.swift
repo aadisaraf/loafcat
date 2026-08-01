@@ -314,6 +314,17 @@ final class CatView: NSView {
                        height: part.size.height)
     }
 
+    /// Every layer's position in points, for the shimmer check in spikes/hitmask.
+    /// If any of these is not an exact multiple of `scale`, a fractional logical
+    /// offset has leaked in and the art will crawl at 2x and 3x.
+    func debugLayerPositions() -> [String: CGPoint] {
+        var out: [String: CGPoint] = [:]
+        for (name, l) in layers { out[name] = l.position }
+        for (name, l) in auxLayers { out["aux:" + name] = l.position }
+        out["#container"] = container.position
+        return out
+    }
+
     /// Pushes the rig's transforms onto the layers. Called once per frame.
     func sync() {
         CATransaction.begin()

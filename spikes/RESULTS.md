@@ -84,3 +84,32 @@ The full state machine ran off these alone: `alert → kneading → OVERHEAT 62%
 2. **Only `.combinedSessionState` is safe to read.** Querying `.hidSystemState` or `.privateState` **blocks indefinitely** for an unprivileged process — the call never returns and never prompts, so the app just hangs with no diagnostic.
 
 **Reproduce:** `./permissions/build.sh && open ./permissions/build/PermissionSpike.app` — must be `open`, not a shell launch, or the reading is contaminated. Output at `~/loafcat-permission-spike.log`.
+
+---
+
+## S3 — `CGBitmapContext` row order, and the hit mask it silently mirrored
+
+**Question:** when you draw a `CGImage` into a `CGBitmapContext` to read its alpha, is buffer row 0 the image's top row or its bottom row?
+
+**Method:** `ear_l.png` is a triangle — PIL confirms **1** opaque pixel in its top row and **5** in its bottom. Draw it through the exact call both `CatView.buildHitMask` and `PixelBitmap` use, then count.
+
+### Result: **buffer row 0 is the image's TOP row.** Both readers had it backwards.
+
+```
+image 15x19   PIL: top row has 1 px, bottom row has many
+memory row 0     -> 1 opaque px
+memory row 18    -> 5 opaque px
+=> memory row 0 IS the image's TOP row
+```
+
+The confusion is real and worth naming: a `CGContext`'s **user space** is y-up with the origin bottom-left, so drawing at `CGRect(0, 0, w, h)` puts the image right way up *in user space*. Its **backing store** is top-down regardless. The two facts are independent, and the y-up one is the one everybody remembers.
+
+**What it cost.** `buildHitMask` indexed `buf[(h - 1 - py) * w + px]`, mirroring every part's alpha inside its own crop box. The 6px dilation smoothed the round parts enough that nobody noticed — the ear triangles were the giveaway, sampled apex-down. Click-through worked; it just didn't match the silhouette near the ears. The same mistake in the new speech-bubble compositor was instant and obvious: every glyph rendered upside down.
+
+### Consequences for the plan
+
+- Read the alpha with `buf[(py * w + px) * 4 + 3]`, `py` counting down from the atlas top. No flip.
+- **A bug that a dilation can hide is a bug that will not be found by looking.** The hit mask needs the kind of check that does not depend on a human noticing 6px — see `spikes/hitmask`, which asserts the interactive area is exactly the mask area × scale², at 2x/3x/4x and under the stretch break's magnification.
+- Anything that composes pixel art at 1x should be dumped as ASCII and diffed against the generator's own preview. Two implementations of the same layout disagreeing is a much louder signal than one implementation looking slightly off.
+
+**Reproduce:** `swiftc -o /tmp/hitmask Sources/LoafCat/{Atlas,CatView,Rig,PixelCanvas,SpeechBubble}.swift spikes/hitmask/main.swift && /tmp/hitmask mono`
