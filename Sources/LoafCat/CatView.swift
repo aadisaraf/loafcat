@@ -9,8 +9,11 @@ import QuartzCore
 /// scale factor, and every position rounded to a whole logical pixel before it
 /// reaches Core Animation.
 final class CatView: NSView {
-    private let atlas: Atlas
-    private let rig: Rig
+    // Readable by modules: the view outlives a theme change and both of these are
+    // replaced with it, so reaching them through the panel's content view is how a
+    // module stays correct across a reload without main.swift re-wiring it.
+    let atlas: Atlas
+    let rig: Rig
     private var layers: [String: CALayer] = [:]
 
     /// Integer only. A fractional scale is the fastest way to make pixel art look

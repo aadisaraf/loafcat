@@ -131,6 +131,7 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// single line plus a single new file under Modules/.
     private func registerModules() {
         // (modules are added on feature branches)
+        modules.register(DragModule(panel: panel, registry: modules))
     }
 
     /// Assets live next to the executable in a packaged app, and at the repo root
