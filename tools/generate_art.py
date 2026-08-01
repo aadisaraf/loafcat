@@ -32,7 +32,7 @@ CANVAS = 48  # logical pixels; rendered at integer scales only (2x/3x/4x)
 # calculation in the runtime already assumes, so widening the panel costs no change
 # to the tracking maths.
 PAD_X = 40
-PAD_Y = 34
+PAD_Y = 43
 
 # ---------------------------------------------------------------------------
 # Palette -- 16 indexed colours, locked. Every pixel must be one of these.
@@ -606,6 +606,15 @@ def build_bubble(out_parts):
     tail = _cell_image(BUBBLE_TAIL, mapping)
     tail.save(os.path.join(out_parts, "bubble_tail.png"))
 
+    # How many lines fit between the cat's ears and the top of the padded canvas.
+    # Derived rather than guessed, so changing PAD_Y or the font cell keeps it true
+    # and the runtime can truncate instead of silently drawing outside the window.
+    text_pad_x, text_pad_y = 4, 3
+    gap, anchor_y = 1, 1
+    tail_drop = tail.height - BUBBLE_TAIL_OVERLAP
+    budget = PAD_Y + anchor_y - gap + 1 - (2 * text_pad_y + tail_drop) + FONT_LINE_GAP
+    max_lines = max(1, budget // (FONT_H + FONT_LINE_GAP))
+
     return {
         "corner": BUBBLE_CORNER,
         "slices": slices,
@@ -615,16 +624,17 @@ def build_bubble(out_parts):
             "overlap": BUBBLE_TAIL_OVERLAP, "tip_x": BUBBLE_TAIL_TIP_X,
         },
         # Inner padding around the text, INCLUDING the 1px outline.
-        "text_pad": [4, 3],
+        "text_pad": [text_pad_x, text_pad_y],
         "line_gap": FONT_LINE_GAP,
+        "max_lines": max_lines,
         # Widest the bubble may grow before text wraps. Sized to the padded panel
         # (see "layout" below) with a 12px margin either side.
         "max_width": 2 * PAD_X + int(CANVAS) - 24,
         "min_width": 2 * BUBBLE_CORNER + 1,
         # Where the tail's tip lands, in cat-canvas coordinates: just above the
         # ears, on the centre line.
-        "anchor": [int(CANVAS) // 2, 1],
-        "gap": 1,
+        "anchor": [int(CANVAS) // 2, anchor_y],
+        "gap": gap,
         "text_color": "#%02X%02X%02X%02X" % PALETTE["bubble_text"],
     }
 

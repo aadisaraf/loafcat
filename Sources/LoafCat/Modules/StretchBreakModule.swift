@@ -41,7 +41,7 @@ final class StretchBreakModule: CatModule {
     /// picking "10 min" waits ten minutes rather than inheriting an old deadline.
     func settingsChanged() {
         guard let iv = interval else { nextFire = .greatestFiniteMagnitude; return }
-        nextFire = CFAbsoluteTimeGetCurrent() + iv
+        nextFire = bus.firstFire(demoDelay: 5, interval: iv)
     }
 
     private var interval: Double? {

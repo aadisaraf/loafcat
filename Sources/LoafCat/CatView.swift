@@ -239,8 +239,13 @@ final class CatView: NSView {
 
             for py in 0..<h {
                 for pxi in 0..<w {
-                    // CGContext origin is bottom-left; the atlas is top-left.
-                    let alpha = buf[((h - 1 - py) * w + pxi) * 4 + 3]
+                    // A CGBitmapContext's user space is y-up, but its backing store
+                    // is top-down: buffer row 0 is the image's TOP row, which is
+                    // already what the atlas means by y. Measured, not assumed —
+                    // see spikes/hitmask. This used to read (h - 1 - py), which
+                    // mirrored every part inside its own crop box; the 6px dilation
+                    // hid it on the round parts and got the ear tips wrong.
+                    let alpha = buf[(py * w + pxi) * 4 + 3]
                     guard alpha > 40 else { continue }
                     let gx = Int(part.origin.x) + pxi
                     let gy = Int(part.origin.y) + py

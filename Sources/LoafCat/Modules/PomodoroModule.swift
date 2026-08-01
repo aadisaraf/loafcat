@@ -158,6 +158,7 @@ final class PomodoroModule: CatModule {
         case .stopped, .done: want = nil
         }
         guard want != shownLabel else { return }
+        let firstOfBlock = shownLabel == nil
         shownLabel = want
 
         guard let text = want, let bubble = atlas.bubble else { clearPlate(); return }
@@ -172,6 +173,10 @@ final class PomodoroModule: CatModule {
             y: (w.timerCY - CGFloat(r.image.height) / 2).rounded())
         view.setAux("pomodoro", image: cg, atlasOrigin: origin,
                     size: CGSize(width: r.image.width, height: r.image.height))
+        if firstOfBlock {
+            bus.log("timer    plate \(r.image.width)x\(r.image.height)px " +
+                    "at atlas (\(Int(origin.x)), \(Int(origin.y))) showing \(text)")
+        }
     }
 
     private func clearPlate() {

@@ -74,7 +74,7 @@ final class WellnessBus {
     /// `--demo-timers`: every interval is compressed and forced on, so the whole
     /// sequence can be watched in a minute instead of two hours.
     let isDemo: Bool
-    private let launched = CFAbsoluteTimeGetCurrent()
+    let launched = CFAbsoluteTimeGetCurrent()
 
     var bubble: BubbleModule!
     weak var stretch: StretchBreakModule?
@@ -92,6 +92,13 @@ final class WellnessBus {
         if isDemo { return demoSeconds }
         guard userMinutes > 0 else { return nil }
         return Double(userMinutes) * 60
+    }
+
+    /// When a timer should first go off. In demo mode the first one is pulled well
+    /// forward, so a 40-second run actually shows the sequence instead of waiting
+    /// out a full compressed interval.
+    func firstFire(demoDelay: Double, interval: Double) -> CFAbsoluteTime {
+        isDemo ? launched + demoDelay : CFAbsoluteTimeGetCurrent() + interval
     }
 
     /// Seconds of keyboard silence past which a reminder is dropped rather than

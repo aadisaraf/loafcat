@@ -75,15 +75,13 @@ struct PixelBitmap {
         }
         guard ok else { return nil }
 
-        // CGContext draws bottom-left first; flip so row 0 is the top like the atlas.
+        // No flip. A CGBitmapContext's USER SPACE is y-up, but its backing store is
+        // top-down: buffer row 0 is the image's top row, which is already what the
+        // atlas means by y. Measured with an asymmetric part (see spikes/hitmask),
+        // because getting this backwards silently mirrors every glyph.
         self.width = w
         self.height = h
-        self.rgba = [UInt8](repeating: 0, count: w * h * 4)
-        for y in 0..<h {
-            let src = (h - 1 - y) * w * 4
-            let dst = y * w * 4
-            for i in 0..<(w * 4) { rgba[dst + i] = buf[src + i] }
-        }
+        self.rgba = buf
     }
 
     subscript(x: Int, y: Int) -> RGBA {

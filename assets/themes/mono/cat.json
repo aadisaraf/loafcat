@@ -194,7 +194,7 @@
   },
   "layout": {
     "pad_x": 40,
-    "pad_y": 34
+    "pad_y": 43
   },
   "bubble": {
     "corner": 3,
@@ -257,6 +257,7 @@
       3
     ],
     "line_gap": 1,
+    "max_lines": 4,
     "max_width": 104,
     "min_width": 7,
     "anchor": [

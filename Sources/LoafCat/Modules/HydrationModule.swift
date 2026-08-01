@@ -34,7 +34,7 @@ final class HydrationModule: CatModule {
 
     func settingsChanged() {
         guard let iv = interval else { nextFire = .greatestFiniteMagnitude; return }
-        nextFire = CFAbsoluteTimeGetCurrent() + iv
+        nextFire = bus.firstFire(demoDelay: 14, interval: iv)
     }
 
     private var interval: Double? {

@@ -98,6 +98,10 @@ struct SpeechBubble {
     let lineGap: Int
     let maxWidth: Int
     let minWidth: Int
+    /// How many lines fit between the cat's ears and the top of the padded window.
+    /// Derived by the art pipeline from the same padding the runtime uses, so a
+    /// long note is truncated rather than drawn outside the panel and clipped.
+    let maxLines: Int
     /// Cat-canvas point the tail tip should touch, and how far above it to sit.
     let anchor: CGPoint
     let gap: Int
@@ -117,7 +121,16 @@ struct SpeechBubble {
               let bl = slices["bl"], let b = slices["b"], let br = slices["br"]
         else { return nil }
 
-        let lines = font.wrap(text, maxWidth: max(maxWidth - 2 * padX, font.spaceWidth))
+        let limit = max(maxWidth - 2 * padX, font.spaceWidth)
+        var lines = font.wrap(text, maxWidth: limit)
+        if withTail && lines.count > maxLines && maxLines > 0 {
+            lines = Array(lines.prefix(maxLines))
+            var last = lines[maxLines - 1]
+            while !last.isEmpty && font.width(of: last + "...") > limit {
+                last.removeLast()
+            }
+            lines[maxLines - 1] = last + "..."
+        }
         let textW = lines.map { font.width(of: $0) }.max() ?? 0
         let textH = lines.count * font.cellHeight + (lines.count - 1) * lineGap
 

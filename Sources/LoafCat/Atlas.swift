@@ -188,6 +188,7 @@ struct Atlas {
             lineGap: b["line_gap"] as? Int ?? 1,
             maxWidth: b["max_width"] as? Int ?? 96,
             minWidth: b["min_width"] as? Int ?? 7,
+            maxLines: b["max_lines"] as? Int ?? 3,
             anchor: CGPoint(x: anchor.first ?? 24, y: anchor.count > 1 ? anchor[1] : 1),
             gap: b["gap"] as? Int ?? 1,
             textColor: RGBA(hex: b["text_color"] as? String ?? "")

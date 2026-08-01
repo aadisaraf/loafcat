@@ -91,6 +91,7 @@ final class BubbleModule: CatModule {
     private func present(_ text: String?) {
         guard let bubble = atlas.bubble, let text, !text.isEmpty else {
             view.setAux("bubble", image: nil, atlasOrigin: .zero, size: .zero)
+            bus.log("bubble   cleared")
             return
         }
         let rendered: SpeechBubble.Rendered
@@ -103,9 +104,11 @@ final class BubbleModule: CatModule {
             return
         }
         guard let cg = rendered.image.cgImage() else { return }
+        let origin = bubble.origin(for: rendered)
         view.setAux(
-            "bubble", image: cg,
-            atlasOrigin: bubble.origin(for: rendered),
+            "bubble", image: cg, atlasOrigin: origin,
             size: CGSize(width: rendered.image.width, height: rendered.image.height))
+        bus.log("bubble   \"\(text)\" \(rendered.image.width)x\(rendered.image.height)px " +
+                "at atlas (\(Int(origin.x)), \(Int(origin.y)))")
     }
 }
