@@ -413,6 +413,57 @@ ORDER = [
 ]
 
 
+# Per-module behaviour tuning, emitted into the atlas so that no timing or
+# magnitude constant has to live in Swift (see CLAUDE.md, architecture rule 1).
+# The runtime reads these by module id; anything a theme omits falls back to the
+# default compiled into the module.
+#
+# Drag constants are quoted in the units the runtime uses: logical pixels, and
+# "per 60Hz frame" for the spring/damping terms, which the runtime converts to
+# be frame-rate independent at our 120Hz tick.
+BEHAVIOUR = {
+    "drag": {
+        # A click only becomes a drag once the pointer clears this, or every
+        # click-to-pet turns into an accidental lift.
+        "deadzone_px": 4,
+        # Stretch is driven by how long the cat has hung, NOT by drag distance.
+        "stretch_hold_ms": 900,
+        "stretch_max": 0.32,
+        # Release spring. Authored at 60Hz as v += -0.13*x; v *= 0.78; x += v --
+        # stiffness is that 0.13 expressed per second squared (0.13 * 60 * 60).
+        "release_stiffness": 468,
+        "release_damping": 0.78,
+        "release_velocity_gain": 0.35,
+        "release_settle_eps": 0.0001,
+        "landing_squash_gain": 0.5,
+        # The scruff. Wherever the body is grabbed, the hang is anchored into
+        # this band, so a paw-grab still has a body length below it to stretch.
+        "grab_min_y": 26,
+        "grab_max_y": 34,
+        "head_lag_px": 1.5,
+        "head_swing_share": 0.08,
+        "shadow_shrink": 0.65,
+        # Pendulum. Angle is simulated in radians and rendered as an integer
+        # horizontal shear of sin(angle) * swing_length_px.
+        "swing_length_px": 14,
+        "swing_max_deg": 45,
+        "swing_impulse": 0.0012,
+        "swing_accel_cap": 20,
+        "swing_vel_smoothing": 0.35,
+        "swing_spring_drag": 0.018,
+        "swing_spring_free": 0.003,
+        "swing_damping_drag": 0.86,
+        "swing_damping_free": 0.962,
+        "swing_settle_eps_rad": 0.007,
+        "swing_settle_eps_vel": 0.003,
+        # The cat's ink fills the 48px canvas edge to edge, so a hanging stretch
+        # or a swing has nowhere to go. The panel grows by this much on every
+        # side for the duration of a drag; see DragModule.
+        "pad_px": 12,
+    },
+}
+
+
 def crop_and_write(parts):
     """Writes tight-cropped PNGs plus the atlas.
 
@@ -458,6 +509,7 @@ def crop_and_write(parts):
         "max_offset": round(G["eye_l"]["r"] - G["pupil_r_px"] - 0.2, 2),
         "centers": {"l": [18, 22], "r": [30, 22]},
     }
+    atlas["behaviour"] = BEHAVIOUR
     with open(os.path.join(OUT, "cat.json"), "w") as f:
         json.dump(atlas, f, indent=2)
     return atlas

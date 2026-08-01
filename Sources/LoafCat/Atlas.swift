@@ -31,6 +31,19 @@ struct Atlas {
     }
     let eye: Eye
 
+    /// Per-module behaviour tuning, keyed by module id then by constant name.
+    ///
+    /// The atlas does not interpret any of it — it is a passthrough so that a
+    /// module's timings and magnitudes live in `cat.json` beside the geometry they
+    /// act on, rather than as literals in Swift. A theme with a heavier cat can
+    /// therefore hang and swing differently without a recompile.
+    let behaviour: [String: [String: CGFloat]]
+
+    /// One tuning constant, with the fallback used when a theme does not override it.
+    func tune(_ module: String, _ key: String, _ fallback: CGFloat) -> CGFloat {
+        behaviour[module]?[key] ?? fallback
+    }
+
     enum LoadError: Error, CustomStringConvertible {
         case missing(String)
         case badJSON(String)
@@ -92,8 +105,22 @@ struct Atlas {
             maxOffset: eyeDef["max_offset"] as? Double ?? 1,
             centers: centers)
 
+        // Parsed value by value rather than with one big cast: JSONSerialization
+        // hands back NSNumber, and a whole-dictionary cast to [String: Double]
+        // fails silently for any theme that writes an integer where a float was
+        // expected — which would drop a module's whole tuning block without a word.
+        var behaviour: [String: [String: CGFloat]] = [:]
+        for (module, consts) in (root["behaviour"] as? [String: [String: Any]] ?? [:]) {
+            var parsed: [String: CGFloat] = [:]
+            for (key, value) in consts {
+                if let n = value as? NSNumber { parsed[key] = CGFloat(n.doubleValue) }
+            }
+            behaviour[module] = parsed
+        }
+
         return Atlas(
-            canvas: canvas, order: order, parts: parts, pivots: pivots, eye: eye)
+            canvas: canvas, order: order, parts: parts, pivots: pivots, eye: eye,
+            behaviour: behaviour)
     }
 
     /// Pivot for a part, defaulting to its centre when the atlas does not name one.
