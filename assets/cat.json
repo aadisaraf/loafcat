@@ -1,0 +1,198 @@
+{
+  "canvas": 48,
+  "palette": {
+    "none": "#00000000",
+    "outline": "#4A4A56FF",
+    "outline_lit": "#6C6C7AFF",
+    "coat_hi": "#4A4A58FF",
+    "coat": "#2E2E38FF",
+    "coat_sh": "#1E1E26FF",
+    "muzzle": "#F5F5F8FF",
+    "ear_inner": "#C6969EFF",
+    "nose": "#E8969EFF",
+    "eye_white": "#FFFFFFFF",
+    "pupil": "#2E2429FF",
+    "shadow": "#3A2C3340",
+    "hot": "#E25E52FF",
+    "hot_sh": "#BA423CFF",
+    "accent": "#8CC8D6FF",
+    "heart": "#F07A98FF"
+  },
+  "order": [
+    "shadow",
+    "tail",
+    "body",
+    "paw_l",
+    "paw_r",
+    "head",
+    "ear_l",
+    "ear_r",
+    "eye_l",
+    "eye_r",
+    "pupil_l",
+    "pupil_r",
+    "lid_l",
+    "lid_r",
+    "face"
+  ],
+  "parts": {
+    "shadow": {
+      "file": "parts/shadow.png",
+      "x": 11,
+      "y": 43,
+      "w": 26,
+      "h": 4
+    },
+    "tail": {
+      "file": "parts/tail.png",
+      "x": 30,
+      "y": 30,
+      "w": 16,
+      "h": 17
+    },
+    "body": {
+      "file": "parts/body.png",
+      "x": 12,
+      "y": 27,
+      "w": 24,
+      "h": 18
+    },
+    "paw_l": {
+      "file": "parts/paw_l.png",
+      "x": 13,
+      "y": 39,
+      "w": 10,
+      "h": 8
+    },
+    "paw_r": {
+      "file": "parts/paw_r.png",
+      "x": 25,
+      "y": 39,
+      "w": 10,
+      "h": 8
+    },
+    "head": {
+      "file": "parts/head.png",
+      "x": 9,
+      "y": 8,
+      "w": 30,
+      "h": 22
+    },
+    "ear_l": {
+      "file": "parts/ear_l.png",
+      "x": 9,
+      "y": 3,
+      "w": 12,
+      "h": 12
+    },
+    "ear_r": {
+      "file": "parts/ear_r.png",
+      "x": 28,
+      "y": 3,
+      "w": 12,
+      "h": 12
+    },
+    "eye_l": {
+      "file": "parts/eye_l.png",
+      "x": 13,
+      "y": 17,
+      "w": 10,
+      "h": 10
+    },
+    "eye_r": {
+      "file": "parts/eye_r.png",
+      "x": 25,
+      "y": 17,
+      "w": 10,
+      "h": 10
+    },
+    "pupil_l": {
+      "file": "parts/pupil_l.png",
+      "x": 16,
+      "y": 20,
+      "w": 4,
+      "h": 4
+    },
+    "pupil_r": {
+      "file": "parts/pupil_r.png",
+      "x": 28,
+      "y": 20,
+      "w": 4,
+      "h": 4
+    },
+    "lid_l": {
+      "file": "parts/lid_l.png",
+      "x": 12,
+      "y": 21,
+      "w": 11,
+      "h": 2
+    },
+    "lid_r": {
+      "file": "parts/lid_r.png",
+      "x": 24,
+      "y": 21,
+      "w": 11,
+      "h": 2
+    },
+    "face": {
+      "file": "parts/face.png",
+      "x": 12,
+      "y": 25,
+      "w": 24,
+      "h": 6
+    }
+  },
+  "pivots": {
+    "body": [
+      24,
+      44
+    ],
+    "head": [
+      24,
+      28
+    ],
+    "ear_l": [
+      15,
+      13
+    ],
+    "ear_r": [
+      33,
+      13
+    ],
+    "tail": [
+      33,
+      43
+    ],
+    "paw_l": [
+      18,
+      46
+    ],
+    "paw_r": [
+      30,
+      46
+    ],
+    "pupil_l": [
+      18,
+      22
+    ],
+    "pupil_r": [
+      30,
+      22
+    ]
+  },
+  "eye": {
+    "sclera_r": 4.6,
+    "pupil_r": 2.4,
+    "max_offset": 2.0,
+    "centers": {
+      "l": [
+        18,
+        22
+      ],
+      "r": [
+        30,
+        22
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+# Build output — regenerate with ./build.sh
+build/
+*.o
+*.swiftmodule
+.build/
+
+# Spike build output — regenerate with the per-spike build.sh
+spikes/*/build/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.xcuserstate
+xcuserdata/
+
+# Local settings that should not be shared
+.claude/settings.local.json
