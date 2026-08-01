@@ -216,6 +216,16 @@ final class DragModule: CatModule {
         guard let v = view else { return .none }
         demo?.advance(self, ctx)
 
+        // Safety net. A mouseUp that never arrives -- the window server drops one
+        // if the panel is reconfigured under a held button -- would otherwise
+        // strand the cat stretched, enlarged and unclickable, with no way back.
+        // pressedMouseButtons is a state query, not an event tap, so it needs no
+        // permission (see CLAUDE.md on why that boundary matters).
+        if !inputIsScripted, phase == .pending || phase == .dragging,
+           NSEvent.pressedMouseButtons & 1 == 0 {
+            if phase == .dragging { endDrag() } else { phase = .idle }
+        }
+
         let dt = ctx.dt
         // Everything below was authored for a 60Hz loop. `f` is this tick measured
         // in those frames, and every per-frame constant is raised to it, which is
