@@ -87,10 +87,6 @@ final class CatView: NSView {
         self.atlas = atlas
         self.rig = rig
         self.scale = scale
-        // One device pixel, in logical units. The rig quantises its deformation to
-        // this so the art always lands on the physical grid, at whatever scale the
-        // view happens to be rendering.
-        rig.quantum = 1 / max(scale, 1)
         let side = Int(atlas.canvas)
         self.hitMask = [Bool](repeating: false, count: side * side)
 

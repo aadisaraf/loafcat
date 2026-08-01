@@ -78,9 +78,8 @@ final class DragModule: CatModule {
         var yankAttack: CGFloat = 14
         var yankRelease: CGFloat = 3.2
         var speedSmoothing: CGFloat = 8.0
-        var horizontalGain: CGFloat = 0.85
-        var verticalYield: CGFloat = 0.55
-        var dirSmoothing: CGFloat = 12
+        var riseRate: CGFloat = 9.0
+        var fallRate: CGFloat = 1.8
         var releaseStiffness: CGFloat = 468
         var releaseDamping: CGFloat = 0.78
         var releaseVelocityGain: CGFloat = 0.35
@@ -119,9 +118,8 @@ final class DragModule: CatModule {
             yankAttack = v("yank_attack", yankAttack)
             yankRelease = v("yank_release", yankRelease)
             speedSmoothing = v("speed_smoothing", speedSmoothing)
-            horizontalGain = v("horizontal_gain", horizontalGain)
-            verticalYield = v("vertical_yield", verticalYield)
-            dirSmoothing = v("dir_smoothing", dirSmoothing)
+            riseRate = v("rise_rate", riseRate)
+            fallRate = v("fall_rate", fallRate)
             releaseStiffness = v("release_stiffness", releaseStiffness)
             releaseDamping = v("release_damping", releaseDamping)
             releaseVelocityGain = v("release_velocity_gain", releaseVelocityGain)
@@ -160,10 +158,7 @@ final class DragModule: CatModule {
     /// is monotonic.
     private var hang: CGFloat = 0
     private var yank: CGFloat = 0
-    private var stretchX: CGFloat = 0
-    private var dragDir = CGPoint.zero
     private var dragSpeed: CGFloat = 0
-    private var lastHShare: CGFloat = 0
 
     // --- hang ---------------------------------------------------------------
     private var stretch: CGFloat = 0
@@ -263,8 +258,6 @@ final class DragModule: CatModule {
         heldSeconds = 0
         hang = 0
         yank = 0
-        stretchX = 0
-        dragDir = .zero
         dragSpeed = 0
         stretch = 0
         angle = 0
@@ -346,18 +339,26 @@ final class DragModule: CatModule {
             let rate = yankTarget > yank ? t.yankAttack : t.yankRelease
             yank += (yankTarget - yank) * min(1, rate * dt)
 
-            stretch = min(hang + yank, t.stretchMax)
+            // The floor is the hang, explicitly. `hang + yank` alone can dip below
+            // the settled hang height, because hang is still RISING from zero while
+            // yank is already falling -- so the cat shrinks past where gravity
+            // holds it and then climbs back. Gravity does not let go.
+            let target = max(min(hang + yank, t.stretchMax), hang)
 
-            // Which way is it being pulled? Smoothed, or pointer jitter flips the
-            // axis every frame. Gravity keeps a floor under the vertical share, so
-            // a purely sideways drag still hangs a little.
-            dragDir.x += (moved.x - dragDir.x) * min(1, t.dirSmoothing * dt)
-            dragDir.y += (moved.y - dragDir.y) * min(1, t.dirSmoothing * dt)
-            let mag = hypot(dragDir.x, dragDir.y)
-            let hShare = mag > 0.01 ? abs(dragDir.x) / mag : 0
-            lastHShare = hShare
-            stretchX = stretch * hShare * t.horizontalGain
-            stretch *= 1 - hShare * t.verticalYield
+            // Rate-limit what is actually drawn. Downstream the extent is snapped
+            // to whole logical pixels, so an abrupt change in the target crosses
+            // several pixel boundaries in one frame and reads as a jump rather than
+            // a settle. Rising is allowed to be much faster: a yank should feel
+            // instant, only the return needs to be eased.
+            let limit = (target > stretch ? t.riseRate : t.fallRate) * dt
+            stretch += max(-limit, min(limit, target - stretch))
+
+            // Sideways-ness is expressed as LEAN by the pendulum below, never as a
+            // change of shape. An earlier version split the pull into horizontal
+            // and vertical components: it widened the cat AND cut the hang, so a
+            // sideways drag made it fatter and shorter instead of longer -- and
+            // because the split tracked a smoothed direction, the cut varied frame
+            // to frame and the length visibly jittered.
 
             stepSwing(dt: dt, f: f, pointerDX: moved.x, dragging: true)
 
@@ -379,7 +380,6 @@ final class DragModule: CatModule {
             stretch = release.value
             // The horizontal channel rides the same spring so the cat cannot land
             // still elongated sideways.
-            stretchX = release.value * lastHShare * t.horizontalGain
             yank = 0
             hang = 0
             _ = consumePointer(nil)
@@ -399,7 +399,6 @@ final class DragModule: CatModule {
         // being uniform is right for an impact, where the whole cat compresses.
         v.rig.setDrag(
             stretch: max(0, stretch),
-            stretchX: max(0, stretchX),
             grabY: grabY,
             leanPx: sin(angle) * t.swingLengthPx,
             headLagPx: t.headLagPx,
@@ -556,7 +555,7 @@ private final class Demo {
             return String(repeating: " ", count: max(0, width - text.count)) + text
         }
         print("t=\(f(t, 3, 7)) \(s.phase.padding(toLength: 4, withPad: " ", startingAt: 0))"
-              + " hold=\(f(s.holdT, 3, 6)) sx=\(f(s.stretchX, 3, 6))"
+              + " hold=\(f(s.holdT, 3, 6))"
               + " stretch=\(f(s.stretch, 4, 7))"
               + " dropPx=\(f(s.dropPx, 2, 6))"
               + " squash=\(f(s.squash, 3, 6))"
@@ -597,7 +596,7 @@ extension DragModule {
 
     /// Read-only snapshot for the scripted demo and any future debug overlay.
     fileprivate var debugState:
-        (phase: String, holdT: CGFloat, stretchX: CGFloat, stretch: CGFloat, dropPx: CGFloat,
+        (phase: String, holdT: CGFloat,stretch: CGFloat, dropPx: CGFloat,
          squash: CGFloat, angleDeg: CGFloat, angVel: CGFloat, leanPx: CGFloat) {
         let name: String
         switch phase {
@@ -610,7 +609,6 @@ extension DragModule {
         let bottom = view.map { inkBottom($0.atlas) } ?? 47
         return (name,
                 phase == .dragging ? hold : 0,
-                stretchX,
                 stretch,
                 max(0, stretch) * max(0, bottom - grabY),
                 1 + min(0, stretch) * t.landingSquashGain,

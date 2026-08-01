@@ -970,16 +970,22 @@ BEHAVIOUR = {
         # Gravity droop while held: springs here and stays, so a motionless cat
         # hangs a little instead of sitting at full stretch forever.
         "hang_rest": 0.60,
-        "hang_rate": 3.5,   # exponential approach; a spring here would overshoot
+        "hang_rate": 6.0,   # exponential approach; a spring here would overshoot
         # How hard it is being thrown around. Rises fast, relaxes slower, decays
         # to nothing when the pointer stops.
         "yank_speed_ref": 380,
         "yank_attack": 14.0,
-        "yank_release": 1.5,
+        "yank_release": 3.2,
         # Smooths the drag speed before it drives the yank. Raw per-tick speed at
         # 120Hz is noise, and the whole-pixel quantiser downstream turns noise into
         # visible flicker.
         "speed_smoothing": 8.0,
+        # Rate limits on the drawn stretch, in units/sec. The return has to be eased
+        # because the extent is snapped to whole pixels downstream, so a sudden
+        # change crosses several pixel boundaries in one frame and reads as a jump.
+        # Rising stays fast: a yank should feel instant.
+        "rise_rate": 9.0,
+        "fall_rate": 1.8,
         "stretch_max": 1.75,
         # Release spring. Authored at 60Hz as v += -0.13*x; v *= 0.78; x += v --
         # stiffness is that 0.13 expressed per second squared (0.13 * 60 * 60).
