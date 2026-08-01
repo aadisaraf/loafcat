@@ -162,8 +162,14 @@ def new_layer():
 
 
 def px(img, x, y, color):
-    """Sets one logical pixel. Silently ignores out-of-canvas writes."""
-    if 0 <= x < CANVAS and 0 <= y < CANVAS:
+    """Sets one logical pixel. Silently ignores out-of-canvas writes.
+
+    Bounds come from the image rather than from CANVAS so the same primitives can
+    draw the app icon's glyphs, which live on a smaller grid. Identical behaviour
+    for every CANVAS-sized layer.
+    """
+    w, h = img.size
+    if 0 <= x < w and 0 <= y < h:
         img.putpixel((x, y), PALETTE[color] if isinstance(color, str) else color)
 
 
@@ -228,14 +234,15 @@ def outline(img, color="outline"):
     what lets parts move independently without seams opening up.
     """
     src = img.load()
+    w, h = img.size
     ring = []
-    for y in range(CANVAS):
-        for x in range(CANVAS):
+    for y in range(h):
+        for x in range(w):
             if src[x, y][3] != 0:
                 continue
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
-                if 0 <= nx < CANVAS and 0 <= ny < CANVAS and src[nx, ny][3] > 128:
+                if 0 <= nx < w and 0 <= ny < h and src[nx, ny][3] > 128:
                     ring.append((x, y))
                     break
     for x, y in ring:

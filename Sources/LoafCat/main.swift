@@ -143,34 +143,18 @@ final class CatController: NSObject, NSApplicationDelegate {
             atlas: atlas, view: view, panel: panel, registry: modules)
     }
 
-    /// Assets live next to the executable in a packaged app, and at the repo root
-    /// during development. Checking both keeps a plain `swiftc` build runnable.
-    private static func assetsRoot() -> URL {
-        let candidates = [
-            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/assets"),
-            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-                .appendingPathComponent("assets"),
-        ]
-        for c in candidates where FileManager.default.fileExists(atPath: c.path) { return c }
-        return candidates[1]
-    }
-
-    /// Every theme is a self-contained directory of parts plus a cat.json. Swapping
-    /// themes is therefore a directory swap -- no code knows anything about a
-    /// specific cat, which is what makes community themes possible later.
-    private static func themeDir(_ name: String) -> URL {
-        assetsRoot().appendingPathComponent("themes/\(name)")
-    }
-
-    private static func availableThemes() -> [String] {
-        let root = assetsRoot().appendingPathComponent("themes")
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
-        return names.filter { !$0.hasPrefix(".") }.sorted()
-    }
+    // Asset lookup lives in Branding.swift, so the settings window and the icon
+    // loader resolve exactly the same paths this does.
+    private static func themeDir(_ name: String) -> URL { Assets.themeDir(name) }
 
     private func buildTray() {
         tray = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        tray.button?.title = "🐈"
+        if let glyph = Branding.trayImage() {
+            tray.button?.image = glyph
+            tray.button?.title = ""
+        } else {
+            tray.button?.title = "🐈"   // asset missing; a visible fallback beats none
+        }
         let menu = NSMenu()
         menu.addItem(withTitle: "loafcat", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
@@ -206,7 +190,7 @@ final class CatController: NSObject, NSApplicationDelegate {
 
         let themeItem = NSMenuItem(title: "Cat", action: nil, keyEquivalent: "")
         let themeMenu = NSMenu()
-        for name in Self.availableThemes() {
+        for name in Assets.themes() {
             let mi = NSMenuItem(
                 title: name.capitalized, action: #selector(setTheme(_:)), keyEquivalent: "")
             mi.target = self
