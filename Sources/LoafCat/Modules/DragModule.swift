@@ -17,16 +17,16 @@ enum DragFeel: String, CaseIterable {
     /// `normal` is 1.0 by definition — the shipped tuning IS the normal preset.
     var hangScale: CGFloat {
         switch self {
-        case .subtle: return 0.58
-        case .normal: return 1.0
-        case .springy: return 1.35
+        case .subtle: return 1.0      // the old Normal
+        case .normal: return 1.35     // the old Springy, now the default
+        case .springy: return 1.75
         }
     }
     var maxScale: CGFloat {
         switch self {
-        case .subtle: return 0.58
-        case .normal: return 1.0
-        case .springy: return 1.38
+        case .subtle: return 1.0
+        case .normal: return 1.38
+        case .springy: return 1.80
         }
     }
 
@@ -73,8 +73,7 @@ final class DragModule: CatModule {
         var stretchHoldMs: CGFloat = 900
         var stretchMax: CGFloat = 1.00
         var hangRest: CGFloat = 0.34
-        var hangStiffness: CGFloat = 40
-        var hangDamping: CGFloat = 0.82
+        var hangRate: CGFloat = 6.0
         var yankSpeedRef: CGFloat = 900
         var yankAttack: CGFloat = 14
         var yankRelease: CGFloat = 3.2
@@ -114,8 +113,7 @@ final class DragModule: CatModule {
             let feel = DragFeel.current
             hangRest *= feel.hangScale
             stretchMax *= feel.maxScale
-            hangStiffness = v("hang_stiffness", hangStiffness)
-            hangDamping = v("hang_damping", hangDamping)
+            hangRate = v("hang_rate", hangRate)
             yankSpeedRef = v("yank_speed_ref", yankSpeedRef)
             yankAttack = v("yank_attack", yankAttack)
             yankRelease = v("yank_release", yankRelease)
@@ -154,9 +152,11 @@ final class DragModule: CatModule {
     private var grabY: CGFloat = 30
     private var heldSeconds: CGFloat = 0
 
-    /// Gravity droop while held. Separate from `yank` so the two can settle
-    /// independently -- see the comment in the .dragging case.
-    private var hang = Spring(stiffness: 40, damping: 0.82)
+    /// Gravity droop while held. Deliberately NOT a spring: a spring overshoots,
+    /// and an overshooting droop makes the cat dip below its resting length as the
+    /// yank decays, then rise back — which reads as a glitch. Exponential approach
+    /// is monotonic.
+    private var hang: CGFloat = 0
     private var yank: CGFloat = 0
     private var stretchX: CGFloat = 0
     private var dragDir = CGPoint.zero
@@ -258,7 +258,7 @@ final class DragModule: CatModule {
     private func beginDrag() {
         phase = .dragging
         heldSeconds = 0
-        hang.snap(to: 0)
+        hang = 0
         yank = 0
         stretchX = 0
         dragDir = .zero
@@ -328,9 +328,7 @@ final class DragModule: CatModule {
             // hold still and it settles back to the droop; drop it and it springs
             // home. That is the shape the original has.
             let speed = hypot(moved.x, moved.y) / max(dt, 0.0001)
-            hang.stiffness = t.hangStiffness
-            hang.damping = t.hangDamping
-            hang.step(to: t.hangRest, dt: dt)
+            hang += (t.hangRest - hang) * min(1, t.hangRate * dt)
 
             let headroom = max(t.stretchMax - t.hangRest, 0)
             let yankTarget = min(speed / max(t.yankSpeedRef, 1), 1) * headroom
@@ -339,7 +337,7 @@ final class DragModule: CatModule {
             let rate = yankTarget > yank ? t.yankAttack : t.yankRelease
             yank += (yankTarget - yank) * min(1, rate * dt)
 
-            stretch = min(hang.value + yank, t.stretchMax)
+            stretch = min(hang + yank, t.stretchMax)
 
             // Which way is it being pulled? Smoothed, or pointer jitter flips the
             // axis every frame. Gravity keeps a floor under the vertical share, so
@@ -374,7 +372,7 @@ final class DragModule: CatModule {
             // still elongated sideways.
             stretchX = release.value * lastHShare * t.horizontalGain
             yank = 0
-            hang.snap(to: 0)
+            hang = 0
             _ = consumePointer(nil)
             stepSwing(dt: dt, f: f, pointerDX: 0, dragging: false)
 

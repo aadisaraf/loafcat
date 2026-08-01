@@ -953,8 +953,7 @@ BEHAVIOUR = {
         # Gravity droop while held: springs here and stays, so a motionless cat
         # hangs a little instead of sitting at full stretch forever.
         "hang_rest": 0.60,
-        "hang_stiffness": 40,
-        "hang_damping": 0.82,
+        "hang_rate": 6.0,   # exponential approach; a spring here would overshoot
         # How hard it is being thrown around. Rises fast, relaxes slower, decays
         # to nothing when the pointer stops.
         "yank_speed_ref": 380,
