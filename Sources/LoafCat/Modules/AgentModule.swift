@@ -206,6 +206,11 @@ enum HookInstaller {
         try fm.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 
+        // Remember the mode before touching anything: an atomic write is a
+        // rename over the top, so without this a 0600 settings file would come
+        // back 0644 and we would have quietly widened the user's permissions.
+        let existingMode = (try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions]
+
         if fm.fileExists(atPath: url.path) {
             let backup = url.appendingPathExtension("loafcat-backup")
             if let original = try? Data(contentsOf: url) {
@@ -215,7 +220,42 @@ enum HookInstaller {
 
         let data = try JSONSerialization.data(
             withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try (data + Data("\n".utf8)).write(to: url, options: .atomic)
+        try (unescapeSlashes(data) + Data("\n".utf8)).write(to: url, options: .atomic)
+
+        if let mode = existingMode {
+            try? fm.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
+        }
+    }
+
+    /// Turns `\/` back into `/`.
+    ///
+    /// JSONSerialization escapes every forward slash. It is valid JSON and parses
+    /// identically, but it rewrites every path in a file the user reads and edits
+    /// by hand — connecting a desktop pet should not leave their settings looking
+    /// like that. Done with a scanner rather than a search-and-replace because a
+    /// blind one corrupts `\\/`, which is a literal backslash followed by a slash.
+    static func unescapeSlashes(_ data: Data) -> Data {
+        var out = Data(capacity: data.count)
+        var inString = false
+        var i = data.startIndex
+        while i < data.endIndex {
+            let byte = data[i]
+            if inString, byte == UInt8(ascii: "\\"), data.index(after: i) < data.endIndex {
+                let next = data[data.index(after: i)]
+                if next == UInt8(ascii: "/") {
+                    out.append(next)            // drop the backslash
+                } else {
+                    out.append(byte)
+                    out.append(next)            // keep the escape intact
+                }
+                i = data.index(i, offsetBy: 2)
+                continue
+            }
+            if byte == UInt8(ascii: "\"") { inString.toggle() }
+            out.append(byte)
+            i = data.index(after: i)
+        }
+        return out
     }
 
     static func isInstalled() -> Bool {
@@ -374,9 +414,11 @@ final class AgentEndpoint {
     ///  4. Method and path pinned, body capped at 8KB.
     private func handle(_ fd: Int32) {
         defer { close(fd) }
-        guard let (head, body) = readRequest(fd) else {
+        guard let request = readRequest(fd) else {
             respond(fd, 400, "Bad Request"); return
         }
+        guard !request.oversize else { reject(fd, 413, "Payload Too Large"); return }
+        let (head, body) = (request.head, request.body)
 
         var lines = head.split(separator: "\r\n", omittingEmptySubsequences: false)
         guard !lines.isEmpty else { respond(fd, 400, "Bad Request"); return }
@@ -435,11 +477,12 @@ final class AgentEndpoint {
         respond(fd, status, reason)
     }
 
-    private func readRequest(_ fd: Int32) -> (head: String, body: Data)? {
+    private func readRequest(_ fd: Int32) -> (head: String, body: Data, oversize: Bool)? {
         var data = Data()
         var buf = [UInt8](repeating: 0, count: 2048)
         var headEnd: Int?
         var contentLength = 0
+        var oversize = false
 
         while data.count < maxRequest {
             if let end = headEnd, data.count >= end + contentLength { break }
@@ -456,17 +499,21 @@ final class AgentEndpoint {
                         line.dropFirst("content-length:".count)
                             .trimmingCharacters(in: .whitespaces)) ?? 0
                 }
-                // Refuse an oversized body before reading it, not after.
-                if contentLength > maxBody { contentLength = 0; break }
+                // Refuse an oversized body from its declared length, before
+                // reading it — the point of a cap is not to buffer the thing
+                // first and complain afterwards.
+                if contentLength > maxBody { oversize = true; break }
             }
         }
 
         guard let end = headEnd, let sep = data.range(of: Data("\r\n\r\n".utf8)) else {
             return nil
         }
+        // An undeclared body that ran past the cap counts too.
+        if data.count - end > maxBody { oversize = true }
         let head = String(decoding: data[..<sep.lowerBound], as: UTF8.self)
         let body = data.count > end ? data[end...] : Data()
-        return (head, Data(body))
+        return (head, Data(body), oversize)
     }
 
     /// Compares over the longer of the two so the loop count leaks nothing about
@@ -542,6 +589,7 @@ final class AgentModule: NSObject, CatModule {
 
     private var endpoint: AgentEndpoint?
     private var lastRequested: String?
+    private var signalSources: [DispatchSourceSignal] = []
 
     private weak var connectItem: NSMenuItem?
     private weak var disconnectItem: NSMenuItem?
@@ -553,6 +601,26 @@ final class AgentModule: NSObject, CatModule {
         NotificationCenter.default.addObserver(
             self, selector: #selector(cleanUp),
             name: NSApplication.willTerminateNotification, object: nil)
+        installSignalHandlers()
+    }
+
+    /// Ctrl+C is one of the two documented ways to quit this app, and a raw
+    /// signal does not go through AppKit's terminate path — `willTerminate`
+    /// never fires and the handshake file gets left behind pointing at a dead
+    /// port. The hook survives that fine (an instant connection refusal, still
+    /// exit 0), but a stale state file is how "it worked yesterday" bugs start.
+    private func installSignalHandlers() {
+        for sig in [SIGINT, SIGTERM] {
+            // The default action would kill the process before the source runs.
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.cleanUp()
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 
     // MARK: endpoint lifecycle
