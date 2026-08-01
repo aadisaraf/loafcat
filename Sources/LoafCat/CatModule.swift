@@ -86,6 +86,15 @@ struct ModuleOutput {
     /// A short-lived overlay to show above the cat (steam, hearts, zzz, a bubble).
     var overlay: String?
 
+    /// When set AND this module wins the state contest, every other module's
+    /// squash, offset and overlay is discarded for the frame.
+    ///
+    /// Priority alone only decides which *state* wins; the numbers still blend. A
+    /// stretch break needs the stronger guarantee — the cat is the size of the
+    /// screen and any leftover kneading or hunting squash reads as a glitch, not as
+    /// a second opinion. Defaults to false, so no existing module changes behaviour.
+    var exclusive: Bool = false
+
     static let none = ModuleOutput()
 }
 
@@ -134,23 +143,42 @@ final class ModuleRegistry {
     /// Combined output for this tick. Squash multiplies (so two modules both
     /// compressing the cat compound), offsets add, and the highest-priority state
     /// wins outright rather than blending — a cat cannot be half-dragged.
+    ///
+    /// Unless the winner asked to be exclusive, in which case it is the only module
+    /// that contributes anything this frame.
     func update(_ ctx: TickContext) -> ModuleOutput {
-        var combined = ModuleOutput()
+        var outputs: [ModuleOutput] = []
+        outputs.reserveCapacity(modules.count)
         var best = -1
+        var winner: ModuleOutput?
         state = .idle
         stateOwner = "-"
         overlays.removeAll()
 
+        // Every module is still ticked, even when one is exclusive: a module that
+        // stops being called mid-gesture loses its own timers and comes back wrong.
         for m in modules {
             let out = m.update(ctx)
-            combined.squash *= out.squash
-            combined.offset.x += out.offset.x
-            combined.offset.y += out.offset.y
-            if let o = out.overlay { overlays.append(o) }
+            outputs.append(out)
             if let s = out.state, s.priority > best {
                 best = s.priority
                 state = s
                 stateOwner = m.id
+                winner = out
+            }
+        }
+
+        var combined = ModuleOutput()
+        if let winner, winner.exclusive {
+            combined.squash = winner.squash
+            combined.offset = winner.offset
+            if let o = winner.overlay { overlays.append(o) }
+        } else {
+            for out in outputs {
+                combined.squash *= out.squash
+                combined.offset.x += out.offset.x
+                combined.offset.y += out.offset.y
+                if let o = out.overlay { overlays.append(o) }
             }
         }
         combined.state = state
