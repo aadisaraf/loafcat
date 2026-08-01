@@ -194,7 +194,10 @@ final class Rig {
 
         // Volume-preserving squash: widen as it shortens. Without the inverse the
         // cat visibly loses mass at the extremes.
-        let sy = breathScale * squash
+        // Breathing is a continuous 1.00-1.02, which would undo the drag
+        // quantiser's whole-pixel work and reintroduce the smearing. A cat being
+        // carried is not idly breathing anyway, so it stands down during a drag.
+        let sy = (dragStretch > 0 ? 1.0 : breathScale) * squash
         let sx = 1.0 / sqrt(sy)
         let bodyLift = (sy - 1.0) * 8.0
 

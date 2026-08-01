@@ -77,6 +77,7 @@ final class DragModule: CatModule {
         var yankSpeedRef: CGFloat = 900
         var yankAttack: CGFloat = 14
         var yankRelease: CGFloat = 3.2
+        var speedSmoothing: CGFloat = 8.0
         var horizontalGain: CGFloat = 0.85
         var verticalYield: CGFloat = 0.55
         var dirSmoothing: CGFloat = 12
@@ -117,6 +118,7 @@ final class DragModule: CatModule {
             yankSpeedRef = v("yank_speed_ref", yankSpeedRef)
             yankAttack = v("yank_attack", yankAttack)
             yankRelease = v("yank_release", yankRelease)
+            speedSmoothing = v("speed_smoothing", speedSmoothing)
             horizontalGain = v("horizontal_gain", horizontalGain)
             verticalYield = v("vertical_yield", verticalYield)
             dirSmoothing = v("dir_smoothing", dirSmoothing)
@@ -160,6 +162,7 @@ final class DragModule: CatModule {
     private var yank: CGFloat = 0
     private var stretchX: CGFloat = 0
     private var dragDir = CGPoint.zero
+    private var dragSpeed: CGFloat = 0
     private var lastHShare: CGFloat = 0
 
     // --- hang ---------------------------------------------------------------
@@ -262,6 +265,7 @@ final class DragModule: CatModule {
         yank = 0
         stretchX = 0
         dragDir = .zero
+        dragSpeed = 0
         stretch = 0
         angle = 0
         angVel = 0
@@ -327,7 +331,12 @@ final class DragModule: CatModule {
             // Together: pick it up and it droops; whip it about and it elongates;
             // hold still and it settles back to the droop; drop it and it springs
             // home. That is the shape the original has.
-            let speed = hypot(moved.x, moved.y) / max(dt, 0.0001)
+            // Smoothed, not instantaneous. A raw per-tick delta at 120Hz is mostly
+            // noise, and feeding that into a whole-pixel quantiser downstream makes
+            // the rendered length flicker between two values several times a second.
+            let rawSpeed = hypot(moved.x, moved.y) / max(dt, 0.0001)
+            dragSpeed += (rawSpeed - dragSpeed) * min(1, t.speedSmoothing * dt)
+            let speed = dragSpeed
             hang += (t.hangRest - hang) * min(1, t.hangRate * dt)
 
             let headroom = max(t.stretchMax - t.hangRest, 0)

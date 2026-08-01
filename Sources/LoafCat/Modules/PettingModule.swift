@@ -41,6 +41,9 @@ final class PettingModule: CatModule, AtlasTuned {
     /// engages only once this clears `strokeMin`.
     private var stroked: CGFloat = 0
     private var strokeMin: CGFloat = 14
+
+    /// How strongly a body stroke reads compared with a head scratch.
+    private var bodyResponse: CGFloat = 0.65
     private var heartPhase: CGFloat = 0
 
     func retune(_ atlas: Atlas) {
@@ -60,6 +63,7 @@ final class PettingModule: CatModule, AtlasTuned {
         leaveDelay = Double(b.f("pet.leave_delay"))
         lean = b.f("pet.lean")
         strokeMin = b.f("pet.stroke_min_px")
+        bodyResponse = b.f("pet.body_response")
         purrHz = b.f("pet.purr_hz")
         purrAmp = b.f("pet.purr_amp")
         petSquash = b.f("pet.squash")
@@ -92,7 +96,14 @@ final class PettingModule: CatModule, AtlasTuned {
         let p = CGPoint(x: ctx.cursor.x + halfCanvas, y: ctx.cursor.y + halfCanvas)
         let u = (p.x - centre.x) / radius.width
         let w = (p.y - centre.y) / radius.height
-        let inside = u * u + w * w <= 1
+        // Anywhere on the cat, not just the head. The head ellipse alone meant
+        // stroking the body did nothing, which reads as the cat ignoring you --
+        // and `cursorOnCat` is the same dilated silhouette the click-through test
+        // uses, so "can I touch it" and "does it feel it" agree by construction.
+        // The head ellipse survives as the SWEET SPOT: strokes there lean and purr
+        // harder, which is where a real cat wants to be scratched anyway.
+        let onHead = u * u + w * w <= 1
+        let inside = onHead || ctx.cursorOnCat
         let moving = hypot(ctx.cursorVelocity.x, ctx.cursorVelocity.y) >= moveMin
 
         // Being inside and moving is not yet petting. Merely crossing the cat on
@@ -131,7 +142,8 @@ final class PettingModule: CatModule, AtlasTuned {
         let dx = p.x - centre.x, dy = p.y - centre.y
         let d = max(hypot(dx, dy), 0.0001)
         let reach = min(d / max(radius.width, 0.001), 1)
-        stage.headOffset.x += dx / d * lean * reach * amp
+        let sweetSpot: CGFloat = onHead ? 1.0 : bodyResponse
+        stage.headOffset.x += dx / d * lean * reach * amp * sweetSpot
         stage.headOffset.y += dy / d * lean * 0.5 * reach * amp
 
         // The purr itself: a fast, sub-pixel vibration. It survives the whole-pixel

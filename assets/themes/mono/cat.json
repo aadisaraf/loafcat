@@ -661,6 +661,7 @@
       "release_stiffness": 468,
       "release_velocity_gain": 0.35,
       "shadow_shrink": 0.65,
+      "speed_smoothing": 8.0,
       "stretch_hold_ms": 900,
       "stretch_max": 1.75,
       "swing_accel_cap": 20,
@@ -713,6 +714,7 @@
     },
     "pet": {
       "attack": 0.14,
+      "body_response": 0.65,
       "ellipse_scale": 1.0,
       "heart_drift": 2.5,
       "heart_period": 0.55,

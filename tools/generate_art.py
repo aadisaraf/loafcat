@@ -961,6 +961,10 @@ BEHAVIOUR = {
         "yank_speed_ref": 380,
         "yank_attack": 14.0,
         "yank_release": 3.2,
+        # Smooths the drag speed before it drives the yank. Raw per-tick speed at
+        # 120Hz is noise, and the whole-pixel quantiser downstream turns noise into
+        # visible flicker.
+        "speed_smoothing": 8.0,
         "stretch_max": 1.75,
         # Release spring. Authored at 60Hz as v += -0.13*x; v *= 0.78; x += v --
         # stiffness is that 0.13 expressed per second squared (0.13 * 60 * 60).
@@ -1068,6 +1072,9 @@ BEHAVIOUR = {
         # starts a purr, because crossing satisfies "inside" and "moving" at once.
         # 18 logical px is a deliberate stroke, roughly two-thirds of the head.
         "stroke_min_px": 18.0,
+        # Petting works anywhere on the silhouette; the head is just the sweet spot.
+        # A body stroke leans and purrs at this fraction of a head scratch.
+        "body_response": 0.65,
         "stop_delay": 0.42,
         "leave_delay": 0.26,
         "lean": 2.4,
