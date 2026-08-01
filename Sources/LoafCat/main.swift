@@ -134,6 +134,7 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// single line plus a single new file under Modules/.
     private func registerModules() {
         modules.register(DragModule(panel: panel, registry: modules))
+        modules.register(AgentModule.shared)
         wellness = WellnessSuite(
             atlas: atlas, view: view, panel: panel, registry: modules)
     }
@@ -200,6 +201,11 @@ final class CatController: NSObject, NSApplicationDelegate {
         menu.addItem(themeItem)
 
         wellness?.addMenuItems(to: menu)
+
+        menu.addItem(.separator())
+        // Each module supplies its own items, targeted at itself. main.swift only
+        // places them, so a feature's menu lives in the feature's file.
+        for item in AgentModule.shared.menuItems() { menu.addItem(item) }
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")

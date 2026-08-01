@@ -54,6 +54,80 @@ struct Atlas {
     }
     let wellness: Wellness
 
+    /// Status glyphs (thinking dots, sparkles, sweat drop, exclamation mark).
+    ///
+    /// Kept out of `order` and therefore out of the draw loop and the hit mask —
+    /// an overlay is drawn only while something asks for it, and must never make
+    /// an empty corner pixel clickable.
+    let overlays: [String: Part]
+
+    /// Which glyph sequence plays for which named state, and how fast.
+    let overlayAnimations: [String: OverlayAnimation]
+
+    /// Keyframed whole-body motion: the celebratory hop, the error slump and the
+    /// two looping ambiences. In the atlas rather than in Swift so a theme can
+    /// restyle the reaction set without a rebuild.
+    let animations: [String: Animation]
+
+    /// A keyframed whole-body animation. Offsets are logical pixels, y-DOWN like
+    /// every other coordinate in the atlas; squash is a multiplier where 1.0 is
+    /// neutral and below 1.0 is compressed.
+    struct Animation {
+        let duration: Double
+        let loop: Bool
+        let offset: [(t: Double, p: CGPoint)]
+        let squash: [(t: Double, v: CGFloat)]
+
+        /// Linear interpolation between keyframes. Linear rather than eased
+        /// because the easing is already baked into the keyframe spacing — the
+        /// hop's keys bunch up at the apex, which is where the motion slows.
+        func sample(at time: Double) -> (offset: CGPoint, squash: CGFloat) {
+            let t = loop && duration > 0
+                ? time.truncatingRemainder(dividingBy: duration)
+                : min(time, duration)
+            var p = CGPoint.zero
+            if let first = offset.first {
+                p = first.p
+                for i in 1..<max(offset.count, 1) where offset[i].t >= t {
+                    let a = offset[i - 1], b = offset[i]
+                    let span = b.t - a.t
+                    let u = span > 0 ? CGFloat((t - a.t) / span) : 0
+                    p = CGPoint(x: a.p.x + (b.p.x - a.p.x) * u,
+                                y: a.p.y + (b.p.y - a.p.y) * u)
+                    break
+                }
+                if let last = offset.last, t >= last.t { p = last.p }
+            }
+            var s: CGFloat = 1
+            if let first = squash.first {
+                s = first.v
+                for i in 1..<max(squash.count, 1) where squash[i].t >= t {
+                    let a = squash[i - 1], b = squash[i]
+                    let span = b.t - a.t
+                    let u = span > 0 ? CGFloat((t - a.t) / span) : 0
+                    s = a.v + (b.v - a.v) * u
+                    break
+                }
+                if let last = squash.last, t >= last.t { s = last.v }
+            }
+            return (p, s)
+        }
+    }
+
+    /// A flipbook over overlay parts.
+    struct OverlayAnimation {
+        let frames: [String]
+        let fps: Double
+        let loop: Bool
+
+        func frame(at time: Double) -> String? {
+            guard !frames.isEmpty, fps > 0 else { return frames.first }
+            let i = Int(time * fps)
+            if loop { return frames[((i % frames.count) + frames.count) % frames.count] }
+            return frames[min(max(i, 0), frames.count - 1)]
+        }
+    }
+
     /// Eye geometry, needed for pupil tracking. `maxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     struct Eye {
@@ -105,21 +179,38 @@ struct Atlas {
 
         var parts: [String: Part] = [:]
         for (name, def) in partDefs {
-            guard
-                let file = def["file"] as? String,
-                let x = def["x"] as? Double, let y = def["y"] as? Double,
-                let w = def["w"] as? Double, let h = def["h"] as? Double
-            else { throw LoadError.badJSON("part \(name) has a malformed entry") }
+            parts[name] = try loadPart(named: name, def: def, in: dir)
+        }
 
-            let url = dir.appendingPathComponent(file)
-            guard
-                let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-                let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
-            else { throw LoadError.missing(url.path) }
+        // Overlays are optional: a theme generated before status glyphs existed
+        // still loads, it just never shows one.
+        var overlays: [String: Part] = [:]
+        var overlayAnims: [String: OverlayAnimation] = [:]
+        if let ov = root["overlays"] as? [String: Any] {
+            for (name, def) in (ov["parts"] as? [String: [String: Any]] ?? [:]) {
+                overlays[name] = try loadPart(named: name, def: def, in: dir)
+            }
+            for (name, def) in (ov["anims"] as? [String: [String: Any]] ?? [:]) {
+                overlayAnims[name] = OverlayAnimation(
+                    frames: def["frames"] as? [String] ?? [],
+                    fps: def["fps"] as? Double ?? 4,
+                    loop: def["loop"] as? Bool ?? true)
+            }
+        }
 
-            parts[name] = Part(
-                name: name, image: img,
-                origin: CGPoint(x: x, y: y), size: CGSize(width: w, height: h))
+        var animations: [String: Animation] = [:]
+        for (name, def) in (root["anim"] as? [String: [String: Any]] ?? [:]) {
+            let offs = (def["offset"] as? [[Double]] ?? []).compactMap {
+                $0.count == 3 ? (t: $0[0], p: CGPoint(x: $0[1], y: $0[2])) : nil
+            }
+            let sq = (def["squash"] as? [[Double]] ?? []).compactMap {
+                $0.count == 2 ? (t: $0[0], v: CGFloat($0[1])) : nil
+            }
+            animations[name] = Animation(
+                duration: def["duration"] as? Double ?? 0,
+                loop: def["loop"] as? Bool ?? false,
+                offset: offs.sorted { $0.t < $1.t },
+                squash: sq.sorted { $0.t < $1.t })
         }
 
         var pivots: [String: CGPoint] = [:]
@@ -161,8 +252,30 @@ struct Atlas {
             layout: layout,
             bubble: loadBubble(root, dir: dir),
             wellness: loadWellness(root),
+            overlays: overlays, overlayAnimations: overlayAnims,
+            animations: animations,
             eye: eye,
             behaviour: behaviour)
+    }
+
+    private static func loadPart(
+        named name: String, def: [String: Any], in dir: URL
+    ) throws -> Part {
+        guard
+            let file = def["file"] as? String,
+            let x = def["x"] as? Double, let y = def["y"] as? Double,
+            let w = def["w"] as? Double, let h = def["h"] as? Double
+        else { throw LoadError.badJSON("part \(name) has a malformed entry") }
+
+        let url = dir.appendingPathComponent(file)
+        guard
+            let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+            let img = CGImageSourceCreateImageAtIndex(src, 0, nil)
+        else { throw LoadError.missing(url.path) }
+
+        return Part(
+            name: name, image: img,
+            origin: CGPoint(x: x, y: y), size: CGSize(width: w, height: h))
     }
 
     private static func loadBubble(_ root: [String: Any], dir: URL) -> SpeechBubble? {

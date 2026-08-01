@@ -28,6 +28,10 @@ final class CatView: NSView {
     /// stretch break can magnify the whole rig with one transform.
     private let container = CALayer()
 
+    /// One layer per status glyph, all hidden until something asks for one. They
+    /// are added after every body layer, so they always composite on top.
+    private var overlayLayers: [String: CALayer] = [:]
+
     /// Integer only. A fractional scale is the fastest way to make pixel art look
     /// like mush, and it cannot be fixed downstream.
     let scale: CGFloat
@@ -131,19 +135,7 @@ final class CatView: NSView {
     private func buildLayers() {
         for name in atlas.order {
             guard let part = atlas.parts[name] else { continue }
-            let l = CALayer()
-            l.contents = part.image
-            l.magnificationFilter = .nearest   // crisp pixels, never smoothed
-            l.minificationFilter = .nearest
-            l.contentsGravity = .resize
-            l.anchorPoint = .zero
-            l.bounds = CGRect(
-                x: 0, y: 0,
-                width: part.size.width * scale, height: part.size.height * scale)
-            l.position = containerPosition(for: part, offset: .zero)
-            l.actions = ["position": NSNull(), "bounds": NSNull(),
-                         "opacity": NSNull(), "hidden": NSNull(), "transform": NSNull()]
-            container.addSublayer(l)
+            let l = addLayer(for: part)
             layers[name] = l
 
             if atlas.wellness.tintParts.contains(name) {
@@ -170,6 +162,30 @@ final class CatView: NSView {
                 tintLayers.append(tint)
             }
         }
+        // Overlays last: draw order is sublayer order, and a thought bubble that
+        // slid behind an ear would look like a rendering fault.
+        for (name, part) in atlas.overlays.sorted(by: { $0.key < $1.key }) {
+            let l = addLayer(for: part)
+            l.isHidden = true
+            overlayLayers[name] = l
+        }
+    }
+
+    private func addLayer(for part: Atlas.Part) -> CALayer {
+        let l = CALayer()
+        l.contents = part.image
+        l.magnificationFilter = .nearest   // crisp pixels, never smoothed
+        l.minificationFilter = .nearest
+        l.contentsGravity = .resize
+        l.anchorPoint = .zero
+        l.bounds = CGRect(
+            x: 0, y: 0,
+            width: part.size.width * scale, height: part.size.height * scale)
+        l.position = containerPosition(for: part, offset: .zero)
+        l.actions = ["position": NSNull(), "bounds": NSNull(),
+                     "opacity": NSNull(), "hidden": NSNull(), "transform": NSNull()]
+        container.addSublayer(l)
+        return l
     }
 
     /// Fades the coat toward the atlas's calm colour. 0 is the cat's own colours.
@@ -372,12 +388,56 @@ final class CatView: NSView {
         var out: [String: CGPoint] = [:]
         for (name, l) in layers { out[name] = l.position }
         for (name, l) in auxLayers { out["aux:" + name] = l.position }
+        for (name, l) in overlayLayers { out["overlay:" + name] = l.position }
         out["#container"] = container.position
         return out
     }
 
+    /// Moves the whole panel to follow the stage's keyframed offset.
+    ///
+    /// The hop has to move the *window*, not the layers: the cat fills the 48x48
+    /// canvas edge to edge and the window is exactly the canvas, so a -26px leap
+    /// drawn inside it would simply have its head cut off. Applied as a delta
+    /// against a remembered value rather than as an absolute origin, so it
+    /// composes with anything else that moves the panel (a drag, "Centre on
+    /// screen") instead of fighting it.
+    ///
+    /// The contact shadow rides along, which is not what a shadow does. At this
+    /// size the alternative — a shadow that stays behind while the body leaves —
+    /// reads as two sprites rather than one leaping cat, so the rig sells the
+    /// lift through the inverse shadow scale in `squash` instead.
+    private func applyStageOffset() {
+        guard let win = window else { return }
+        let want = Stage.shared.sample().offset
+        // Rounded on LOGICAL pixels before scaling, the same rule as every part
+        // position. Rounding after the multiply still lands on fractional logical
+        // pixels and makes the art crawl at 2x and 3x.
+        let target = CGPoint(x: want.x.rounded() * scale, y: want.y.rounded() * scale)
+        let applied = Stage.shared.appliedOffset
+        let dx = target.x - applied.x
+        // The atlas thinks y-down; the screen is y-up.
+        let dy = -(target.y - applied.y)
+        guard dx != 0 || dy != 0 else { return }
+        win.setFrameOrigin(NSPoint(x: win.frame.origin.x + dx, y: win.frame.origin.y + dy))
+        Stage.shared.appliedOffset = target
+    }
+
+    /// Shows at most one status glyph, carried by the head so it drifts with the
+    /// head turn instead of sitting rigidly in the corner.
+    private func syncOverlays() {
+        let active = Stage.shared.overlayFrame()
+        let headOffset = rig.transforms["head"]?.offset ?? .zero
+        for (name, l) in overlayLayers {
+            let on = (name == active)
+            l.isHidden = !on
+            guard on, let part = atlas.overlays[name] else { continue }
+            l.position = containerPosition(for: part, offset: headOffset)
+        }
+    }
+
     /// Pushes the rig's transforms onto the layers. Called once per frame.
     func sync() {
+        applyStageOffset()
         CATransaction.begin()
         CATransaction.setDisableActions(true)   // no implicit animation; we drive it
         for (name, l) in layers {
@@ -400,6 +460,7 @@ final class CatView: NSView {
                 l.transform = CATransform3DIdentity
             }
         }
+        syncOverlays()
         CATransaction.commit()
     }
 }
