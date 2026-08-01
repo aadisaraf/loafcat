@@ -130,7 +130,7 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// Every feature is registered here and nowhere else. Adding one should be a
     /// single line plus a single new file under Modules/.
     private func registerModules() {
-        // (modules are added on feature branches)
+        modules.register(TypingModule())
     }
 
     /// Assets live next to the executable in a packaged app, and at the repo root
