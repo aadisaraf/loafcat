@@ -676,6 +676,7 @@ def crop_and_write(parts, overlays):
     atlas["behaviour"] = BEHAVIOUR
     with open(os.path.join(OUT, "cat.json"), "w") as f:
         json.dump(atlas, f, indent=2)
+        f.write("\n")   # so a regenerate is a no-op diff, not a one-byte one
     return atlas
 
 
