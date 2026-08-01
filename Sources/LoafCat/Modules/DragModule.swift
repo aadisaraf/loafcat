@@ -365,16 +365,15 @@ final class DragModule: CatModule {
     /// the tail are sliced off by the window the moment it stretches or swings.
     /// Only applied for the length of a gesture, so the resting window is
     /// untouched and click-through is unaffected.
-    private func setPad(_ pad: CGFloat) {
-        guard let panel, let v = view, v.padding != pad else { return }
-        let inset = (pad - v.padding) * v.scale
-        let f = panel.frame
-        panel.setFrame(
-            NSRect(x: f.minX - inset, y: f.minY - inset,
-                   width: f.width + inset * 2, height: f.height + inset * 2),
-            display: false)
-        v.padding = pad
-    }
+    /// No longer resizes anything.
+    ///
+    /// This used to grow the panel for the length of a gesture. The atlas now
+    /// carries a permanent transparent margin (layout.pad_x / pad_y) that the
+    /// speech bubble needs anyway, and it is far larger than a drag requires — so
+    /// the room is simply always there. Resizing a window mid-gesture was also the
+    /// riskier design: every resize invalidates the click-through hit test for a
+    /// frame. Kept as a named no-op so the call sites still read intentionally.
+    private func setPad(_ pad: CGFloat) {}
 }
 
 // MARK: - Scripted drag, for verification
@@ -477,8 +476,8 @@ extension DragModule {
     /// it needs rather than being quietly clipped by the window edge.
     fileprivate var debugGeometry: String {
         let f = panel?.frame ?? .zero
-        let pad = view?.padding ?? 0
-        return "panel \(Int(f.width))x\(Int(f.height))pt, art inset \(Int(pad))px"
+        let pad = view?.atlas.layout.padY ?? 0
+        return "panel \(Int(f.width))x\(Int(f.height))pt, static margin \(pad)px"
     }
 
     /// Read-only snapshot for the scripted demo and any future debug overlay.

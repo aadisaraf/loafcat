@@ -51,6 +51,7 @@ final class CatController: NSObject, NSApplicationDelegate {
 
     /// Features live here, one file each. See CatModule.swift.
     let modules = ModuleRegistry()
+    private var wellness: WellnessSuite?
 
     /// Smoothed cursor velocity, in logical px/sec. Raw frame-to-frame deltas are
     /// far too noisy for a velocity threshold to be usable.
@@ -75,15 +76,17 @@ final class CatController: NSObject, NSApplicationDelegate {
         rig = Rig(atlas: atlas)
         view = CatView(atlas: atlas, rig: rig, scale: renderScale)
 
-        let side = atlas.canvas * renderScale
+        // Larger than the cat: the atlas asks for a transparent margin so a speech
+        // bubble has somewhere to live. See CatView.
+        let size = CatView.panelSize(atlas: atlas, scale: renderScale)
         let screen = NSScreen.main!
         // visibleFrame, never frame: this display reports safeAreaInsets.top = 33
         // (the notch), and .frame would let the cat sit under it.
         let vf = screen.visibleFrame
-        let origin = NSPoint(x: vf.midX - side / 2, y: vf.origin.y + 120)
+        let origin = NSPoint(x: vf.midX - size.width / 2, y: vf.origin.y + 120)
 
         panel = NSPanel(
-            contentRect: NSRect(origin: origin, size: NSSize(width: side, height: side)),
+            contentRect: NSRect(origin: origin, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -118,7 +121,7 @@ final class CatController: NSObject, NSApplicationDelegate {
         print("""
         loafcat running
           theme   \(themeName) -- \(atlas.parts.count) parts, \(Int(atlas.canvas))px @\(Int(renderScale))x
-          window  level \(panel.level.rawValue), \(Int(side))x\(Int(side)) at \
+          window  level \(panel.level.rawValue), \(Int(size.width))x\(Int(size.height)) at \
         (\(Int(origin.x)), \(Int(origin.y)))
           input   Accessibility=\(AXIsProcessTrusted() ? "granted" : "not needed") \
         InputMonitoring=\(CGPreflightListenEventAccess() ? "granted" : "not needed")
@@ -130,8 +133,9 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// Every feature is registered here and nowhere else. Adding one should be a
     /// single line plus a single new file under Modules/.
     private func registerModules() {
-        // (modules are added on feature branches)
         modules.register(DragModule(panel: panel, registry: modules))
+        wellness = WellnessSuite(
+            atlas: atlas, view: view, panel: panel, registry: modules)
     }
 
     /// Assets live next to the executable in a packaged app, and at the repo root
@@ -195,6 +199,8 @@ final class CatController: NSObject, NSApplicationDelegate {
         themeItem.submenu = themeMenu
         menu.addItem(themeItem)
 
+        wellness?.addMenuItems(to: menu)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
             .target = self
@@ -203,8 +209,9 @@ final class CatController: NSObject, NSApplicationDelegate {
 
     @objc private func centre() {
         let vf = NSScreen.main!.visibleFrame
-        let side = atlas.canvas * renderScale
-        panel.setFrameOrigin(NSPoint(x: vf.midX - side / 2, y: vf.midY - side / 2))
+        let size = CatView.panelSize(atlas: atlas, scale: renderScale)
+        panel.setFrameOrigin(
+            NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2))
     }
 
     @objc private func setScale(_ sender: NSMenuItem) {
@@ -230,12 +237,14 @@ final class CatController: NSObject, NSApplicationDelegate {
         rig = Rig(atlas: atlas)
 
         let old = panel.frame
-        let side = atlas.canvas * renderScale
+        let size = CatView.panelSize(atlas: atlas, scale: renderScale)
         view = CatView(atlas: atlas, rig: rig, scale: renderScale)
         panel.contentView = view
         panel.setFrame(
-            NSRect(x: old.midX - side / 2, y: old.minY, width: side, height: side),
+            NSRect(x: old.midX - size.width / 2, y: old.minY,
+                   width: size.width, height: size.height),
             display: true)
+        wellness?.rebind(view: view)
         buildTray()
     }
 
@@ -266,11 +275,16 @@ final class CatController: NSObject, NSApplicationDelegate {
         keyStamps.removeAll { now - $0 > keyWindow }
 
         // --- cursor, relative to the cat's centre, in LOGICAL pixels ----------
+        // The panel's centre IS the cat's centre: the transparent bubble margin is
+        // symmetric precisely so this stays true. `effectiveScale` folds in the
+        // stretch break's magnification, without which tracking would saturate the
+        // moment the cat grew.
         let centre = CGPoint(x: frame.midX, y: frame.midY)
+        let unit = view.effectiveScale
         let cursor = CGPoint(
-            x: (mouse.x - centre.x) / renderScale,
+            x: (mouse.x - centre.x) / unit,
             // Flip: screen y is up, the rig thinks in y-down like the atlas.
-            y: -(mouse.y - centre.y) / renderScale)
+            y: -(mouse.y - centre.y) / unit)
 
         // Exponential moving average. Raw per-frame deltas at 120Hz are far too
         // noisy for any velocity threshold to be usable against.
@@ -297,7 +311,7 @@ final class CatController: NSObject, NSApplicationDelegate {
             scrollDelta: scrollDelta < 1000 ? scrollDelta : UInt32(0),
             secondsSinceKey: InputTelemetry.secondsSinceKey(),
             frame: frame,
-            scale: renderScale)
+            scale: unit)
 
         let out = modules.update(ctx)
         rig.setSquash(out.squash)
