@@ -278,7 +278,9 @@ G = {
 # ---------------------------------------------------------------------------
 OVERLAY_G = {
     # Thought-bubble trail, drawn cumulatively: 1 dot, then 2, then 3.
-    "think_dots": [(40, 10, 1), (43, 6, 2), (46, 1, 2)],   # (x, y, side)
+    "think_dots": [(38, 13, 1), (41, 9, 2), (44, 4, 2)],   # (x, y, side)
+    # Kept clear of the canvas edge: the baked outline needs a pixel on every side,
+    # and px() silently drops anything outside 0..CANVAS, which reads as a clipped dot.
     # Four-point sparkles either side of the head. Arms alternate long/short so
     # two frames read as a twinkle rather than a blink.
     "spark_l": (6, 6),

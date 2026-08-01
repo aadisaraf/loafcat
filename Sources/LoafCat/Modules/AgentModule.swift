@@ -573,6 +573,10 @@ final class AgentModule: NSObject, CatModule {
     /// are done rather than until the first one finishes.
     private var sessions: [String: Session] = [:]
     private var celebratedAt: CFAbsoluteTime?
+
+    /// How long the cursor has rested on the cat while it is alerting. Reaching
+    /// `acknowledgeAfter` dismisses the alert.
+    private var dwellOnCat: CGFloat = 0
     private var erroredAt: CFAbsoluteTime?
     private let lock = NSLock()
 
@@ -586,6 +590,13 @@ final class AgentModule: NSObject, CatModule {
     /// `Stop` does NOT fire when the user presses Esc. Without this the cat would
     /// sit there thinking, forever, the first time anyone interrupts Claude.
     private let idleBackstop: CFAbsoluteTime = 90
+
+    /// How long an unattended alert stays up. Alerts used to be exempt from every
+    /// backstop, so one could sit on screen for the full session TTL.
+    private let alertTimeout: CFAbsoluteTime = 45
+
+    /// Cursor dwell on the cat that counts as having read an alert.
+    private let acknowledgeAfter: CGFloat = 0.5
 
     private var endpoint: AgentEndpoint?
     private var lastRequested: String?
@@ -712,13 +723,30 @@ final class AgentModule: NSObject, CatModule {
         }
     }
 
+    /// Clears anything that is only waiting to be noticed.
+    ///
+    /// Deliberately does NOT touch thinking or working sessions: those describe
+    /// what the agent is doing, and dismissing them would just be lying about it.
+    private func acknowledge() {
+        lock.lock()
+        for (key, session) in sessions where session.phase == .notification {
+            sessions.removeValue(forKey: key)
+        }
+        celebratedAt = nil
+        lock.unlock()
+    }
+
     /// Drops sessions we have stopped believing in. See `idleBackstop`.
     private func expire(_ now: CFAbsoluteTime) {
         for (key, session) in sessions {
             let age = now - session.lastEvent
             if age > sessionTTL {
                 sessions.removeValue(forKey: key)
-            } else if session.phase != .notification && age > idleBackstop {
+            } else if session.phase == .notification {
+                // Alerts were exempt from the backstop entirely, so one could sit
+                // on screen for the full 10-minute TTL with nothing to clear it.
+                if age > alertTimeout { sessions.removeValue(forKey: key) }
+            } else if age > idleBackstop {
                 sessions.removeValue(forKey: key)
             }
         }
@@ -733,6 +761,17 @@ final class AgentModule: NSObject, CatModule {
         // and it is in cat.json next to the keyframes that define it.
         let hop = stage.duration(of: "hop")
         let slump = stage.duration(of: "slump")
+
+        // Hovering the cat while it is alerting counts as reading the alert.
+        if ctx.cursorOnCat {
+            dwellOnCat += ctx.dt
+        } else {
+            dwellOnCat = 0
+        }
+        if dwellOnCat >= acknowledgeAfter {
+            dwellOnCat = 0
+            acknowledge()
+        }
 
         lock.lock()
         expire(now)
