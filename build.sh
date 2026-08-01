@@ -50,6 +50,13 @@ fi
 
 cp -R assets "$APP/Contents/Resources/assets"
 
+# The Claude Code hook script ships inside the bundle, but "Connect to Claude
+# Code" copies it to ~/.loafcat/ before registering it. Pointing settings.json
+# into the .app would break the moment the user moved or replaced the app, and a
+# dead hook path reads to them as "Claude got slow".
+cp -R hooks "$APP/Contents/Resources/hooks"
+chmod +x "$APP/Contents/Resources/hooks/loafcat-hook.sh"
+
 # Ad-hoc signature: Apple Silicon SIGKILLs a wholly unsigned binary. A persistent
 # self-signed cert comes later -- it gives a stable Designated Requirement so any
 # future permission grant survives updates.

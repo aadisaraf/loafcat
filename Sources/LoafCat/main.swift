@@ -130,8 +130,8 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// Every feature is registered here and nowhere else. Adding one should be a
     /// single line plus a single new file under Modules/.
     private func registerModules() {
-        // (modules are added on feature branches)
         modules.register(DragModule(panel: panel, registry: modules))
+        modules.register(AgentModule.shared)
     }
 
     /// Assets live next to the executable in a packaged app, and at the repo root
@@ -194,6 +194,11 @@ final class CatController: NSObject, NSApplicationDelegate {
         }
         themeItem.submenu = themeMenu
         menu.addItem(themeItem)
+
+        menu.addItem(.separator())
+        // Each module supplies its own items, targeted at itself. main.swift only
+        // places them, so a feature's menu lives in the feature's file.
+        for item in AgentModule.shared.menuItems() { menu.addItem(item) }
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
