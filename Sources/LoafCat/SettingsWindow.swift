@@ -247,6 +247,7 @@ final class CatPane: SettingsPane {
     private let feel = NSSegmentedControl()
     private var login: NSButton!
     private var loginNote: NSTextField!
+    private var dock: NSButton!
 
     private static let sizes: [(String, CGFloat)] = [("Small", 2), ("Medium", 3), ("Large", 4)]
 
@@ -299,11 +300,18 @@ final class CatPane: SettingsPane {
             + "droops; springy snaps back hardest."))
 
         stack.addArrangedSubview(divider())
-        stack.addArrangedSubview(heading("Startup"))
+        stack.addArrangedSubview(heading("Starting up"))
         login = checkbox("Open loafcat at login", #selector(toggleLogin))
         stack.addArrangedSubview(login)
         loginNote = caption("")
         stack.addArrangedSubview(loginNote)
+
+        dock = checkbox("Show loafcat in the Dock", #selector(toggleDock))
+        stack.addArrangedSubview(dock)
+        stack.addArrangedSubview(caption(
+            "Off by default: a menu bar pet has no business taking a Dock slot. "
+            + "Turn it on if you would rather reach loafcat the way you reach every "
+            + "other app — clicking its Dock icon opens this window."))
 
         stack.addArrangedSubview(divider())
         stack.addArrangedSubview(button("Centre on screen", #selector(centre)))
@@ -317,7 +325,15 @@ final class CatPane: SettingsPane {
             Self.sizes.firstIndex { $0.1 == host.currentScale } ?? 0
         feel.selectedSegment =
             DragFeel.allCases.firstIndex(of: DragFeel.current) ?? 0
+        dock.state = DockPresence.showInDock ? .on : .off
         refreshLogin()
+    }
+
+    @objc private func toggleDock() {
+        DockPresence.showInDock = dock.state == .on
+        DockPresence.apply()
+        // Changing policy can drop the window behind everything else.
+        view.window?.makeKeyAndOrderFront(nil)
     }
 
     private func refreshLogin() {
