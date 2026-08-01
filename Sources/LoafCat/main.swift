@@ -118,6 +118,11 @@ final class CatController: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common)
         displayTimer = t
 
+        // `--settings` opens the window straight away. An accessory app's only
+        // affordance is a menu bar icon, so having a way to reach settings that
+        // does not involve finding that icon is worth one line.
+        if CommandLine.arguments.contains("--settings") { openSettings() }
+
         print("""
         loafcat running
           theme   \(themeName) -- \(atlas.parts.count) parts, \(Int(atlas.canvas))px @\(Int(renderScale))x
@@ -155,58 +160,27 @@ final class CatController: NSObject, NSApplicationDelegate {
         } else {
             tray.button?.title = "🐈"   // asset missing; a visible fallback beats none
         }
+        // Quick actions only. Everything configurable lives in Settings -- a value
+        // reachable from two places is a value that will eventually disagree with
+        // itself, and a nested checkmark submenu was never a good way to pick a
+        // number anyway.
         let menu = NSMenu()
         menu.addItem(withTitle: "loafcat", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(
+            withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+            .target = self
+        menu.addItem(
             withTitle: "Centre on screen", action: #selector(centre), keyEquivalent: "")
             .target = self
-
-        let sizeItem = NSMenuItem(title: "Size", action: nil, keyEquivalent: "")
-        let sizeMenu = NSMenu()
-        for (label, s) in [("Small", 2.0), ("Medium", 3.0), ("Large", 4.0)] {
-            let mi = NSMenuItem(
-                title: label, action: #selector(setScale(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = s
-            mi.state = (renderScale == CGFloat(s)) ? .on : .off
-            sizeMenu.addItem(mi)
-        }
-        sizeItem.submenu = sizeMenu
-        menu.addItem(sizeItem)
-
-        let feelItem = NSMenuItem(title: "Drag feel", action: nil, keyEquivalent: "")
-        let feelMenu = NSMenu()
-        for f in DragFeel.allCases {
-            let mi = NSMenuItem(
-                title: f.label, action: #selector(setDragFeel(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = f.rawValue
-            mi.state = (DragFeel.current == f) ? .on : .off
-            feelMenu.addItem(mi)
-        }
-        feelItem.submenu = feelMenu
-        menu.addItem(feelItem)
-
-        let themeItem = NSMenuItem(title: "Cat", action: nil, keyEquivalent: "")
-        let themeMenu = NSMenu()
-        for name in Assets.themes() {
-            let mi = NSMenuItem(
-                title: name.capitalized, action: #selector(setTheme(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.representedObject = name
-            mi.state = (name == themeName) ? .on : .off
-            themeMenu.addItem(mi)
-        }
-        themeItem.submenu = themeMenu
-        menu.addItem(themeItem)
-
-        wellness?.addMenuItems(to: menu)
 
         menu.addItem(.separator())
         // Each module supplies its own items, targeted at itself. main.swift only
         // places them, so a feature's menu lives in the feature's file.
-        for item in AgentModule.shared.menuItems() { menu.addItem(item) }
+        wellness?.addMenuItems(to: menu)
+
+        menu.addItem(.separator())
+        menu.addItem(AgentModule.shared.statusMenuItem())
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(quit), keyEquivalent: "q")
@@ -214,31 +188,15 @@ final class CatController: NSObject, NSApplicationDelegate {
         tray.menu = menu
     }
 
+    @objc private func openSettings() {
+        SettingsWindowController.shared.show(host: self)
+    }
+
     @objc private func centre() {
         let vf = NSScreen.main!.visibleFrame
         let size = CatView.panelSize(atlas: atlas, scale: renderScale)
         panel.setFrameOrigin(
             NSPoint(x: vf.midX - size.width / 2, y: vf.midY - size.height / 2))
-    }
-
-    @objc private func setScale(_ sender: NSMenuItem) {
-        guard let s = sender.representedObject as? Double else { return }
-        renderScale = CGFloat(s)
-        UserDefaults.standard.set(s, forKey: "scale")
-        reload()
-    }
-
-    @objc private func setDragFeel(_ sender: NSMenuItem) {
-        guard let v = sender.representedObject as? String else { return }
-        UserDefaults.standard.set(v, forKey: "dragFeel")
-        reload()   // modules re-read their tuning when the rig is rebuilt
-    }
-
-    @objc private func setTheme(_ sender: NSMenuItem) {
-        guard let n = sender.representedObject as? String else { return }
-        themeName = n
-        UserDefaults.standard.set(n, forKey: "theme")
-        reload()
     }
 
     /// Rebuilds the view for a new theme or scale, keeping the cat where it stands.
@@ -332,6 +290,35 @@ final class CatController: NSObject, NSApplicationDelegate {
                    isBlinkSuppressed: modules.state == .sleeping)
         view.sync()
     }
+}
+
+/// The settings window drives the app through this and nothing else, so it never
+/// holds a `Rig` or a `CatView` -- both are thrown away and rebuilt by `reload()`,
+/// and anything that captured one would be pointing at a dead object the first time
+/// somebody picked another cat.
+extension CatController: SettingsHost {
+    var currentTheme: String { themeName }
+    var currentScale: CGFloat { renderScale }
+    var wellnessSuite: WellnessSuite? { wellness }
+
+    func apply(theme: String) {
+        themeName = theme
+        UserDefaults.standard.set(theme, forKey: "theme")
+        reload()
+    }
+
+    func apply(scale: CGFloat) {
+        renderScale = scale
+        UserDefaults.standard.set(Double(scale), forKey: "scale")
+        reload()
+    }
+
+    func apply(dragFeel: DragFeel) {
+        UserDefaults.standard.set(dragFeel.rawValue, forKey: "dragFeel")
+        reload()   // modules re-read their tuning when the rig is rebuilt
+    }
+
+    func centreCat() { centre() }
 }
 
 let controller = CatController()

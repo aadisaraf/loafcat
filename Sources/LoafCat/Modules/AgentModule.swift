@@ -602,8 +602,6 @@ final class AgentModule: NSObject, CatModule {
     private var lastRequested: String?
     private var signalSources: [DispatchSourceSignal] = []
 
-    private weak var connectItem: NSMenuItem?
-    private weak var disconnectItem: NSMenuItem?
     private weak var statusItem: NSMenuItem?
 
     private override init() {
@@ -834,37 +832,38 @@ final class AgentModule: NSObject, CatModule {
 
     // MARK: menu
 
-    /// The menu bar items for this feature, owned here so `main.swift` only has to
-    /// place them.
-    func menuItems() -> [NSMenuItem] {
-        let installed = HookInstaller.isInstalled()
+    /// Posted whenever connecting or disconnecting changes the hook registration,
+    /// so anything showing that state can refresh without polling for it.
+    static let connectionChanged = Notification.Name("loafcat.agent.connectionChanged")
 
+    /// The one menu bar row this feature keeps: what the listener is doing.
+    ///
+    /// Connect and disconnect are configuration, so they live in Settings alongside
+    /// everything else configurable. A setting reachable from two places is a
+    /// setting that will eventually disagree with itself.
+    func statusMenuItem() -> NSMenuItem {
         let status = NSMenuItem(title: statusTitle(), action: nil, keyEquivalent: "")
         status.isEnabled = false
         statusItem = status
-
-        let connect = NSMenuItem(
-            title: "Connect to Claude Code", action: #selector(connect), keyEquivalent: "")
-        connect.target = self
-        connect.state = installed ? .on : .off
-        connectItem = connect
-
-        let disconnect = NSMenuItem(
-            title: "Disconnect from Claude Code", action: #selector(disconnect),
-            keyEquivalent: "")
-        disconnect.target = self
-        disconnect.isEnabled = installed
-        disconnectItem = disconnect
-
-        return [status, connect, disconnect]
+        return status
     }
+
+    /// Whether loafcat's hooks are currently registered in `~/.claude/settings.json`.
+    /// Read from the file every time rather than cached — the user can edit that
+    /// file by hand, and a stale checkbox is worse than a slightly slow one.
+    var isConnected: Bool { HookInstaller.isInstalled() }
+
+    var listenerStatus: String { statusTitle() }
+
+    /// How many hooks a connection registers, for the settings copy.
+    var hookCount: Int { HookInstaller.events.count }
 
     private func statusTitle() -> String {
         guard let ep = endpoint else { return "Agent listener: off" }
         return "Agent listener: 127.0.0.1:\(ep.port)"
     }
 
-    @objc private func connect() {
+    @objc func connect() {
         do {
             let script = try deployHookScript()
             let url = HookInstaller.settingsURL
@@ -886,7 +885,7 @@ final class AgentModule: NSObject, CatModule {
         }
     }
 
-    @objc private func disconnect() {
+    @objc func disconnect() {
         do {
             let url = HookInstaller.settingsURL
             let root = try HookInstaller.read(url)
@@ -899,10 +898,8 @@ final class AgentModule: NSObject, CatModule {
     }
 
     private func refreshMenu() {
-        let installed = HookInstaller.isInstalled()
-        connectItem?.state = installed ? .on : .off
-        disconnectItem?.isEnabled = installed
         statusItem?.title = statusTitle()
+        NotificationCenter.default.post(name: Self.connectionChanged, object: self)
     }
 
     /// Copies the hook script into `~/.loafcat/` and returns where it landed.

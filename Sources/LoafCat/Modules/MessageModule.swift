@@ -172,19 +172,22 @@ final class MessageModule: CatModule {
         a.runModal()
     }
 
-    private static func parse(_ s: String) -> (Int, Int)? {
+    /// Internal, not private: the settings window validates its time field with the
+    /// same parser this dialog does, so the two cannot come to disagree about what
+    /// counts as a time.
+    static func parse(_ s: String) -> (Int, Int)? {
         let parts = s.trimmingCharacters(in: .whitespaces).split(separator: ":")
         guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]),
               (0...23).contains(h), (0...59).contains(m) else { return nil }
         return (h, m)
     }
 
-    private static func normalise(_ s: String) -> String {
+    static func normalise(_ s: String) -> String {
         guard let (h, m) = parse(s) else { return s }
         return String(format: "%02d:%02d", h, m)
     }
 
-    private static func defaultTimeString() -> String {
+    static func defaultTimeString() -> String {
         let c = Calendar.current.dateComponents([.hour, .minute], from: Date())
         return String(format: "%02d:%02d", c.hour ?? 9, c.minute ?? 0)
     }
