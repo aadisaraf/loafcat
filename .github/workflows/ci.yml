@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      # Runs first: a permission regression is worth failing fast on, and it
+      # needs no toolchain.
+      - name: Privacy check
+        run: ./scripts/check-privacy.sh
+
+      - name: Build
+        run: ./build.sh
+
+      # The art is generated, never hand-placed. If regenerating produces a diff,
+      # someone edited a PNG directly and the provenance claim in the README is no
+      # longer true.
+      - name: Assets are reproducible from the generator
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check Pillow
+          for theme in mono tuxedo cream; do
+            python3 tools/generate_art.py --theme "$theme" > /dev/null
+          done
+          if ! git diff --quiet -- assets/; then
+            echo "::error::assets/ differs after regeneration — art must come from tools/generate_art.py"
+            git diff --stat -- assets/
+            exit 1
+          fi
+          echo "assets reproduce exactly"
+
+      - name: App launches without crashing
+        run: |
+          ./build/LoafCat.app/Contents/MacOS/LoafCat > /tmp/loafcat.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 20); do
+            grep -q "loafcat running" /tmp/loafcat.log && break
+            sleep 0.5
+          done
+          if ! kill -0 $PID 2>/dev/null; then
+            echo "::error::app exited early"; cat /tmp/loafcat.log; exit 1
+          fi
+          kill $PID
+          cat /tmp/loafcat.log
