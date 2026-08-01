@@ -17,3 +17,6 @@ xcuserdata/
 
 # Local settings that should not be shared
 .claude/settings.local.json
+
+# Agent worktrees — these are separate checkouts, never part of the repo
+.claude/worktrees/
