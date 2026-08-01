@@ -13,6 +13,20 @@ final class CatView: NSView {
     private let rig: Rig
     private var layers: [String: CALayer] = [:]
 
+    /// The overheat coat, one layer per coat part, pinned exactly on top of its base
+    /// and cross-faded by opacity.
+    ///
+    /// This is why overheat costs no runtime art work: the `_hot` image is the same
+    /// pixels with the coat palette remapped, so it crops to the identical box and
+    /// needs the identical transform. A CIFilter colour matrix would have been the
+    /// obvious alternative and is worse on both counts — an offscreen pass per layer
+    /// at 120Hz, and arbitrary off-palette intermediate colours.
+    private var hotLayers: [String: CALayer] = [:]
+
+    /// Preallocated layers for the overlay sprites, so steam and hearts never
+    /// allocate inside a frame.
+    private var overlaySlots: [String: [CALayer]] = [:]
+
     /// Integer only. A fractional scale is the fastest way to make pixel art look
     /// like mush, and it cannot be fixed downstream.
     let scale: CGFloat
@@ -45,21 +59,43 @@ final class CatView: NSView {
     private func buildLayers() {
         for name in atlas.order {
             guard let part = atlas.parts[name] else { continue }
-            let l = CALayer()
-            l.contents = part.image
-            l.magnificationFilter = .nearest   // crisp pixels, never smoothed
-            l.minificationFilter = .nearest
-            l.contentsGravity = .resize
-            l.anchorPoint = .zero
-            l.bounds = CGRect(
-                x: 0, y: 0,
-                width: part.size.width * scale, height: part.size.height * scale)
-            l.position = viewPosition(for: part, offset: .zero)
-            l.actions = ["position": NSNull(), "bounds": NSNull(),
-                         "opacity": NSNull(), "hidden": NSNull(), "transform": NSNull()]
-            layer?.addSublayer(l)
-            layers[name] = l
+            layers[name] = addLayer(for: part)
+            // Immediately above its base, so it stays inside the draw order — a hot
+            // head must still sit behind the eyes.
+            if atlas.hotParts.contains(name), let hot = atlas.parts["\(name)_hot"] {
+                let l = addLayer(for: hot)
+                l.isHidden = true
+                l.opacity = 0
+                hotLayers[name] = l
+            }
         }
+        // Overlays sit above every body part: steam and hearts are in front of the
+        // cat, not inside it.
+        for (name, slots) in atlas.overlays.sorted(by: { $0.key < $1.key }) {
+            guard let part = atlas.parts[name] else { continue }
+            overlaySlots[name] = (0..<max(slots, 1)).map { _ in
+                let l = addLayer(for: part)
+                l.isHidden = true
+                return l
+            }
+        }
+    }
+
+    private func addLayer(for part: Atlas.Part) -> CALayer {
+        let l = CALayer()
+        l.contents = part.image
+        l.magnificationFilter = .nearest   // crisp pixels, never smoothed
+        l.minificationFilter = .nearest
+        l.contentsGravity = .resize
+        l.anchorPoint = .zero
+        l.bounds = CGRect(
+            x: 0, y: 0,
+            width: part.size.width * scale, height: part.size.height * scale)
+        l.position = viewPosition(for: part, offset: .zero)
+        l.actions = ["position": NSNull(), "bounds": NSNull(),
+                     "opacity": NSNull(), "hidden": NSNull(), "transform": NSNull()]
+        layer?.addSublayer(l)
+        return l
     }
 
     /// Rasterises the default-pose silhouette once, then dilates it.
@@ -141,6 +177,7 @@ final class CatView: NSView {
 
     /// Pushes the rig's transforms onto the layers. Called once per frame.
     func sync() {
+        let heat = min(max(CatStage.shared.heat, 0), 1)
         CATransaction.begin()
         CATransaction.setDisableActions(true)   // no implicit animation; we drive it
         for (name, l) in layers {
@@ -165,7 +202,45 @@ final class CatView: NSView {
             } else if !CATransform3DIsIdentity(l.transform) {
                 l.transform = CATransform3DIdentity
             }
+
+            // The hot coat is the same art on the same grid, so it copies the base
+            // layer's geometry outright rather than recomputing it.
+            if let h = hotLayers[name] {
+                h.isHidden = t.hidden || heat < 0.004
+                if !h.isHidden {
+                    h.position = l.position
+                    h.transform = l.transform
+                    h.opacity = Float(heat)
+                }
+            }
         }
+
+        syncOverlays()
         CATransaction.commit()
+    }
+
+    /// Places whatever the modules asked for into the preallocated slots. Anything
+    /// beyond a part's slot count is dropped rather than allocated for.
+    private func syncOverlays() {
+        var used: [String: Int] = [:]
+        for inst in CatStage.shared.overlays {
+            guard let slots = overlaySlots[inst.part],
+                  let part = atlas.parts[inst.part] else { continue }
+            let i = used[inst.part, default: 0]
+            guard i < slots.count else { continue }
+            used[inst.part] = i + 1
+
+            let l = slots[i]
+            let a = min(max(inst.alpha, 0), 1)
+            l.isHidden = a < 0.004
+            guard !l.isHidden else { continue }
+            l.opacity = Float(a)
+            // Straight through the same rounding as every body part, so an overlay
+            // is never the thing that shimmers.
+            l.position = viewPosition(for: part, offset: inst.offset)
+        }
+        for (name, slots) in overlaySlots {
+            for i in used[name, default: 0]..<slots.count { slots[i].isHidden = true }
+        }
     }
 }

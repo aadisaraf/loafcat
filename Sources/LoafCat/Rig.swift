@@ -83,6 +83,9 @@ final class Rig {
         // The pupil may travel exactly as far as the sclera allows, no further —
         // a pupil that clips outside its eye is the classic rig tell.
         self.pupilRange = atlas.eye.maxOffset
+        // The rig is the one object both launch and a theme switch construct, which
+        // makes it the right place to tell the modules which cat they are driving.
+        CatStage.shared.publish(atlas: atlas)
     }
 
     /// `cursor` is the cursor position relative to the cat's centre, in logical px.
@@ -137,6 +140,11 @@ final class Rig {
         let sx = 1.0 / sqrt(sy)
         let bodyLift = (sy - 1.0) * 8.0
 
+        // What the feature modules asked for this frame. They post offsets to the
+        // stage rather than reaching into the rig, so several can move the same part
+        // in one frame and simply add.
+        let stage = CatStage.shared
+
         for name in atlas.order {
             var tr = Transform()
 
@@ -183,6 +191,31 @@ final class Rig {
             default:
                 break
             }
+
+            // Module channels, layered on top of the ambient rig. The head channel
+            // reaches everything parented to the head, or a lean would tear the face
+            // off; the shadow takes only the horizontal component, because a cat
+            // bobbing upward should not drag its contact shadow into the air.
+            switch name {
+            case "head", "ear_l", "ear_r", "face", "eye_l", "eye_r",
+                 "pupil_l", "pupil_r", "lid_l", "lid_r":
+                tr.offset.x += stage.headOffset.x
+                tr.offset.y += stage.headOffset.y
+            case "paw_l":
+                tr.offset.x += stage.pawOffsetL.x
+                tr.offset.y += stage.pawOffsetL.y
+            case "paw_r":
+                tr.offset.x += stage.pawOffsetR.x
+                tr.offset.y += stage.pawOffsetR.y
+            case "tail":
+                tr.offset.x += stage.tailOffset.x
+                tr.offset.y += stage.tailOffset.y
+            default:
+                break
+            }
+            tr.offset.x += stage.bodyOffset.x
+            if name != "shadow" { tr.offset.y += stage.bodyOffset.y }
+
             t[name] = tr
         }
         transforms = t
