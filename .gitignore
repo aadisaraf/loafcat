@@ -23,3 +23,6 @@ xcuserdata/
 
 # Agent worktrees — these are separate checkouts, never part of the repo
 .claude/worktrees/
+
+# Distributable disk images — build with tools/make-dmg.sh
+dist/

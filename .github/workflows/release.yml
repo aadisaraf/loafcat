@@ -1,0 +1,119 @@
+name: Release
+
+# Tag and push to publish a disk image:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The tag is the source of truth for the version, and the job refuses to run if it
+# disagrees with CFBundleShortVersionString in build.sh -- a release whose filename
+# and About box say different things is worse than no release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same gate as every other build. A release is the worst possible place to
+      # find out a permission-requiring API slipped in.
+      - name: Privacy check
+        run: ./scripts/check-privacy.sh
+
+      - name: Install packaging tools
+        run: python3 -m pip install --quiet --disable-pip-version-check --break-system-packages Pillow dmgbuild
+
+      - name: Version matches the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PLIST_VERSION=$(grep -o 'CFBundleShortVersionString</key><string>[^<]*' build.sh | sed 's/.*<string>//')
+          echo "tag=$TAG  build.sh=$PLIST_VERSION"
+          if [ "$TAG" != "$PLIST_VERSION" ]; then
+            echo "::error::tag $TAG does not match CFBundleShortVersionString $PLIST_VERSION in build.sh"
+            exit 1
+          fi
+
+      # Signing and notarisation happen automatically if the secrets exist, and
+      # are skipped cleanly if they do not. Until there is a Developer ID, the
+      # disk image ships ad-hoc signed and says so on its own background.
+      - name: Build the disk image
+        env:
+          LOAFCAT_SIGN_IDENTITY: ${{ secrets.LOAFCAT_SIGN_IDENTITY }}
+          LOAFCAT_NOTARY_PROFILE: ${{ secrets.LOAFCAT_NOTARY_PROFILE }}
+        run: ./tools/make-dmg.sh
+
+      - name: The generated art still reproduces
+        run: |
+          for theme in mono tuxedo cream; do
+            python3 tools/generate_art.py --theme "$theme" > /dev/null
+          done
+          python3 tools/generate_icon.py > /dev/null
+          python3 tools/generate_dmg_background.py > /dev/null
+          if ! git diff --quiet -- assets/; then
+            echo "::error::assets/ differs after regeneration"
+            git diff --stat -- assets/
+            exit 1
+          fi
+
+      - name: The app in the image actually launches
+        run: |
+          hdiutil attach -nobrowse -quiet dist/*.dmg
+          # Out of the image and into a normal directory first: an app cannot be
+          # meaningfully tested on a read-only volume.
+          cp -R /Volumes/loafcat/LoafCat.app "$RUNNER_TEMP/"
+          hdiutil detach /Volumes/loafcat
+          "$RUNNER_TEMP/LoafCat.app/Contents/MacOS/LoafCat" > "$RUNNER_TEMP/launch.log" 2>&1 &
+          PID=$!
+          for _ in $(seq 1 20); do
+            grep -q "loafcat running" "$RUNNER_TEMP/launch.log" && break
+            sleep 0.5
+          done
+          if ! kill -0 $PID 2>/dev/null; then
+            echo "::error::the packaged app exited early"; cat "$RUNNER_TEMP/launch.log"; exit 1
+          fi
+          kill $PID
+          cat "$RUNNER_TEMP/launch.log"
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          generate_release_notes: true
+          body: |
+            ## Installing
+
+            Download the `.dmg`, open it, and drag loafcat onto Applications.
+
+            **The first launch will be blocked.** loafcat is not notarised —
+            notarisation needs Apple's $99/year Developer Program. Nothing is
+            wrong with the download.
+
+            To open it anyway: **System Settings → Privacy & Security**, scroll
+            down, and click **Open Anyway** next to the loafcat message.
+
+            Or, equivalently, in a terminal:
+
+            ```sh
+            xattr -dr com.apple.quarantine /Applications/LoafCat.app
+            ```
+
+            You only do this once. If you'd rather not trust a binary, building
+            from source takes about five seconds and needs only the Xcode command
+            line tools — see the README.
+
+            ## Where it lives
+
+            In the menu bar, as a cat's face. Settings and Quit are in that menu.
+            There is no Dock icon unless you turn one on in Settings.
+
+            **loafcat asks for zero permissions** — no Accessibility, no Input
+            Monitoring, no Screen Recording, no prompts of any kind.
