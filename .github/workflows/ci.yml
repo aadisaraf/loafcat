@@ -85,17 +85,26 @@ jobs:
         run: |
           $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
           Write-Host "running $($exe.FullName) --selftest"
-          & $exe.FullName --selftest
-          $code = $LASTEXITCODE
-          # The app also writes everything to a file. Printed unconditionally so a
-          # failure is diagnosable even if the console handle was not wired up —
-          # which is exactly how this step failed the first time it ever ran.
-          $log = Join-Path $env:LOCALAPPDATA "loafcat\loafcat.log"
-          if (Test-Path $log) {
-            Write-Host "--- $log ---"
-            Get-Content $log -Tail 80
+
+          # Start-Process with redirection rather than `& $exe`: a GUI subsystem
+          # executable does not reliably inherit a usable stdout from a shell
+          # pipeline, and redirecting to real files gives the child handles it can
+          # actually write to. That is how this step failed the first two times it
+          # ever ran — with no output whatsoever to say so.
+          $out = Join-Path $env:RUNNER_TEMP "selftest.out"
+          $err = Join-Path $env:RUNNER_TEMP "selftest.err"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+                 -PassThru -NoNewWindow -Wait `
+                 -RedirectStandardOutput $out -RedirectStandardError $err
+          Get-Content $out -ErrorAction SilentlyContinue
+          Get-Content $err -ErrorAction SilentlyContinue
+
+          # Belt and braces: every place the app might have said something.
+          foreach ($f in @((Join-Path $env:LOCALAPPDATA "loafcat\loafcat.log"),
+                           (Join-Path $exe.DirectoryName "loafcat-crash.log"))) {
+            if (Test-Path $f) { Write-Host "--- $f ---"; Get-Content $f -Tail 80 }
           }
-          if ($code -ne 0) { throw "self-test failed" }
+          if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
 
       # The drag physics, driven by a scripted grab-hold-shake-release through the
       # same entry points real mouse events use. This is the one check that the

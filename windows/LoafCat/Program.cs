@@ -18,6 +18,37 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // A GUI subsystem executable that throws before the logger is up dies
+        // silently — no console, no window, no file, just an exit code. That is a
+        // miserable thing to debug on a machine you do not have, so the crash goes
+        // next to the executable, which is somewhere we know exists.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Panic(e.ExceptionObject);
+        try
+        {
+            return Run(args);
+        }
+        catch (Exception e)
+        {
+            Panic(e);
+            return 1;
+        }
+    }
+
+    private static void Panic(object? error)
+    {
+        string text = $"loafcat crashed at {DateTime.Now:u}\n{error}\n";
+        try { Console.Error.WriteLine(text); } catch (IOException) { }
+        try { Log.Warn(text); } catch (IOException) { }
+        try
+        {
+            File.AppendAllText(
+                Path.Combine(AppContext.BaseDirectory, "loafcat-crash.log"), text);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    private static int Run(string[] args)
+    {
         Log.Start();
         Prefs.Load();
 
