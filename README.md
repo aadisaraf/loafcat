@@ -124,6 +124,7 @@ again.
 | **Purrs when petted** | Stroke it, and it leans into the cursor. It ignores a cursor that's merely parked on it. |
 | **Hunts** | Fast, reversing cursor movement gets a pounce. |
 | **Knows about Claude Code** | Thinks while a request runs, hops when it finishes, raises an alert when Claude needs you. Optional, reversible, and it cannot slow a session down. |
+| **Updates itself** | Checks GitHub a few times a day and installs a new version only if it carries a valid signature from the project's key. Staged, so it starts the next time you open the app — never swapped out from under a running cat. Off with one checkbox. |
 | **Looks after you** | Optional stretch breaks, hydration nudges, a pomodoro timer, a daily reminder and a pinned note — all off or conservative by default. |
 | **Sleeps** | Goes quiet when you do. |
 

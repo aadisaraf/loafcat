@@ -42,6 +42,8 @@ public static class SelfTest
         Log.Line($"themes  {string.Join(", ", themes)}");
 
         CheckKeyInference();
+        CheckStartMenuEntry();
+        CheckUpdater();
         foreach (string theme in themes) CheckTheme(theme);
 
         Log.Line(_failures == 0
@@ -109,6 +111,70 @@ public static class SelfTest
             Check("typing on a still mouse is counted exactly", k.Keys == 20,
                   $"{k.Keys} of 20 keystrokes");
         }
+    }
+
+    /// Whether loafcat will be findable by typing its name.
+    ///
+    /// Windows Search indexes `Start Menu\Programs` for the current user, so the `.lnk`
+    /// written at install time IS the app as far as the search box is concerned — there
+    /// is nothing else to register. What is worth checking is that it gets written at
+    /// all: the shortcut is created through late-bound COM, whether that survives into a
+    /// single-file self-contained build is not something the compiler can tell us, and
+    /// the failure mode is a Start menu entry that silently never appears.
+    ///
+    /// Written somewhere harmless rather than into the real Start menu, so running the
+    /// self-test never installs anything.
+    private static void CheckStartMenuEntry()
+    {
+        Log.Line("--- start menu ---");
+
+        string dir = Path.Combine(Path.GetTempPath(), "loafcat-selftest");
+        string link = Path.Combine(dir, "loafcat.lnk");
+        string target = Environment.ProcessPath ?? Path.Combine(dir, "LoafCat.exe");
+        try
+        {
+            bool written = SelfInstall.WriteShortcut(
+                link, target, dir, SelfInstall.ShortcutDescription);
+            Check("a Start menu shortcut can be written", written && File.Exists(link),
+                  "late-bound WScript.Shell works in a single-file build");
+
+            string? readBack = written ? SelfInstall.ReadShortcutTarget(link) : null;
+            Check("...and points where it was told to",
+                  string.Equals(readBack, target, StringComparison.OrdinalIgnoreCase),
+                  readBack ?? "target could not be read back");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// The two pure decisions the updater makes, which between them decide whether a
+    /// downloaded executable gets to run.
+    private static void CheckUpdater()
+    {
+        Log.Line("--- updater ---");
+
+        Check("a newer version is recognised",
+            Updater.IsNewer("0.3.0", "0.2.0") && Updater.IsNewer("0.2.1", "0.2.0")
+            && Updater.IsNewer("1.0.0", "0.9.9"), "");
+
+        // The one that matters: never downgrade, and never update to yourself. Either
+        // would be a loop that reinstalls on every launch for ever.
+        Check("an older or identical version is not",
+            !Updater.IsNewer("0.1.0", "0.2.0") && !Updater.IsNewer("0.2.0", "0.2.0")
+            && !Updater.IsNewer("0.2.0-rc.1", "0.2.0"), "");
+
+        Check("a compiled-in signing key is present",
+            Updater.UpdateKey.Length > 0,
+            "an empty key would mean nothing is ever installed automatically");
+
+        // Not a signature. Verification must say so rather than throw, because the
+        // thing on the other end of that call is a network download.
+        Check("garbage is not a valid signature",
+            !Updater.VerifySignature([1, 2, 3], [4, 5, 6])
+            && !Updater.VerifySignature([1, 2, 3], []), "");
     }
 
     /// One 5-second run of the mouse-move stream. `clockSkewMs` is how far

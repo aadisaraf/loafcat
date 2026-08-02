@@ -30,6 +30,12 @@ jobs:
       - name: Privacy check
         run: ./scripts/check-privacy.sh
 
+      # Both ports must carry the same update key, and it must be a real one. The
+      # failure this catches is silent: releases keep going out and every installed
+      # copy quietly declines to install them.
+      - name: Update key
+        run: ./scripts/check-update-key.sh
+
       - uses: ./.github/actions/python-art
 
       - name: Version matches the tag
@@ -85,7 +91,10 @@ jobs:
       - name: Checksum
         run: |
           cd dist
-          shasum -a 256 *.dmg > "$(ls *.dmg).sha256"
+          for f in *.dmg *-macos.zip; do
+            [ -f "$f" ] || continue
+            shasum -a 256 "$f" > "$f.sha256"
+          done
           cat *.sha256
 
       - name: Publish
@@ -93,6 +102,7 @@ jobs:
         with:
           files: |
             dist/*.dmg
+            dist/*-macos.zip
             dist/*.sha256
           generate_release_notes: true
           # Explicit rather than left to the action's tag-name heuristic. A
@@ -249,3 +259,53 @@ jobs:
             dist/*.exe
             dist/*.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  sign:
+    name: Sign for the updater
+    # Last, because it signs what the other two jobs published. One job rather than a
+    # step in each: the signing key then only ever touches a single runner, and openssl
+    # is there without argument about which shell can find it.
+    needs: [dmg, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Sign the update assets
+        env:
+          KEY: ${{ secrets.LOAFCAT_UPDATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::warning::LOAFCAT_UPDATE_KEY is not set — this release ships"\
+                 "unsigned, so installed copies will report it and refuse to"\
+                 "install it automatically. See tools/make-update-key.sh."
+            exit 0
+          fi
+
+          # 0600 and inside the runner's own workspace. Removed on the way out whether
+          # or not the signing worked.
+          umask 077
+          printf '%s' "$KEY" > signing-key.pem
+          trap 'shred -u signing-key.pem 2>/dev/null || rm -f signing-key.pem' EXIT
+
+          mkdir -p assets && cd assets
+          # Exactly the two files an installed copy will ask for: the Windows
+          # executable and the macOS zip. The .dmg is for humans and is not signed
+          # here -- nothing downloads it unattended.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+             --pattern '*-win-x64.exe' --pattern '*-macos.zip'
+
+          for f in *-win-x64.exe *-macos.zip; do
+            [ -f "$f" ] || continue
+            openssl dgst -sha256 -sign ../signing-key.pem -out "$f.sig" "$f"
+            # Verified here as well as in the app. A signature that does not check out
+            # on the machine that just made it is a broken key, and finding that out
+            # from a user whose app quietly stopped updating is far too late.
+            openssl ec -in ../signing-key.pem -pubout -out pub.pem 2>/dev/null
+            openssl dgst -sha256 -verify pub.pem -signature "$f.sig" "$f"
+            echo "signed $f"
+          done
+          rm -f pub.pem
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ./*.sig
