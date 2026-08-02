@@ -15,6 +15,17 @@ public static class Assets
 {
     private static string? _root;
     private static string? _payload;
+    private static bool _rootIsUnpacked;
+
+    /// True when the art came out of the executable rather than off the disk beside it.
+    ///
+    /// Which is the same question as "is this a bare downloaded LoafCat.exe" — the .zip
+    /// and a source tree both put `assets\` somewhere findable, and neither should be
+    /// picked up and moved. See SelfInstall.
+    public static bool UsingEmbeddedPayload
+    {
+        get { Root(); return _rootIsUnpacked; }
+    }
 
     /// Where the cat's art actually is.
     ///
@@ -46,7 +57,15 @@ public static class Assets
             if (Directory.Exists(Path.Combine(c, "themes"))) { _root = c; return _root; }
         }
 
-        _root = Payload() is { } p ? Path.Combine(p, "assets") : candidates[0];
+        if (Payload() is { } p)
+        {
+            _rootIsUnpacked = true;
+            _root = Path.Combine(p, "assets");
+        }
+        else
+        {
+            _root = candidates[0];
+        }
         return _root;
     }
 

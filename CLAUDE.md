@@ -160,6 +160,11 @@ down separately rather than assuming the Mac answer transfers.
   "was that the mouse?" verdict has to be held long enough for the hook to catch up —
   50ms — or the race alone reproduces the bug above.
 
+- **One loose `.exe` has no name of its own.** macOS gets this free: a `.app` is a
+  bundle you drag to Applications. On Windows, set `AssemblyTitle` (it becomes
+  `FileDescription`, which is what Task Manager and the startup list read) and have the
+  bare executable install itself to `%LOCALAPPDATA%\Programs\loafcat` on first run.
+  Otherwise the app is forever called `loafcat-0.2.0-win-x64.exe`.
 ## Privacy — a design constraint, not a feature
 
 The app asks for **zero permissions** and must stay that way. Typing reactions come

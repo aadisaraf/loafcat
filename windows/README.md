@@ -12,6 +12,13 @@ Or download **`loafcat-<version>-win-x64.exe`** from
 file, nothing to extract: the art and the hook script are embedded and unpack
 themselves on first run.
 
+On that first run it also installs itself — to `%LOCALAPPDATA%\Programs\loafcat`, with a
+Start menu entry, which is exactly where and what `install.ps1` would have put it — and
+hands over to the installed copy. Otherwise the app you end up with is a file in
+Downloads called `loafcat-0.2.0-win-x64.exe`, and that is the name Windows shows you
+every time it has to name it. Both download routes converge on the same layout, and
+`install.ps1 -Uninstall` removes either. Pass `--portable` to skip it.
+
 The `.zip` is the same executable with `assets\` on disk beside it. Anything found
 there wins over the embedded copy, which is what makes dropping a community theme into
 `assets\themes\` work — so take the zip if you want to edit the art, and the `.exe`
@@ -146,6 +153,12 @@ your choice in Settings is authoritative after that.
 
 ### Smaller things
 
+- **The app has to name itself.** A `.app` bundle carries its own name and gets dragged
+  to Applications; one loose `.exe` has neither, so Windows falls back to the file name —
+  version, CPU architecture and extension included — wherever it has to call the app
+  something. `AssemblyTitle` sets `FileDescription`, which is the string Task Manager,
+  the startup apps list and the tray icon settings all read, and `SelfInstall.cs` deals
+  with the file itself.
 - **The tray icon is not a template.** macOS takes an alpha mask and tints it to match
   the menu bar. Windows draws the icon as-is on a taskbar that may be light, dark, or
   showing the wallpaper, so the generator emits a real two-tone icon whose mid-grey coat

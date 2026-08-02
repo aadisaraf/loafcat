@@ -35,6 +35,13 @@
     <Version>0.2.0</Version>
     <Company>loafcat</Company>
     <Product>loafcat</Product>
+    <!-- Becomes FileDescription in the version resource, which is the string Windows
+         shows wherever it has to name a running app: Task Manager, the startup apps
+         list, the tray icon settings. Without it the SDK uses the assembly name, and
+         anything that cannot find a description at all falls back to the file name,
+         extension and all. It is the app's name to the shell, so it is spelt the way
+         the app spells it everywhere else. -->
+    <AssemblyTitle>loafcat</AssemblyTitle>
     <Description>A pixel cat that reacts to your cursor, your typing, and Claude Code.</Description>
 
     <!-- Unsafe is used in exactly one place: the compositor's inner blit loop, which
