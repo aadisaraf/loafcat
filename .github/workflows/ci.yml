@@ -75,6 +75,18 @@ jobs:
         shell: pwsh
         run: pwsh windows/build.ps1 -SkipAssets
 
+      # So a tester can get a build off any commit without one being released.
+      # Downloading it needs a GitHub account — artifacts are not anonymous, even on
+      # a public repo — which is the whole reason install.ps1 and the release page
+      # exist for everyone else.
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: loafcat-win-x64
+          path: dist/*.zip
+          retention-days: 30
+          compression-level: 0   # already a zip
+
       # Everything that can be checked without a person looking at a screen: the
       # atlas loads from the SAME files the macOS build reads, the hit mask is a
       # silhouette, the composed frame is opaque on the cat and transparent beside
