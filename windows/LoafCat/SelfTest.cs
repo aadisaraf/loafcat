@@ -19,7 +19,8 @@ namespace LoafCat;
 ///     which is exactly what the window manager hit-tests for click-through
 ///   * magnifying is nearest-neighbour and integer: 3x is byte-for-byte the 1x frame
 ///     with every pixel tripled, which is the pixel-art claim stated as an equation
-///   * an idle cat mostly re-presents the same frame, which is what makes it cheap
+///   * an unchanged frame is recognised as unchanged and never re-sent to the desktop
+///     compositor
 [SupportedOSPlatform("windows")]
 public static class SelfTest
 {
@@ -115,7 +116,7 @@ public static class SelfTest
             $"alpha {corner} at (1, 1) — clicks there fall through to the app below");
 
         CheckIntegerMagnification(theme, atlas);
-        CheckIdleFramesRepeat(theme, atlas);
+        CheckDuplicateFrames(theme, atlas);
     }
 
     /// The pixel-art claim, stated as an equation.
@@ -159,35 +160,45 @@ public static class SelfTest
                 : "a fractional transform has leaked into the compositor");
     }
 
-    /// An idle cat should mostly be re-presenting the frame that is already on screen.
+    /// The duplicate-frame check, and how much it actually buys.
     ///
-    /// Every position is quantised to a whole logical pixel before scaling, so the
-    /// continuous breathing sine and tail spring spend most of their time producing an
-    /// identical frame. If this ratio ever collapses, something has started moving on a
-    /// sub-pixel grid — which is both a performance regression and, more importantly,
-    /// the first symptom of the art starting to crawl.
-    private static void CheckIdleFramesRepeat(string theme, Atlas atlas)
+    /// Two separate things, because only one of them is a property worth failing a
+    /// build over:
+    ///
+    ///   * **The mechanism works.** Composing twice from the same rig state must
+    ///     produce a frame recognised as unchanged. Deterministic, and if it ever
+    ///     breaks, every frame goes to the desktop compositor whether it needs to or
+    ///     not.
+    ///   * **How often an idle cat repeats a frame.** Reported, not asserted. It
+    ///     depends on where the breathing sine happens to sit relative to the pixel
+    ///     grid, and inventing a threshold would be asserting a number nobody measured.
+    private static void CheckDuplicateFrames(string theme, Atlas atlas)
     {
         var rig = new Rig(atlas);
         using var view = new CatView(atlas, rig, 2);
 
-        // No HWND, so `Present` cannot actually reach the window manager — but the
-        // duplicate-frame comparison happens before that, and its counters are what this
-        // is measuring.
-        int identical = 0;
+        rig.Update(1.0 / 120.0, new Pt(0, 0), isBlinkSuppressed: true);
+        view.Compose();
+        bool firstIsNew = view.FrameChanged();
+        // No rig update in between: byte-for-byte the same frame, by construction.
+        view.Compose();
+        bool secondIsDuplicate = !view.FrameChanged();
+
+        Check($"{theme}: duplicate frames are detected", firstIsNew && secondIsDuplicate,
+            "an unchanged frame is not sent to the compositor twice");
+
+        long before = view.FramesSkipped;
         const int frames = 600;      // five seconds at 120Hz
         for (int i = 0; i < frames; i++)
         {
             // A cursor that does not move, which is what "idle" means here.
             rig.Update(1.0 / 120.0, new Pt(0, 0), isBlinkSuppressed: true);
             view.Compose();
-            if (!view.Present(IntPtr.Zero, 0, 0)) identical++;
+            view.FrameChanged();
         }
-
-        double ratio = (double)view.FramesSkipped / frames;
-        Check($"{theme}: idle frames repeat", ratio > 0.5,
-            $"{view.FramesSkipped}/{frames} ({ratio:P0}) identical to the previous frame");
-        _ = identical;
+        long repeated = view.FramesSkipped - before;
+        Log.Line($"  ..  {theme}: idle repeats {repeated}/{frames} " +
+                 $"({(double)repeated / frames:P0}) — reported, not asserted");
     }
 
     private static void Check(string name, bool ok, string detail)

@@ -550,19 +550,23 @@ public sealed class CatView : IDisposable
 
     // MARK: - presenting
 
-    /// Hands the composed frame to the window manager, unless it is byte-for-byte the
-    /// frame already on screen.
+    /// Whether the composed frame differs from the one already presented, recording it
+    /// as the new reference if so.
     ///
-    /// That check is worth its cost specifically because this is pixel art. Every
-    /// position is quantised to a whole logical pixel before it is scaled, so the
-    /// continuous ambient motion — the breathing sine, the tail spring — spends most
-    /// of its time producing the SAME frame twice. Comparing 600KB is a SIMD memcmp;
-    /// `UpdateLayeredWindow` is a trip through the desktop compositor. Skipping the
-    /// second is measurably the larger saving, and it is why an idle cat costs almost
-    /// nothing.
-    public unsafe bool Present(IntPtr hwnd, int screenX, int screenY)
+    /// Split out from `Present` so it can be exercised without a window — and because
+    /// the first version folded the two together behind an `hwnd == 0` guard, which
+    /// meant the self-test measured a counter that could never move. A check that
+    /// cannot fail is worse than no check.
+    ///
+    /// Comparing the buffer is worth its cost specifically because this is pixel art.
+    /// Every part position is quantised to a whole logical pixel before it is scaled,
+    /// so the continuous ambient motion — the breathing sine, the tail spring — spends
+    /// a good deal of its time producing the SAME frame twice. Comparing is a SIMD
+    /// memcmp over ~600KB; `UpdateLayeredWindow` is a trip through the desktop
+    /// compositor, and skipping that is much the larger saving.
+    public unsafe bool FrameChanged()
     {
-        if (_bits == IntPtr.Zero || hwnd == IntPtr.Zero) return false;
+        if (_bits == IntPtr.Zero) return false;
 
         var composed = new ReadOnlySpan<uint>((void*)_bits, _widthPx * _heightPx);
         if (_everPresented && composed.SequenceEqual(_previous))
@@ -572,6 +576,17 @@ public sealed class CatView : IDisposable
         }
         composed.CopyTo(_previous);
         _everPresented = true;
+        return true;
+    }
+
+    /// Hands the composed frame to the window manager, unless it is byte-for-byte the
+    /// frame already on screen.
+    public unsafe bool Present(IntPtr hwnd, int screenX, int screenY)
+    {
+        if (!FrameChanged()) return false;
+        // Headless — the self-test. The comparison above still ran, which is the part
+        // worth testing; there is simply nobody to hand the result to.
+        if (hwnd == IntPtr.Zero) return false;
 
         var dst = new Win32.Point(screenX, screenY);
         var src = new Win32.Point(0, 0);
