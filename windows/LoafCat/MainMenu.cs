@@ -48,6 +48,7 @@ public sealed class TrayMenu : IDisposable
     private readonly Action _centre;
     private readonly Action _quit;
     private Func<WellnessSuite?> _wellness = () => null;
+    private Func<Updater?> _updater = () => null;
 
     public TrayMenu(Func<bool> isCatVisible, Action toggleCat, Action openSettings,
                     Action centre, Action quit)
@@ -80,6 +81,8 @@ public sealed class TrayMenu : IDisposable
 
     public void BindWellness(Func<WellnessSuite?> wellness) => _wellness = wellness;
 
+    public void BindUpdater(Func<Updater?> updater) => _updater = updater;
+
     /// Rebuilds only the menu. Safe to call as often as needed — the icon itself, and
     /// therefore its place in the tray, is untouched.
     public void Rebuild()
@@ -107,6 +110,17 @@ public sealed class TrayMenu : IDisposable
                 suite.TogglePomodoro);
         }
 
+        // Only once there is something to say. A permanently visible "you are up to
+        // date" is one more line to read past every time the menu opens.
+        if (_updater() is { StagedAndReady: true, AvailableVersion: { } v })
+        {
+            _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(new ToolStripMenuItem($"loafcat {v} starts next time you open it")
+            {
+                Enabled = false,
+            });
+        }
+
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem(AgentModule.Shared.ListenerStatus)
         {
@@ -132,12 +146,19 @@ public sealed class TrayMenu : IDisposable
     /// default, so even the icon may not be visible until the user drags it out.
     public void SayHello()
     {
+        Notify("loafcat is running",
+            "The cat lives in the notification area. If you cannot see it, "
+            + "drag it out of the ^ overflow. Right-click for settings and quit.");
+    }
+
+    /// A tray balloon. The quietest thing the platform offers, which is the right
+    /// register for an app whose whole job is to sit in the corner.
+    public void Notify(string title, string message)
+    {
         try
         {
-            _icon.BalloonTipTitle = "loafcat is running";
-            _icon.BalloonTipText =
-                "The cat lives in the notification area. If you cannot see it, "
-                + "drag it out of the ^ overflow. Right-click for settings and quit.";
+            _icon.BalloonTipTitle = title;
+            _icon.BalloonTipText = message;
             _icon.ShowBalloonTip(8000);
         }
         catch (Exception e) when (e is InvalidOperationException or ArgumentException)

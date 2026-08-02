@@ -55,6 +55,10 @@ internal static class Program
         // Runs without a window, so it works on a CI runner with no interactive desktop.
         if (args.Contains("--selftest")) return SelfTest.Run();
 
+        // Before anything is on screen: a staged update renames the running executable
+        // out of the way, moves the new one in, and relaunches into it. See Updater.
+        if (Updater.ApplyStagedUpdate()) return 0;
+
         // Before the single-instance check, not after: an installed copy that is already
         // running holds its own file open, so the copy below fails, and falling through
         // to the mutex is exactly the right thing to do next. See SelfInstall.
@@ -151,6 +155,7 @@ public sealed class CatController : ISettingsHost
     /// Features live here, one file each. See CatModule.cs.
     public ModuleRegistry Modules { get; } = new();
     private WellnessSuite? _wellness;
+    private Updater? _updater;
 
     /// Smoothed cursor velocity, in logical px/sec. Raw frame-to-frame deltas are far
     /// too noisy for a velocity threshold to be usable.
@@ -197,6 +202,17 @@ public sealed class CatController : ISettingsHost
 
         RegisterModules();
         _tray.BindWellness(() => _wellness);
+
+        // Announced through the tray rather than the cat: an update is news about the
+        // app, not something the cat did, and the speech bubble is the cat's voice.
+        _updater = new Updater(message => PostToUi(() =>
+        {
+            _tray.Notify("loafcat", message);
+            _tray.Rebuild();
+        }));
+        _tray.BindUpdater(() => _updater);
+        _updater.Start();
+
         _tray.Rebuild();
 
         _window.SetCatVisible(_catVisible);
@@ -467,6 +483,7 @@ public sealed class CatController : ISettingsHost
         _running = false;
         _tickThread?.Join(200);
         AgentModule.Shared.CleanUp();
+        _updater?.Dispose();
         InputTelemetry.Stop();
         Prefs.Flush();
         _tray.Dispose();
@@ -498,6 +515,21 @@ public sealed class CatController : ISettingsHost
     public string CurrentTheme => _themeName;
     public double CurrentScale => _renderScale;
     public WellnessSuite? WellnessSuite => _wellness;
+
+    public string UpdateStatus => _updater switch
+    {
+        { StagedAndReady: true, AvailableVersion: { } v } =>
+            $"loafcat {v} is ready, and starts the next time you open the app.",
+        { AvailableVersion: { } v } => $"loafcat {v} is available.",
+        _ => $"loafcat {Branding.Version}.",
+    };
+
+    public async Task CheckForUpdates(Action<string> report)
+    {
+        if (_updater is not { } updater) { report("Updates are unavailable."); return; }
+        await updater.CheckAsync(quiet: false).ConfigureAwait(true);
+        report(UpdateStatus);
+    }
     public bool IsCatVisible => _catVisible;
 
     public void ApplyTheme(string theme)

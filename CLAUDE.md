@@ -192,6 +192,37 @@ Also: `Stop` does **not** fire on user interrupt (Esc), so anything driven by `S
 alone needs an idle-timeout backstop or the cat gets stuck looking busy. Exit code 1
 does *not* block; only exit 2 does.
 
+## Updates — the one place that runs downloaded code
+
+`Updater.swift` / `Updater.cs` check GitHub a few times a day, and this is the only
+part of the app that fetches something and arranges for it to run. Treat it as the
+security surface it is.
+
+- **A checksum is not provenance.** The `.sha256` sits beside the file it describes,
+  on the same host, so it proves the download was not corrupted and nothing else —
+  anyone who can replace the release can replace both halves. Every update therefore
+  also carries an **ECDSA P-256 signature** over the file.
+- **An unsigned or wrongly-signed release is never installed.** The app reports that a
+  new version exists and stops. That degradation is deliberate: it is what makes it
+  safe to have shipped this before any key existed, and what makes a lost key a
+  nuisance rather than an emergency.
+- **The public key is compiled into both builds, never read from `assets/`.**
+  Everything in `assets/` is meant to be replaceable by whoever owns the machine; a
+  trust anchor that can be swapped by editing a file next to the binary is not one.
+  `scripts/check-update-key.sh` fails the build if the two ports disagree, or if the
+  value is not a key openssl can read — a silent mismatch means every installed copy
+  quietly stops updating and nobody finds out for months.
+- **P-256, not Ed25519.** .NET 8 has no Ed25519. A scheme both standard libraries can
+  verify, against `openssl`-produced signatures, is worth more than the newer curve.
+- **Nothing is ever swapped under a running app.** A verified download is *staged*; the
+  swap happens at the next launch, before any window exists, by renaming the running
+  binary out of the way. Both platforms allow renaming a running image and neither
+  allows deleting one. If the move fails after the rename, put the old one back — an
+  app that fails to update is a nuisance, one that deletes itself trying is a support
+  request with no way to answer it.
+- This is **not** Gatekeeper or SmartScreen signing, which cost money and are about the
+  first install. This is free and protects the update channel.
+
 ## Legal — the boundary
 
 We clone Comnyang's **behaviour**, which is not copyrightable. We do not touch its

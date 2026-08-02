@@ -8,7 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # A permission regression is cheap to catch here and expensive to catch in review.
-./scripts/check-privacy.sh || exit 1
+./scripts/check-privacy.sh
+# So is an update key the two ports disagree about, which nothing else would notice.
+./scripts/check-update-key.sh
 
 APP="build/LoafCat.app"
 rm -rf build

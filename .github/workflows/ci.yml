@@ -20,6 +20,12 @@ jobs:
       - name: Privacy check
         run: ./scripts/check-privacy.sh
 
+      # Both ports must carry the same update key, and it must be a real one. The
+      # failure this catches is silent: releases keep going out and every installed
+      # copy quietly declines to install them.
+      - name: Update key
+        run: ./scripts/check-update-key.sh
+
       - name: Build
         run: ./build.sh
 

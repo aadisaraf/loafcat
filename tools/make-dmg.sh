@@ -112,7 +112,24 @@ if [ -n "${LOAFCAT_NOTARY_PROFILE:-}" ]; then
   xcrun stapler validate "$DMG"
 fi
 
+# ---------------------------------------------------------------------------
+# The zip the updater downloads
+# ---------------------------------------------------------------------------
+# A .dmg is the right thing for a human -- it opens a window that says "drag me to
+# Applications". It is the wrong thing for an updater, which would have to attach a
+# disk image in the background on someone's machine. So the same bundle also ships
+# as a zip, which is what Updater.swift asks for by name.
+#
+# ditto rather than `zip`: it preserves the bundle's symlinks, extended attributes
+# and resource forks, and it is what the updater uses to unpack again on the other
+# side, so a round trip through it is exactly what has been tested.
+ZIP="dist/loafcat-${VERSION}-macos.zip"
+rm -f "$ZIP"
+ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+
 SIZE=$(du -h "$DMG" | cut -f1)
+ZIPSIZE=$(du -h "$ZIP" | cut -f1)
 echo
 echo "built $DMG ($SIZE)"
+echo "built $ZIP ($ZIPSIZE, for the updater)"
 spctl -a -vv "$APP" 2>&1 | sed 's/^/  gatekeeper: /' || true
