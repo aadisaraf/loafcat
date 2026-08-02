@@ -341,7 +341,11 @@ internal sealed class CatPane(ISettingsHost host) : SettingsPane(host)
             themeRow.Controls.Add(b);
         }
         Add(themeRow);
-        Add(Caption("Themes are directories under assets\\themes. "
+        // The resolved path, not a hardcoded one. It differs between the zip (beside
+        // the executable) and the standalone .exe (unpacked under LOCALAPPDATA), and
+        // telling someone to look in a folder that is not the one being read is worse
+        // than saying nothing.
+        Add(Caption($"Themes are directories under {Path.Combine(Assets.Root(), "themes")}. "
                     + "Drop one in and it appears here."));
 
         Add(Divider());

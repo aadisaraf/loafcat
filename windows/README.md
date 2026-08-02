@@ -7,6 +7,16 @@ port of the Mac binary.
 irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
 ```
 
+Or download **`loafcat-<version>-win-x64.exe`** from
+[Releases](https://github.com/aadisaraf/loafcat/releases) and double-click it. One
+file, nothing to install and nothing to extract: the art and the hook script are
+embedded and unpack themselves to `%LOCALAPPDATA%\loafcat\` on first run.
+
+The `.zip` is the same executable with `assets\` on disk beside it. Anything found
+there wins over the embedded copy, which is what makes dropping a community theme into
+`assets\themes\` work — so take the zip if you want to edit the art, and the `.exe`
+otherwise.
+
 Windows 10 1809 or later, x64. No runtime to install, no permissions, no elevation.
 
 ---

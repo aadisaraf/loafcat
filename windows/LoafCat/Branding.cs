@@ -13,11 +13,23 @@ namespace LoafCat;
 [SupportedOSPlatform("windows")]
 public static class Assets
 {
-    /// Assets sit next to the executable in an installed copy, and at the repo root
-    /// during development. Checking both keeps `dotnet run` from the source tree
-    /// working, which is the counterpart of the macOS build's two candidates.
+    private static string? _root;
+    private static string? _payload;
+
+    /// Where the cat's art actually is.
+    ///
+    /// Three places, in order, and the order is the design:
+    ///
+    ///  1. `assets\` next to the executable — how the .zip ships. First, so that
+    ///     dropping a community theme in there works and so a user can edit the art
+    ///     of an installed copy.
+    ///  2. The repo, for `dotnet run` out of a source tree.
+    ///  3. Extracted from inside the executable, once. This is what makes a bare
+    ///     `LoafCat.exe` a complete app rather than half of one.
     public static string Root()
     {
+        if (_root is not null) return _root;
+
         string exeDir = AppContext.BaseDirectory;
         var candidates = new[]
         {
@@ -28,9 +40,81 @@ public static class Assets
         };
         foreach (string c in candidates)
         {
-            if (Directory.Exists(c)) return c;
+            // A directory with no themes in it is not an assets directory — an empty
+            // folder left behind by a failed extraction would otherwise shadow the
+            // embedded copy for ever.
+            if (Directory.Exists(Path.Combine(c, "themes"))) { _root = c; return _root; }
         }
-        return candidates[0];
+
+        _root = Payload() is { } p ? Path.Combine(p, "assets") : candidates[0];
+        return _root;
+    }
+
+    /// The hook script Claude Code runs, wherever it turned out to be.
+    public static string? HookScript()
+    {
+        string exeDir = AppContext.BaseDirectory;
+        var candidates = new List<string>
+        {
+            Path.Combine(exeDir, "hooks", "loafcat-hook.ps1"),
+            Path.GetFullPath(Path.Combine(
+                exeDir, "..", "..", "..", "..", "..", "hooks", "loafcat-hook.ps1")),
+            Path.Combine(Directory.GetCurrentDirectory(), "hooks", "loafcat-hook.ps1"),
+        };
+        if (Payload() is { } p) candidates.Add(Path.Combine(p, "hooks", "loafcat-hook.ps1"));
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    /// Unpacks the embedded copy of everything, once per version.
+    ///
+    /// Version-stamped so an upgrade cannot keep serving the old art out of a stale
+    /// directory, and gated on a marker file written LAST so a half-finished
+    /// extraction — a full disk, a process killed mid-write — is redone rather than
+    /// treated as complete.
+    private static string? Payload()
+    {
+        if (_payload is not null) return _payload;
+
+        var asm = Assembly.GetExecutingAssembly();
+        const string prefix = "loafcat.payload/";
+        var names = asm.GetManifestResourceNames()
+            .Where(n => n.StartsWith(prefix, StringComparison.Ordinal))
+            .ToList();
+        // Nothing embedded: a build configured without the payload. Callers fall back
+        // to their on-disk guess and fail with a path in the message, which is a far
+        // better error than a silent empty directory.
+        if (names.Count == 0) return null;
+
+        string dir = Path.Combine(Paths.AppData, $"payload-{Branding.Version}");
+        string marker = Path.Combine(dir, ".complete");
+        if (File.Exists(marker)) { _payload = dir; return _payload; }
+
+        try
+        {
+            foreach (string name in names)
+            {
+                // MSBuild writes %(RecursiveDir) with the build machine's separator,
+                // so a payload built on macOS carries '/' and one built on Windows
+                // carries '\'. Normalising here means either produces the same tree.
+                string relative = name[prefix.Length..].Replace('\\', '/');
+                string target = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+
+                using var src = asm.GetManifestResourceStream(name);
+                if (src is null) continue;
+                using var dst = File.Create(target);
+                src.CopyTo(dst);
+            }
+            File.WriteAllText(marker, Branding.Version);
+            Log.Line($"assets  unpacked {names.Count} files to {dir}");
+            _payload = dir;
+            return _payload;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn($"assets: could not unpack to {dir} ({e.Message})");
+            return null;
+        }
     }
 
     /// Every theme is a self-contained directory of parts plus a cat.json. Swapping

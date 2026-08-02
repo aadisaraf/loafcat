@@ -80,9 +80,19 @@ if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Write-Host "compressing..."
 Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
 
+# The same executable, on its own. It is a complete app — the art and the hook
+# script are embedded and unpacked on first run — so this is the one file you can
+# hand to somebody with no instructions attached. The zip still exists because it
+# puts assets\ on disk, which is where a community theme goes.
+$exe = Join-Path $dist "$stageName.exe"
+if (Test-Path -LiteralPath $exe) { Remove-Item -LiteralPath $exe -Force }
+Copy-Item -LiteralPath (Join-Path $stage "LoafCat.exe") -Destination $exe
+
 $size = [math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 1)
+$exeSize = [math]::Round((Get-Item -LiteralPath $exe).Length / 1MB, 1)
 Write-Host ""
 Write-Host "built $zip ($size MB)"
+Write-Host "built $exe ($exeSize MB, standalone)"
 Write-Host ""
 Write-Host "NOT code signed. An Authenticode certificate costs a few hundred a year," -ForegroundColor Yellow
 Write-Host "and SmartScreen additionally wants reputation the certificate does not buy" -ForegroundColor Yellow

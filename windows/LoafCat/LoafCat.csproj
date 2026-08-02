@@ -60,8 +60,25 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
-  <!-- The art is NOT copied into the build. It is read from assets/ next to the
-       executable at runtime, exactly as the macOS app reads it out of its bundle,
-       so both platforms consume the same generated files and neither can drift. -->
+  <!-- The art and the hook script are read from disk when they are next to the
+       executable — which is how the .zip ships, and what lets someone drop a
+       community theme into assets\themes\ without repackaging anything.
+
+       They are ALSO embedded, so a bare LoafCat.exe on its own is a complete app.
+       That is the difference between "download and run" and "download, extract, keep
+       the folder together", and for one file you hand to a friend it matters. The
+       whole payload is 852KB against a 66MB runtime, so it costs nothing worth
+       counting.
+
+       On-disk always wins; the embedded copy is extracted once, on first run, only
+       when there is nothing beside the executable. See Assets.Root(). -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\assets\**\*">
+      <LogicalName>loafcat.payload/assets/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)..\..\hooks\loafcat-hook.ps1">
+      <LogicalName>loafcat.payload/hooks/loafcat-hook.ps1</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 
 </Project>

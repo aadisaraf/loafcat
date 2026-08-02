@@ -958,15 +958,7 @@ public sealed class AgentModule : ICatModule
     /// as "Claude got slow" rather than "loafcat is misconfigured".
     private static string DeployHookScript()
     {
-        string[] candidates =
-        [
-            Path.Combine(AppContext.BaseDirectory, "hooks", "loafcat-hook.ps1"),
-            Path.GetFullPath(Path.Combine(
-                AppContext.BaseDirectory, "..", "..", "..", "..", "..",
-                "hooks", "loafcat-hook.ps1")),
-            Path.Combine(Directory.GetCurrentDirectory(), "hooks", "loafcat-hook.ps1"),
-        ];
-        string? source = candidates.FirstOrDefault(File.Exists)
+        string source = Assets.HookScript()
             ?? throw new HookInstaller.Failure("could not find hooks/loafcat-hook.ps1");
 
         string dir = Paths.State;

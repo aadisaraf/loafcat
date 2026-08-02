@@ -136,8 +136,14 @@ jobs:
             irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
             ```
 
-            Or download the `-win-x64.zip`. Windows 10 1809 or later, x64. No
-            runtime to install — the executable is self-contained.
+            Or just download **`loafcat-<version>-win-x64.exe`** and double-click
+            it. One file, nothing to install and nothing to extract — the art and
+            the hook script are inside it and unpack themselves on first run.
+            Windows 10 1809 or later, x64.
+
+            The `.zip` is the same executable with `assets\` unpacked beside it,
+            which is where a community theme goes. Take it if you want to edit the
+            art; take the `.exe` otherwise.
 
             Same reasoning as macOS: Windows attaches its "mark of the web" based
             on what *downloaded* the file, and `Invoke-WebRequest` does not attach
@@ -199,8 +205,15 @@ jobs:
         shell: pwsh
         run: |
           $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
-          & $exe.FullName --selftest
-          if ($LASTEXITCODE -ne 0) { throw "the packaged app failed its self-test" }
+          # Start-Process -Wait, not `& $exe`. PowerShell does not WAIT for a GUI
+          # subsystem executable invoked with the call operator, so $LASTEXITCODE
+          # there belongs to whatever ran before it. That is how this step failed a
+          # build whose self-test actually passes.
+          $out = Join-Path $env:RUNNER_TEMP "selftest.out"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+                 -PassThru -NoNewWindow -Wait -RedirectStandardOutput $out
+          Get-Content $out -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "the packaged app failed its self-test" }
 
       - name: Drag physics
         shell: pwsh
@@ -219,15 +232,20 @@ jobs:
       - name: Checksum
         shell: pwsh
         run: |
-          $zip = Get-ChildItem dist -Filter *.zip | Select-Object -First 1
-          $hash = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToLower()
-          "$hash  $($zip.Name)" | Set-Content "$($zip.FullName).sha256"
-          Get-Content "$($zip.FullName).sha256"
+          # Both artefacts, each with its own checksum file. install.ps1 verifies
+          # the zip's before it copies anything; the .exe's is there for anyone who
+          # downloads that directly and wants to check it.
+          foreach ($f in Get-ChildItem dist -Include *.zip, *.exe -File -Recurse -Depth 0) {
+            $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($f.Name)" | Set-Content "$($f.FullName).sha256"
+            Get-Content "$($f.FullName).sha256"
+          }
 
       - name: Attach to the release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.zip
+            dist/*.exe
             dist/*.sha256
           prerelease: ${{ contains(github.ref_name, '-') }}
