@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using LoafCat.Interop;
 
 namespace LoafCat;
 
@@ -39,6 +41,7 @@ public static class SelfTest
         }
         Log.Line($"themes  {string.Join(", ", themes)}");
 
+        CheckKeyInference();
         foreach (string theme in themes) CheckTheme(theme);
 
         Log.Line(_failures == 0
@@ -46,6 +49,100 @@ public static class SelfTest
             : $"self-test FAILED with {_failures} problem(s)");
         Log.Stop();
         return _failures == 0 ? 0 : 1;
+    }
+
+    /// Whether a moving mouse can be mistaken for typing.
+    ///
+    /// This is here because it once could, and the result was a cat that sat there
+    /// steaming while its owner did nothing but move the cursor. Nothing about that is
+    /// visible in a build log, nobody can move a mouse on a CI runner, and the author of
+    /// this port has no Windows machine — so the mouse is replayed instead, at the
+    /// timings that actually caused it.
+    private static void CheckKeyInference()
+    {
+        Log.Line("--- input inference ---");
+
+        // The hook reads one field out of MSLLHOOKSTRUCT by byte offset, because a
+        // struct copy on every mouse event in the system is felt as a laggy cursor
+        // everywhere. That offset is only safe if it still agrees with the layout.
+        Check("MSLLHOOKSTRUCT.Time is where the hook reads it",
+            Marshal.OffsetOf<Win32.MouseLowLevelHook>(nameof(Win32.MouseLowLevelHook.Time))
+                == Win32.MouseHookTimeOffset,
+            $"offset {Win32.MouseHookTimeOffset}");
+
+        // Five seconds of a 125Hz mouse against a 120Hz tick, with the hook running one
+        // poll LATE throughout. That lag is not pessimism: GetLastInputInfo is updated
+        // by the raw input thread the instant the event lands, while the hook is a
+        // callback dispatched to another thread afterwards, so the tick genuinely
+        // arrives first. Ruling on it before the hook catches up is what counted every
+        // mouse move as a keystroke.
+        Check("a moving mouse is never read as typing",
+            PhantomKeys(clockSkewMs: 0) == 0,
+            $"{PhantomKeys(clockSkewMs: 0)} phantom keystroke(s) in 5s of mouse movement");
+
+        // The same run, but with the two Win32 clocks disagreeing by 40ms — far beyond
+        // the tolerance the timestamp test allows. That they agree is the one assumption
+        // in this file that could not be checked on real hardware, so the arrival-time
+        // test has to carry the result on its own if the assumption is wrong.
+        Check("...even if MSLLHOOKSTRUCT.Time and GetLastInputInfo disagree",
+            PhantomKeys(clockSkewMs: 40) == 0,
+            $"{PhantomKeys(clockSkewMs: 40)} phantom keystroke(s) with a 40ms clock skew");
+
+        // The other direction, which is the failure that would make the fix pointless:
+        // conservative is only acceptable if actual typing still registers.
+        {
+            var k = new KeyInference(0);
+            double dt = 1.0 / 120.0;
+            int injected = 0;
+            double nextKey = 0;
+            for (int i = 0; i < 360; i++)      // three seconds
+            {
+                double now = i * dt;
+                if (injected < 20 && now >= nextKey)
+                {
+                    k.NoteInput((uint)(now * 1000), now);
+                    injected++;
+                    nextKey = now + 0.1;       // ten keys a second
+                }
+                k.Resolve(now);
+            }
+            Check("typing on a still mouse is counted exactly", k.Keys == 20,
+                  $"{k.Keys} of 20 keystrokes");
+        }
+    }
+
+    /// One 5-second run of the mouse-move stream. `clockSkewMs` is how far
+    /// `GetLastInputInfo` is imagined to disagree with the event's own timestamp.
+    private static long PhantomKeys(int clockSkewMs)
+    {
+        var k = new KeyInference(0);
+        double dt = 1.0 / 120.0;
+        var inFlight = new List<(uint Tick, double At)>();
+        uint lastSeen = 0;
+
+        for (int i = 0; i < 600; i++)
+        {
+            double now = i * dt;
+
+            // Whatever the hook was handed a poll ago, it has now recorded.
+            foreach (var (t, a) in inFlight) k.NoteMouse(t, a);
+            inFlight.Clear();
+
+            // A mouse event at this instant. Its Win32 stamp sits on the ~15.6ms
+            // GetTickCount grid rather than on our own clock, which is the whole reason
+            // "the two readings are equal" was never a safe test.
+            uint stamp = (uint)(Math.Floor(now * 1000 / 15.6) * 15.6);
+            inFlight.Add((stamp, now));
+
+            uint inputTick = (uint)(stamp + clockSkewMs);
+            if (inputTick != lastSeen)
+            {
+                k.NoteInput(inputTick, now);
+                lastSeen = inputTick;
+            }
+            k.Resolve(now);
+        }
+        return k.Keys;
     }
 
     private static void CheckTheme(string theme)

@@ -264,6 +264,35 @@ internal static class Win32
     /// WH_KEYBOARD_LL, its keyboard sibling, is banned by scripts/check-privacy.sh.
     public const int WhMouseLl = 14;
 
+    /// The payload of a WH_MOUSE_LL callback.
+    ///
+    /// Written down in full for two reasons. The first is that it is the evidence for
+    /// the privacy claim: read the fields and note that there is no field here that
+    /// could carry a keystroke, whatever anyone later wishes there were.
+    ///
+    /// The second is `Time`. It is the tick the event was STAMPED with, which is the
+    /// same quantity `GetLastInputInfo` reports for that same event — and reading it,
+    /// rather than reading a clock when the callback runs, is what makes the inference
+    /// in InputTelemetry work at all.
+    ///
+    /// Nothing marshals this struct at runtime: the hook reads the single field it
+    /// needs at `MouseHookTimeOffset`, because it runs on every mouse event in the
+    /// system and a struct copy there is felt as a laggy cursor in every application.
+    /// `--selftest` asserts the offset still matches this layout, so the constant
+    /// cannot quietly rot.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MouseLowLevelHook
+    {
+        public Point Pt;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public UIntPtr ExtraInfo;
+    }
+
+    /// Byte offset of `MouseLowLevelHook.Time`. Asserted by --selftest.
+    public const int MouseHookTimeOffset = 16;
+
     public const int WmLButtonDownLl = 0x0201;
     public const int WmLButtonUpLl = 0x0202;
     public const int WmMouseWheelLl = 0x020A;
@@ -297,8 +326,13 @@ internal static class Win32
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern uint GetCurrentThreadId();
 
-    [DllImport("kernel32.dll")]
-    public static extern uint GetTickCount();
+    // GetTickCount is deliberately NOT declared here.
+    //
+    // It reads like the obvious way to timestamp a mouse event inside the hook, and
+    // that is exactly the mistake: it times the CALLBACK, not the event, so the value
+    // never matches what GetLastInputInfo reports for the same event and every mouse
+    // move gets counted as a keystroke. Use MSLLHOOKSTRUCT.Time — the event's own
+    // stamp — which is what MouseHookTimeOffset above is for.
 
     // --- the frame clock ----------------------------------------------------
 

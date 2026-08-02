@@ -148,6 +148,17 @@ down separately rather than assuming the Mac answer transfers.
 - **`GetAsyncKeyState` is banned outright, including for mouse buttons.** The one
   thing it was wanted for — "is the left button still held" — comes from the mouse
   hook instead, so the ban needs no argument about which constant was passed.
+- **Timestamp a mouse event with `MSLLHOOKSTRUCT.time`, never `GetTickCount()` in the
+  callback.** The second times the *callback*, not the *event*, so it never equals what
+  `GetLastInputInfo` reports for that same event — and since keystrokes are inferred by
+  eliminating the mouse, every mouse move then counts as typing. Measured at 64 phantom
+  keystrokes a second against an `overheat.kps_min` of 4: the cat sat there steaming
+  while its owner only moved the cursor. Compare tick counts **signed**; unsigned makes
+  a one-millisecond disagreement look like four billion.
+- **`GetLastInputInfo` updates before the hook runs.** They are different threads, so a
+  poll routinely sees the tick of a mouse event the hook has not recorded yet. Any
+  "was that the mouse?" verdict has to be held long enough for the hook to catch up —
+  50ms — or the race alone reproduces the bug above.
 
 ## Privacy — a design constraint, not a feature
 
