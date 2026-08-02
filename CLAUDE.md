@@ -29,11 +29,13 @@ Commit messages: imperative mood, explain **why** when it isn't obvious.
 
 ## Architecture — the two rules that matter
 
-**1. No geometry, timing or behaviour constant in Swift.** Everything the cat knows
+**1. No geometry, timing or behaviour constant in code.** Everything the cat knows
 about its own body and behaviour lives in `assets/themes/<name>/cat.json`. This is
 what lets art be regenerated or swapped for a community theme without touching code,
-and what would let a future Windows app reuse the same data. If you find yourself
-typing a pixel offset into a `.swift` file, it belongs in the atlas.
+and it is what the Windows app is built on — both builds load the same `cat.json` and
+the same part PNGs, verbatim. If you find yourself typing a pixel offset into a
+`.swift` or `.cs` file, it belongs in the atlas. **Retuning the cat is a JSON diff,
+and it must retune both platforms.**
 
 **2. Features are modules, not edits to `main.swift`.** Implement `CatModule` in its
 own file and register it. This keeps parallel work from colliding in one file, and
@@ -64,13 +66,25 @@ Sources/LoafCat/
   SettingsWindow.swift  every user-facing option, one pane per area
   Branding.swift    asset paths, the icon, theme thumbnails
   Modules/*.swift   one file per feature
+windows/LoafCat/       the Windows app -- same filenames, same responsibilities
+  Program.cs           <- main.swift        CatWindow.cs   the layered window
+  CatView.cs           the software compositor (no Core Animation equivalent)
+  Interop/             P/Invoke, input telemetry, monitors -- no macOS counterpart
+  Modules/*.cs         one file per feature, mirroring Modules/*.swift
+windows/build.ps1      builds dist/loafcat-<version>-win-x64.zip
 tools/generate_art.py   the entire art pipeline
-tools/generate_icon.py  app icon + menu bar glyph, composited from the mono parts
+tools/generate_icon.py  app icon, menu bar glyph and .ico, from the mono parts
 tools/generate_dmg_background.py  the disk image window, same parts, same font
 tools/make-dmg.sh       builds dist/loafcat-<version>.dmg
-assets/themes/<name>/   one self-contained directory per cat
+assets/themes/<name>/   one self-contained directory per cat, read by BOTH builds
 spikes/                 throwaway experiments + RESULTS.md
 ```
+
+**The two ports are kept diffable on purpose.** `Rig.swift` and `Rig.cs` are the same
+file in two languages, in the same order, with the same comments where the reasoning
+is the same. A behaviour change made in one and not the other is a bug, and the way
+you catch it is by reading them side by side — so do not "improve" the structure of
+one without doing the same to the other.
 
 ## Hard-won facts — do not relearn these
 
@@ -94,6 +108,46 @@ the documentation and most blog posts say.
 - **Only `CGEventSourceStateID.combinedSessionState` is safe.** `.hidSystemState`
   and `.privateState` block *indefinitely* for an unprivileged process — no error,
   no prompt, just a hang.
+
+## Windows — hard-won facts, same as the ones above
+
+Measured or established while porting; written up at length in `windows/README.md`.
+Several of these contradict the macOS findings, which is the point of writing them
+down separately rather than assuming the Mac answer transfers.
+
+- **Click-through IS free on Windows, and exact.** A `WS_EX_LAYERED` window presented
+  with `UpdateLayeredWindow` is hit-tested by the window manager against the alpha
+  channel you just handed it, synchronously, before the click is delivered to anyone.
+  The 120Hz polling toggle that macOS needs is not reproduced and must not be added
+  back — there is no race to lose a click to. The dilated mask survives only as the
+  definition of `CursorOnCat`, which is a proximity question.
+- **The window needs four extended styles and each is load-bearing.** `WS_EX_LAYERED`
+  (alpha + hit testing), `WS_EX_TOOLWINDOW` (out of Alt-Tab and the taskbar),
+  `WS_EX_NOACTIVATE` (clicking the cat must not steal focus from the editor), and
+  `WS_EX_TOPMOST`. Reassert topmost periodically: a full-screen app coming and going
+  leaves any topmost window behind it in the z-order.
+- **Use `MONITORINFO.rcWork`, never `rcMonitor`.** The work area excludes the taskbar.
+  This is the exact counterpart of `NSScreen.visibleFrame` versus `.frame`, and
+  getting it wrong starts the cat underneath the taskbar, which reads as a failed
+  launch.
+- **Declare per-monitor DPI awareness v2, in the csproj and not the manifest.**
+  Without awareness Windows bitmap-stretches the whole window by the display scale
+  factor, bilinear — the exact mush the art pipeline exists to prevent. The Windows
+  Forms SDK errors (WFAC010) if the manifest declares it too, so it lives in
+  `ApplicationHighDpiMode`.
+- **A WinForms `Timer` cannot drive 120Hz.** It is WM_TIMER-based, so it tops out near
+  64Hz and jitters. Use a high-resolution waitable timer on its own thread posting to
+  the UI thread — and **not** `timeBeginPeriod(1)`, which raises the timer resolution
+  for the whole system and costs every other process battery.
+- **`UpdateLayeredWindow` wants PREMULTIPLIED alpha**, and it carries the window's
+  position and size, so a frame that moved must be presented even when the pixels are
+  identical.
+- **A low-level hook's delegate must be held in a static field.** If it is only a
+  local, the GC collects it while Windows still holds the function pointer and the
+  process dies inside user32 with a stack that points nowhere.
+- **`GetAsyncKeyState` is banned outright, including for mouse buttons.** The one
+  thing it was wanted for — "is the left button still held" — comes from the mouse
+  hook instead, so the ban needs no argument about which constant was passed.
 
 ## Privacy — a design constraint, not a feature
 

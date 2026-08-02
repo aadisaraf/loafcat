@@ -86,7 +86,16 @@ jobs:
           $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
           Write-Host "running $($exe.FullName) --selftest"
           & $exe.FullName --selftest
-          if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
+          $code = $LASTEXITCODE
+          # The app also writes everything to a file. Printed unconditionally so a
+          # failure is diagnosable even if the console handle was not wired up —
+          # which is exactly how this step failed the first time it ever ran.
+          $log = Join-Path $env:LOCALAPPDATA "loafcat\loafcat.log"
+          if (Test-Path $log) {
+            Write-Host "--- $log ---"
+            Get-Content $log -Tail 80
+          }
+          if ($code -ne 0) { throw "self-test failed" }
 
       # The drag physics, driven by a scripted grab-hold-shake-release through the
       # same entry points real mouse events use. This is the one check that the

@@ -19,7 +19,11 @@ public static class Log
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AttachConsole(int processId);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetStdHandle(int which);
+
     private const int AttachParentProcess = -1;
+    private const int StdOutputHandle = -11;
 
     private static readonly object Gate = new();
     private static StreamWriter? _file;
@@ -32,9 +36,45 @@ public static class Log
     {
         lock (Gate)
         {
-            // Only succeeds when a console actually launched us. Failure is the
-            // normal case (double-clicked from Explorer) and is not worth reporting.
-            _console = AttachConsole(AttachParentProcess);
+            // Two ways a WinExe can have somewhere to write, and both have to be
+            // handled or the launch banner goes nowhere:
+            //
+            //  * Launched from a console with its output REDIRECTED (a pipe, a file,
+            //    a CI step). The process already inherited a valid stdout handle, and
+            //    AttachConsole then fails — which is success as far as we are
+            //    concerned.
+            //  * Launched from a console with no redirection. No handle is inherited,
+            //    and AttachConsole is what gets us one.
+            //
+            // Double-clicked from Explorer, neither applies and there is nothing to
+            // report; the file below is the only output.
+            bool attached = AttachConsole(AttachParentProcess);
+            _console = attached || IsValid(GetStdHandle(StdOutputHandle));
+
+            if (_console)
+            {
+                try
+                {
+                    // .NET caches Console.Out on first use and would have bound it to
+                    // the handle that existed at startup — which, after AttachConsole,
+                    // is the wrong one. Rebinding here is what makes the output
+                    // actually appear.
+                    Console.SetOut(new StreamWriter(Console.OpenStandardOutput())
+                    {
+                        AutoFlush = true,
+                    });
+                    Console.SetError(new StreamWriter(Console.OpenStandardError())
+                    {
+                        AutoFlush = true,
+                    });
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    _console = false;
+                }
+            }
+
+            static bool IsValid(IntPtr h) => h != IntPtr.Zero && h != new IntPtr(-1);
 
             try
             {
