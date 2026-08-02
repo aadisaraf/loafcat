@@ -1,0 +1,21 @@
+name: Python for the art pipeline
+description: >
+  A virtualenv with pinned Pillow and dmgbuild, put on PATH so later steps can
+  just say python3. Shared by CI and the release workflow, so the two cannot
+  drift into generating art with different library versions.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/art-venv"
+        "$RUNNER_TEMP/art-venv/bin/python" -m pip install --quiet --upgrade pip
+        # Pinned deliberately: the assets check is byte-for-byte, so an unpinned
+        # image library makes "reproducible" a claim about whatever version pip
+        # resolved that morning. Bump this when you regenerate assets locally.
+        "$RUNNER_TEMP/art-venv/bin/python" -m pip install --quiet \
+          "Pillow==12.1.0" "dmgbuild==1.6.7"
+        echo "$RUNNER_TEMP/art-venv/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/art-venv/bin/python" -c \
+          "import PIL; print('Pillow', PIL.__version__)"
