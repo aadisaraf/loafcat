@@ -34,7 +34,11 @@ jobs:
 
       - name: Version matches the tag
         run: |
+          # A prerelease suffix is stripped before comparing: v0.2.0-rc.1 IS version
+          # 0.2.0, and a release candidate that had to carry a different version from
+          # the release it is a candidate for would defeat the point of testing it.
           TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%%-*}"
           PLIST_VERSION=$(grep -o 'CFBundleShortVersionString</key><string>[^<]*' build.sh | sed 's/.*<string>//')
           echo "tag=$TAG  build.sh=$PLIST_VERSION"
           if [ "$TAG" != "$PLIST_VERSION" ]; then
@@ -91,6 +95,11 @@ jobs:
             dist/*.dmg
             dist/*.sha256
           generate_release_notes: true
+          # Explicit rather than left to the action's tag-name heuristic. A
+          # prerelease is excluded from /releases/latest, which is what install.sh
+          # and install.ps1 ask for when no version is pinned -- so a release
+          # candidate cannot reach anyone who did not ask for it by name.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             ## Installing
 
@@ -167,7 +176,10 @@ jobs:
       - name: Version matches the tag
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}".TrimStart("v")
+          # Leading "v" off, prerelease suffix off: v0.2.0-rc.1 IS version 0.2.0.
+          # `-replace` rather than TrimStart, which takes a CHARACTER set and would
+          # eat every leading v from a hypothetical "vv1".
+          $tag = "${{ github.ref_name }}" -replace '^v', '' -replace '-.*$', ''
           [xml]$csproj = Get-Content windows/LoafCat/LoafCat.csproj
           $version = $csproj.Project.PropertyGroup.Version |
                      Where-Object { $_ } | Select-Object -First 1
@@ -218,3 +230,4 @@ jobs:
           files: |
             dist/*.zip
             dist/*.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}

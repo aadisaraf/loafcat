@@ -37,6 +37,17 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# `irm ... | iex` hands the script to the parser as a string with nothing after it,
+# so parameters are unreachable that way — which is the only way most people will run
+# this. Environment variables are, and install.sh already uses exactly these names:
+#
+#   $env:LOAFCAT_VERSION = 'v0.2.0-rc.1'   pin a release (including a prerelease)
+#   $env:LOAFCAT_ZIP     = 'C:\x.zip'      install a local package instead
+#
+# A parameter still wins when one is given, so the two routes cannot disagree.
+if (-not $Version -and $env:LOAFCAT_VERSION) { $Version = $env:LOAFCAT_VERSION }
+if (-not $LocalZip -and $env:LOAFCAT_ZIP) { $LocalZip = $env:LOAFCAT_ZIP }
+
 $repo = "aadisaraf/loafcat"
 $appName = "LoafCat.exe"
 $installRoot = Join-Path $env:LOCALAPPDATA "Programs\loafcat"
