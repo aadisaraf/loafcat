@@ -75,7 +75,11 @@ public static class SelfInstall
                 src.CopyTo(dst);
             }
 
-            WriteShortcut();
+            // The Start menu entry is what makes loafcat answer to its name in the
+            // search box, so a failure here is worth a line in the log rather than a
+            // silent one-less-feature.
+            if (!WriteShortcut(Shortcut, Target, Root, ShortcutDescription))
+                Log.Warn("installed, but without a Start menu entry");
             Log.Line($"installed to {Root}");
 
             Process.Start(new ProcessStartInfo(Target)
@@ -96,41 +100,83 @@ public static class SelfInstall
         }
     }
 
-    /// A Start menu entry, so loafcat answers to its name in the Start search box like
-    /// any other app. The closest thing Windows has to being in /Applications.
+    public const string ShortcutDescription =
+        "A pixel cat that reacts to your cursor and your typing";
+
+    /// Writes a Start menu entry, which is the whole of what makes loafcat findable by
+    /// typing its name: Windows Search indexes `Start Menu\Programs` for the current
+    /// user, so a `.lnk` there IS the app as far as the search box is concerned. There
+    /// is no separate registration, and nothing else in the system needs telling.
     ///
-    /// Late-bound through WScript.Shell rather than by declaring IShellLink: a shortcut
-    /// is written once, at install time, and the COM interface declarations would be
-    /// more code than the feature. `install.ps1` creates exactly the same shortcut the
-    /// same way, which is the point.
-    private static void WriteShortcut()
+    /// Late-bound through WScript.Shell rather than by declaring `IShellLink`: a
+    /// shortcut is written once, at install time, and the COM interface declarations
+    /// would be more code than the feature. `install.ps1` creates the same shortcut the
+    /// same way, which is why the two install routes are interchangeable.
+    ///
+    /// Takes its paths as arguments so `--selftest` can write one somewhere harmless and
+    /// prove the mechanism works. That is worth doing: whether late-bound COM survives
+    /// into a single-file self-contained build is not something the compiler checks, and
+    /// the failure mode is a silently missing Start menu entry.
+    internal static bool WriteShortcut(string linkPath, string target, string workingDir,
+                                       string description)
     {
         Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
-        if (shellType is null) return;
+        if (shellType is null)
+        {
+            Log.Warn("WScript.Shell is unavailable — no Start menu entry");
+            return false;
+        }
         object? shell = Activator.CreateInstance(shellType);
-        if (shell is null) return;
+        if (shell is null) return false;
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Shortcut)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(linkPath)!);
             object? link = shellType.InvokeMember("CreateShortcut",
-                BindingFlags.InvokeMethod, null, shell, new object[] { Shortcut });
-            if (link is null) return;
+                BindingFlags.InvokeMethod, null, shell, new object[] { linkPath });
+            if (link is null) return false;
 
             Type linkType = link.GetType();
             void Set(string property, string value) => linkType.InvokeMember(
                 property, BindingFlags.SetProperty, null, link, new object[] { value });
 
-            Set("TargetPath", Target);
-            Set("WorkingDirectory", Root);
-            Set("Description", "A pixel cat that reacts to your cursor and your typing");
+            Set("TargetPath", target);
+            Set("WorkingDirectory", workingDir);
+            Set("Description", description);
             linkType.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+            return File.Exists(linkPath);
         }
         catch (Exception e) when (e is COMException or MissingMethodException
+                                    or MissingMemberException or InvalidComObjectException
                                     or UnauthorizedAccessException or IOException)
         {
-            // The app is installed either way; it is just harder to find.
+            // The app works either way; it is just harder to find.
             Log.Warn($"could not write the Start menu entry ({e.Message})");
+            return false;
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(shell);
+        }
+    }
+
+    /// Reads a shortcut's target back. Only `--selftest` uses this.
+    internal static string? ReadShortcutTarget(string linkPath)
+    {
+        Type? shellType = Type.GetTypeFromProgID("WScript.Shell");
+        if (shellType is null) return null;
+        object? shell = Activator.CreateInstance(shellType);
+        if (shell is null) return null;
+        try
+        {
+            object? link = shellType.InvokeMember("CreateShortcut",
+                BindingFlags.InvokeMethod, null, shell, new object[] { linkPath });
+            return link?.GetType().InvokeMember("TargetPath",
+                BindingFlags.GetProperty, null, link, null) as string;
+        }
+        catch (Exception e) when (e is COMException or MissingMemberException)
+        {
+            return null;
         }
         finally
         {
