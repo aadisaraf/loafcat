@@ -10,6 +10,8 @@ import ServiceManagement
 protocol SettingsHost: AnyObject {
     var currentTheme: String { get }
     var currentScale: CGFloat { get }
+    var isCatVisible: Bool { get }
+    func setCat(visible: Bool)
     func apply(theme: String)
     func apply(scale: CGFloat)
     func apply(dragFeel: DragFeel)
@@ -53,6 +55,14 @@ final class SettingsWindowController: NSWindowController {
         // Panes refresh themselves in viewWillAppear. Doing it from here instead
         // would reach panes whose views have never loaded -- NSTabViewController
         // loads them lazily -- and every control in them is still nil.
+    }
+
+    /// For state the window does not own: the cat can also be turned on and off
+    /// from the menu bar, and the checkbox has to follow.
+    func refreshPanes() {
+        for case let pane as SettingsPane in tabs?.children ?? [] where pane.isViewLoaded {
+            pane.refresh()
+        }
     }
 
     private func build(host: SettingsHost) {
@@ -248,6 +258,7 @@ final class CatPane: SettingsPane {
     private var login: NSButton!
     private var loginNote: NSTextField!
     private var dock: NSButton!
+    private var onOff: NSButton!
 
     private static let sizes: [(String, CGFloat)] = [("Small", 2), ("Medium", 3), ("Large", 4)]
 
@@ -255,6 +266,17 @@ final class CatPane: SettingsPane {
     override var paneSymbol: String { "pawprint" }
 
     override func populate() {
+        // The on switch, at the top, because it is the one control someone opens
+        // this window looking for.
+        onOff = checkbox("Show the cat on screen", #selector(toggleCat))
+        onOff.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        stack.addArrangedSubview(onOff)
+        stack.addArrangedSubview(caption(
+            "Turning it off really is off, not hidden: nothing animates and no "
+            + "timer fires. loafcat stays in the menu bar, and opening the app "
+            + "again turns it back on."))
+        stack.addArrangedSubview(divider())
+
         stack.addArrangedSubview(heading("Cat"))
         let themeRow = NSStackView()
         themeRow.orientation = .horizontal
@@ -326,7 +348,12 @@ final class CatPane: SettingsPane {
         feel.selectedSegment =
             DragFeel.allCases.firstIndex(of: DragFeel.current) ?? 0
         dock.state = DockPresence.showInDock ? .on : .off
+        onOff.state = host.isCatVisible ? .on : .off
         refreshLogin()
+    }
+
+    @objc private func toggleCat() {
+        host.setCat(visible: onOff.state == .on)
     }
 
     @objc private func toggleDock() {

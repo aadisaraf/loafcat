@@ -83,32 +83,51 @@ jobs:
           kill $PID
           cat "$RUNNER_TEMP/launch.log"
 
+      # install.sh verifies this before it copies anything. Published alongside
+      # rather than embedded, because a checksum a script computes about itself
+      # is not a checksum.
+      - name: Checksum
+        run: |
+          cd dist
+          shasum -a 256 *.dmg > "$(ls *.dmg).sha256"
+          cat *.sha256
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.dmg
+          files: |
+            dist/*.dmg
+            dist/*.sha256
           generate_release_notes: true
           body: |
             ## Installing
 
-            Download the `.dmg`, open it, and drag loafcat onto Applications.
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.sh | bash
+            ```
 
-            **The first launch will be blocked.** loafcat is not notarised —
-            notarisation needs Apple's $99/year Developer Program. Nothing is
-            wrong with the download.
+            This is the recommended route, and not only for convenience: macOS
+            attaches its quarantine flag based on *what downloaded the file*, and
+            `curl` does not attach one. An app installed this way simply opens.
+
+            ### Or the disk image
+
+            Download the `.dmg`, open it, drag loafcat onto Applications.
+
+            **A browser download will be blocked on first launch.** loafcat is not
+            notarised — notarisation needs Apple's $99/year Developer Program.
+            Nothing is wrong with the download.
 
             To open it anyway: **System Settings → Privacy & Security**, scroll
-            down, and click **Open Anyway** next to the loafcat message.
-
-            Or, equivalently, in a terminal:
+            down, and click **Open Anyway** next to the loafcat message. Or:
 
             ```sh
             xattr -dr com.apple.quarantine /Applications/LoafCat.app
             ```
 
-            You only do this once. If you'd rather not trust a binary, building
-            from source takes about five seconds and needs only the Xcode command
-            line tools — see the README.
+            You only do this once. If you'd rather not trust a binary at all,
+            building from source takes about five seconds and needs only the Xcode
+            command line tools — see the README.
 
             ## Where it lives
 
