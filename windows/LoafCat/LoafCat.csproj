@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <AssemblyName>LoafCat</AssemblyName>
+    <RootNamespace>LoafCat</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Per-monitor DPI aware, v2. Load-bearing for pixel art.
+
+         Without it Windows bitmap-stretches the whole window by the display scale
+         factor — a 150% display would resample the cat by 1.5x with bilinear
+         filtering, which is precisely the mush the entire art pipeline exists to
+         prevent, and no amount of care downstream gets it back.
+
+         Declaring awareness means one unit we draw is one physical pixel, so the
+         integer render scale in Settings is the ONLY magnification in the chain and it
+         is always nearest-neighbour. The cost is that the cat does not automatically
+         get bigger on a high-DPI display, so first run picks a starting scale from the
+         monitor's DPI instead — see CatController.ResolveScale.
+
+         It has to live here rather than in app.manifest: the Windows Forms SDK errors
+         (WFAC010) if the manifest declares it too. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>$(MSBuildThisFileDirectory)..\..\assets\icon\loafcat.ico</ApplicationIcon>
+
+    <!-- Kept in step with the macOS Info.plist by tools/sync-version.sh. -->
+    <Version>0.1.0</Version>
+    <Company>loafcat</Company>
+    <Product>loafcat</Product>
+    <Description>A pixel cat that reacts to your cursor, your typing, and Claude Code.</Description>
+
+    <!-- Unsafe is used in exactly one place: the compositor's inner blit loop, which
+         writes a few hundred thousand pixels per frame at 120Hz. See CatView.cs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- win-x64 only for now. arm64 Windows runs x64 under emulation, and a pixel
+         compositor at 120Hz is not where that cost shows up; a native arm64 build
+         is a one-line addition when there is a machine to verify it on. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+
+    <!-- Lets `dotnet build` work from macOS and Linux, so the port can be compiled
+         and reviewed without a Windows machine. Windows ignores it. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Warnings are errors: this is a port, and a mechanical translation is exactly
+         the situation where a quietly-ignored nullable warning becomes a null cat. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <!-- The art is NOT copied into the build. It is read from assets/ next to the
+       executable at runtime, exactly as the macOS app reads it out of its bundle,
+       so both platforms consume the same generated files and neither can drift. -->
+
+</Project>

@@ -7,6 +7,7 @@ on:
 
 jobs:
   build:
+    name: macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,3 +56,71 @@ jobs:
           fi
           kill $PID
           cat /tmp/loafcat.log
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Warnings are errors in the csproj, so this is the real gate.
+      - name: Build
+        run: dotnet build windows/LoafCat/LoafCat.csproj -c Release
+
+      - name: Package
+        shell: pwsh
+        run: pwsh windows/build.ps1 -SkipAssets
+
+      # Everything that can be checked without a person looking at a screen: the
+      # atlas loads from the SAME files the macOS build reads, the hit mask is a
+      # silhouette, the composed frame is opaque on the cat and transparent beside
+      # it (which is exactly what the window manager hit-tests for click-through),
+      # and 3x is byte-for-byte the 1x frame with every pixel tripled.
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          Write-Host "running $($exe.FullName) --selftest"
+          & $exe.FullName --selftest
+          if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
+
+      # The drag physics, driven by a scripted grab-hold-shake-release through the
+      # same entry points real mouse events use. This is the one check that the
+      # ported springs and pendulum actually behave like the Swift original rather
+      # than merely compiling.
+      - name: Drag physics
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          $log = Join-Path $env:RUNNER_TEMP "drag.log"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
+                 -PassThru -RedirectStandardOutput $log -NoNewWindow
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the drag demo hung" }
+          Get-Content $log -Tail 25
+          if ($p.ExitCode -ne 0) { throw "the drag demo did not settle (exit $($p.ExitCode))" }
+
+      # Starting for real, with a window. Allowed to be the flakier check — a CI
+      # runner's desktop session is not a user's — so it reports rather than fails,
+      # and the two checks above are what actually gate the build.
+      - name: App launches
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          # About the app starting, not about the first-run settings window.
+          $prefs = Join-Path $env:LOCALAPPDATA "loafcat"
+          New-Item -ItemType Directory -Path $prefs -Force | Out-Null
+          '{ "hasLaunched": true }' | Set-Content (Join-Path $prefs "settings.json")
+
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) {
+            Get-Content (Join-Path $prefs "loafcat.log") -Tail 40
+            throw "the app exited early (exit $($p.ExitCode))"
+          }
+          $p.Kill()
+          Get-Content (Join-Path $prefs "loafcat.log") -Tail 40
