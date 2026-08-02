@@ -22,29 +22,28 @@ jobs:
       - name: Build
         run: ./build.sh
 
+      # A virtualenv, not `pip install`. The runner's python3 is Homebrew's, which
+      # is PEP 668 managed and refuses to install into itself -- that is what was
+      # failing every run here. --break-system-packages would also work, but it
+      # means something different on every machine this might run on, and a venv
+      # means the same thing everywhere.
+      #
+      # Pillow is PINNED. The check below is byte-for-byte, and an unpinned
+      # image library makes "reproducible" a claim about whatever version pip
+      # happened to resolve that morning.
+      - uses: ./.github/actions/python-art
+
       # The art is generated, never hand-placed. If regenerating produces a diff,
       # someone edited a PNG directly and the provenance claim in the README is no
       # longer true.
       - name: Assets are reproducible from the generator
-        run: |
-          python3 -m pip install --quiet --disable-pip-version-check Pillow
-          for theme in mono tuxedo cream; do
-            python3 tools/generate_art.py --theme "$theme" > /dev/null
-          done
-          # The icon and the disk image background composite the mono theme's own
-          # parts, so they are checked by the same rule -- otherwise the cat could
-          # change and the download could quietly keep showing the old one.
-          python3 tools/generate_icon.py > /dev/null
-          python3 tools/generate_dmg_background.py > /dev/null
-          if ! git diff --quiet -- assets/; then
-            echo "::error::assets/ differs after regeneration — art must come from tools/generate_art.py"
-            git diff --stat -- assets/
-            exit 1
-          fi
-          echo "assets reproduce exactly"
+        run: ./scripts/check-assets.sh
 
       - name: App launches without crashing
         run: |
+          # This step is about the app starting, not about the first-run
+          # experience, and first run opens the settings window.
+          defaults write dev.loafcat.app hasLaunched -bool true
           ./build/LoafCat.app/Contents/MacOS/LoafCat > /tmp/loafcat.log 2>&1 &
           PID=$!
           for i in $(seq 1 20); do

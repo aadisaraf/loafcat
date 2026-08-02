@@ -29,8 +29,7 @@ jobs:
       - name: Privacy check
         run: ./scripts/check-privacy.sh
 
-      - name: Install packaging tools
-        run: python3 -m pip install --quiet --disable-pip-version-check --break-system-packages Pillow dmgbuild
+      - uses: ./.github/actions/python-art
 
       - name: Version matches the tag
         run: |
@@ -52,17 +51,7 @@ jobs:
         run: ./tools/make-dmg.sh
 
       - name: The generated art still reproduces
-        run: |
-          for theme in mono tuxedo cream; do
-            python3 tools/generate_art.py --theme "$theme" > /dev/null
-          done
-          python3 tools/generate_icon.py > /dev/null
-          python3 tools/generate_dmg_background.py > /dev/null
-          if ! git diff --quiet -- assets/; then
-            echo "::error::assets/ differs after regeneration"
-            git diff --stat -- assets/
-            exit 1
-          fi
+        run: ./scripts/check-assets.sh
 
       - name: The app in the image actually launches
         run: |
@@ -71,6 +60,8 @@ jobs:
           # meaningfully tested on a read-only volume.
           cp -R /Volumes/loafcat/LoafCat.app "$RUNNER_TEMP/"
           hdiutil detach /Volumes/loafcat
+          # About the app starting, not about the first-run settings window.
+          defaults write dev.loafcat.app hasLaunched -bool true
           "$RUNNER_TEMP/LoafCat.app/Contents/MacOS/LoafCat" > "$RUNNER_TEMP/launch.log" 2>&1 &
           PID=$!
           for _ in $(seq 1 20); do
