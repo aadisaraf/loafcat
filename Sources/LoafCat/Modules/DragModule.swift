@@ -505,6 +505,17 @@ private final class Demo {
     private var frames = 0
     private var residualBreaches = 0
 
+    // The extremes the gesture reached. Printed as one line at the end so this build
+    // and the Windows one can be compared by a number rather than by scrolling 856
+    // frames of trace side by side -- which is the only practical way to tell whether
+    // a port of a spring system actually behaves like its original.
+    private var maxStretch: CGFloat = 0
+    private var minStretch: CGFloat = 0
+    private var maxAngle: CGFloat = 0
+    private var maxDrop: CGFloat = 0
+    private var minSquash: CGFloat = 1
+    private var maxLean: CGFloat = 0
+
     private let grabAt = CGPoint(x: 24, y: 36)
     private let holdSeconds: CGFloat = 0.80
     private let shakeAmp: CGFloat = 40
@@ -550,6 +561,12 @@ private final class Demo {
         guard t >= startAt else { return }
         frames += 1
         let s = m.debugState
+        maxStretch = max(maxStretch, s.stretch)
+        minStretch = min(minStretch, s.stretch)
+        maxAngle = max(maxAngle, abs(s.angleDeg))
+        maxDrop = max(maxDrop, s.dropPx)
+        minSquash = min(minSquash, s.squash)
+        maxLean = max(maxLean, abs(s.leanPx))
         func f(_ v: CGFloat, _ places: Int, _ width: Int) -> String {
             let text = String(format: "%+.\(places)f", Double(v))
             return String(repeating: " ", count: max(0, width - text.count)) + text
@@ -575,6 +592,11 @@ private final class Demo {
             }
             if t - settledAt > idleWatch {
                 print("# demo: residual non-zero frames after settle: \(residualBreaches)")
+                print(String(
+                    format: "# demo: peaks stretch=+%.4f/%.4f angle=%.3fdeg dropPx=%.2f "
+                          + "squash=%.4f leanPx=%.2f",
+                    Double(maxStretch), Double(minStretch), Double(maxAngle),
+                    Double(maxDrop), Double(minSquash), Double(maxLean)))
                 print(residualBreaches == 0
                       ? "# demo: PASS -- came to rest and stayed there"
                       : "# demo: FAIL -- still moving after settle")

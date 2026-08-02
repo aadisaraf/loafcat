@@ -118,7 +118,11 @@ jobs:
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
                  -PassThru -RedirectStandardOutput $log -NoNewWindow
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the drag demo hung" }
-          Get-Content $log -Tail 25
+          # The summary lines rather than 856 frames of trace. `peaks` is the one to
+          # compare against the macOS build — run `./build/LoafCat.app/Contents/MacOS/
+          # LoafCat --demo-drag` there and the two lines should agree to about a
+          # percent, which is what a faithful port of a spring system looks like.
+          Select-String -Path $log -Pattern "# demo:" | ForEach-Object { $_.Line }
           if ($p.ExitCode -ne 0) { throw "the drag demo did not settle (exit $($p.ExitCode))" }
 
       # Starting for real, with a window. Allowed to be the flakier check — a CI

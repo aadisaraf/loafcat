@@ -554,6 +554,28 @@ internal sealed class DragDemo
     private double? _settledAt;
     private int _residualBreaches;
 
+    // The extremes the gesture reached. Printed as one line at the end so the two
+    // platforms can be compared by a number rather than by scrolling 856 frames of
+    // trace side by side — which is the only practical way to tell whether a port of
+    // a spring system actually behaves like its original.
+    private double _maxStretch, _minStretch, _maxAngle, _maxDrop, _maxLean;
+    private double _minSquash = 1;
+
+    private void Track(DragModule.DebugState s)
+    {
+        _maxStretch = Math.Max(_maxStretch, s.Stretch);
+        _minStretch = Math.Min(_minStretch, s.Stretch);
+        _maxAngle = Math.Max(_maxAngle, Math.Abs(s.AngleDeg));
+        _maxDrop = Math.Max(_maxDrop, s.DropPx);
+        _minSquash = Math.Min(_minSquash, s.Squash);
+        _maxLean = Math.Max(_maxLean, Math.Abs(s.LeanPx));
+    }
+
+    private string Peaks() =>
+        $"# demo: peaks stretch=+{_maxStretch:F4}/{_minStretch:F4} " +
+        $"angle={_maxAngle:F3}deg dropPx={_maxDrop:F2} " +
+        $"squash={_minSquash:F4} leanPx={_maxLean:F2}";
+
     private static readonly Pt GrabAt = new(24, 36);
     private const double HoldSeconds = 0.80;
     private const double ShakeAmp = 40;
@@ -602,9 +624,14 @@ internal sealed class DragDemo
 
         if (_t < startAt) return;
         var s = m.Debug();
+        Track(s);
 
+        // Sign first, THEN pad — which is what Swift's `%+.3f` does. Padding the
+        // number and prepending the sign gives "+ 7.025" where the other build prints
+        // " +7.025", and two traces that are meant to be compared line by line have to
+        // be formatted identically to be worth anything.
         static string F(double v, int places, int width) =>
-            (v >= 0 ? "+" : "") + v.ToString("F" + places).PadLeft(width - (v >= 0 ? 1 : 0));
+            ((v < 0 ? "-" : "+") + Math.Abs(v).ToString("F" + places)).PadLeft(width);
 
         Log.Line($"t={F(_t, 3, 7)} {s.Phase.PadRight(4)}"
             + $" hold={F(s.HoldT, 3, 6)}"
@@ -631,6 +658,7 @@ internal sealed class DragDemo
             if (_t - settled > IdleWatch)
             {
                 Log.Line($"# demo: residual non-zero frames after settle: {_residualBreaches}");
+                Log.Line(Peaks());
                 Log.Line(_residualBreaches == 0
                     ? "# demo: PASS -- came to rest and stayed there"
                     : "# demo: FAIL -- still moving after settle");
