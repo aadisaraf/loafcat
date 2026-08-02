@@ -55,6 +55,11 @@ internal static class Program
         // Runs without a window, so it works on a CI runner with no interactive desktop.
         if (args.Contains("--selftest")) return SelfTest.Run();
 
+        // Before the single-instance check, not after: an installed copy that is already
+        // running holds its own file open, so the copy below fails, and falling through
+        // to the mutex is exactly the right thing to do next. See SelfInstall.
+        if (SelfInstall.Promote(args)) return 0;
+
         using var mutex = new Mutex(initiallyOwned: true, MutexName, out bool isFirst);
         if (!isFirst)
         {

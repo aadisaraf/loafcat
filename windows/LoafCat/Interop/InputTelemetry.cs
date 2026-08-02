@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace LoafCat.Interop;
@@ -24,9 +25,15 @@ namespace LoafCat.Interop;
 ///      structure that could carry a keystroke.
 ///
 /// A keystroke is then inferred, never observed: if the last-input tick advanced and
-/// it is not the tick the mouse hook recorded, the input was not the mouse. The app
-/// learns that *a* key was pressed and when. It cannot learn which, because neither
-/// API it called was ever told.
+/// it is not the tick of any mouse event the hook recorded, the input was not the
+/// mouse. The app learns that *a* key was pressed and when. It cannot learn which,
+/// because neither API it called was ever told.
+///
+/// Getting that comparison right is subtler than it reads, and getting it wrong is not
+/// a subtle failure — it reddens a cat whose owner is only moving the mouse. The two
+/// timings being compared and the delay before they can be compared at all live in
+/// `KeyInference`, which is where the reasoning is written down and where `--selftest`
+/// can replay a mouse stream against it.
 ///
 /// That is strictly LESS information than the macOS build gets — which distinguishes
 /// key events from scroll events at the source — and it is the same shape of
@@ -59,12 +66,10 @@ public static class InputTelemetry
 
     private static long _mouseEvents;
     private static long _scrollEvents;
-    private static int _lastMouseTick;
     private static int _leftDown;
 
     private static uint _prevInputTick;
-    private static long _keyCount;
-    private static double _lastKeyAt;
+    private static KeyInference _keys = new(Clock.Now);
 
     // Watchdog. Windows silently unhooks a low-level hook whose thread does not
     // respond within LowLevelHooksTimeout (300ms by default). Our hook thread does
@@ -82,7 +87,10 @@ public static class InputTelemetry
 
     public static void Start()
     {
-        _lastKeyAt = Clock.Now;
+        // A fresh inference: after a watchdog reinstall the old ring describes mouse
+        // events from before the gap, which is exactly the history that must not be
+        // trusted to clear the mouse of anything now.
+        _keys = new KeyInference(Clock.Now);
         var info = new Win32.LastInputInfo { Size = LastInputInfoSize };
         if (Win32.GetLastInputInfo(ref info)) _prevInputTick = info.Time;
 
@@ -140,7 +148,13 @@ public static class InputTelemetry
         if (code >= 0)
         {
             Interlocked.Increment(ref _mouseEvents);
-            Interlocked.Exchange(ref _lastMouseTick, (int)Win32.GetTickCount());
+            // The event's OWN timestamp, read straight out of MSLLHOOKSTRUCT. Reading a
+            // clock here instead would time the CALLBACK, not the event — a different
+            // quantity, later by however long dispatch took, and never the value
+            // GetLastInputInfo is about to report for this same event.
+            _keys.NoteMouse(
+                unchecked((uint)Marshal.ReadInt32(lParam, Win32.MouseHookTimeOffset)),
+                Clock.Now);
             int message = (int)wParam;
             if (message == Win32.WmMouseWheelLl || message == Win32.WmMouseHWheelLl)
             {
@@ -165,33 +179,31 @@ public static class InputTelemetry
 
     /// Called once per tick, before anything reads the counters.
     ///
-    /// The inference is the whole design: the last-input tick moved, and it is not the
-    /// tick the mouse last fired on, therefore the input was not the mouse. What it
-    /// actually was, this process has no way to find out.
+    /// The inference is the whole design: the last-input tick moved, and no mouse event
+    /// accounts for it, therefore the input was not the mouse. What it actually was,
+    /// this process has no way to find out.
+    ///
+    /// The verdict is deliberately not passed here and now — see `KeyInference`.
     public static void Poll()
     {
+        // Without the hook there is nothing to tell a keystroke apart FROM, so every
+        // mouse move in the system would be counted as typing. That is not a degraded
+        // reading, it is a wrong one, and it is what heats a cat whose owner is only
+        // moving the mouse. Infer nothing rather than infer that.
+        if (_hook == IntPtr.Zero) return;
+
         var info = new Win32.LastInputInfo { Size = LastInputInfoSize };
-        if (!Win32.GetLastInputInfo(ref info)) return;
-
-        uint tick = info.Time;
-        if (tick == _prevInputTick) return;
-        _prevInputTick = tick;
-
-        uint mouseTick = (uint)Interlocked.CompareExchange(ref _lastMouseTick, 0, 0);
-        // GetLastInputInfo and the hook both read GetTickCount, so a mouse event and
-        // the input tick it caused agree exactly. A one-tick tolerance covers the case
-        // where the counter rolls over between the two reads.
-        uint gap = tick - mouseTick;
-        if (gap > 1)
+        if (Win32.GetLastInputInfo(ref info) && info.Time != _prevInputTick)
         {
-            _keyCount++;
-            _lastKeyAt = Clock.Now;
+            _prevInputTick = info.Time;
+            _keys.NoteInput(info.Time, Clock.Now);
         }
+        _keys.Resolve(Clock.Now);
     }
 
     /// Monotonic count of inferred keystrokes. A rate is all any caller wants; the
     /// count exists so the caller can difference it exactly like the macOS build does.
-    public static long KeyCount => _keyCount;
+    public static long KeyCount => _keys.Keys;
 
     /// Monotonic count of scroll wheel events.
     public static long ScrollCount => Interlocked.Read(ref _scrollEvents);
@@ -207,7 +219,7 @@ public static class InputTelemetry
     public static bool LeftButtonDown => Interlocked.CompareExchange(ref _leftDown, 0, 0) != 0;
 
     /// Seconds since the last inferred keystroke.
-    public static double SecondsSinceKey => Clock.Now - _lastKeyAt;
+    public static double SecondsSinceKey => Clock.Now - _keys.LastKeyAt;
 
     /// Called from the tick when the cursor position changed, so the watchdog can tell
     /// "the mouse is not moving" from "the hook stopped being called".

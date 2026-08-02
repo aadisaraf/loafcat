@@ -18,8 +18,13 @@ struct WellnessSettings {
         d.object(forKey: key) == nil ? fallback : d.integer(forKey: key)
     }
 
+    /// Off by default, for the same reason hydration is — more so, in fact. A stretch
+    /// break takes the middle of the screen and holds it for several seconds, so the
+    /// first one arrives as an interruption rather than an invitation unless it was
+    /// asked for. Settings › Wellness turns it on, and the tray menu triggers one
+    /// whenever you want it.
     var stretchMinutes: Int {
-        get { minutes("wellness.stretchMinutes", 30) }
+        get { minutes("wellness.stretchMinutes", 0) }
         nonmutating set { d.set(newValue, forKey: "wellness.stretchMinutes") }
     }
     /// Off by default: a hydration nudge nobody asked for is the fastest way to get

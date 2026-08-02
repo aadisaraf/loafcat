@@ -9,13 +9,21 @@ irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
 
 Or download **`loafcat-<version>-win-x64.exe`** from
 [Releases](https://github.com/aadisaraf/loafcat/releases) and double-click it. One
-file, nothing to install and nothing to extract: the art and the hook script are
-embedded and unpack themselves to `%LOCALAPPDATA%\loafcat\` on first run.
+file, nothing to extract: the art and the hook script are embedded and unpack
+themselves on first run.
+
+On that first run it also installs itself — to `%LOCALAPPDATA%\Programs\loafcat`, with a
+Start menu entry, which is exactly where and what `install.ps1` would have put it — and
+hands over to the installed copy. Otherwise the app you end up with is a file in
+Downloads called `loafcat-0.2.0-win-x64.exe`, and that is the name Windows shows you
+every time it has to name it. Both download routes converge on the same layout, and
+`install.ps1 -Uninstall` removes either. Pass `--portable` to skip it.
 
 The `.zip` is the same executable with `assets\` on disk beside it. Anything found
 there wins over the embedded copy, which is what makes dropping a community theme into
 `assets\themes\` work — so take the zip if you want to edit the art, and the `.exe`
-otherwise.
+otherwise. The zip never self-installs: someone who unpacked it chose that folder, and
+lifting one file out of it would leave the rest behind.
 
 Windows 10 1809 or later, x64. No runtime to install, no permissions, no elevation.
 
@@ -83,9 +91,42 @@ leaking anything:
    happened. Its callback receives a `MSLLHOOKSTRUCT` — cursor position, wheel delta,
    timestamp, flags. There is no field in that structure that could carry a keystroke.
 
-A keystroke is then *inferred*: the last-input tick advanced, and it is not the tick the
-mouse fired on, therefore the input was not the mouse. The app learns that *a* key was
-pressed and when. It cannot learn which, because neither API it called was ever told.
+A keystroke is then *inferred*: the last-input tick advanced, and no mouse event accounts
+for it, therefore the input was not the mouse. The app learns that *a* key was pressed and
+when. It cannot learn which, because neither API it called was ever told.
+
+**That comparison is where this went wrong once, and it is worth reading twice.** The
+first version timestamped each mouse event by calling `GetTickCount()` inside the hook
+callback — which times the *callback*, not the *event*, and so never equals what
+`GetLastInputInfo` reports for that same event. It also compared the two as unsigned, so
+a mouse event that appeared to be a millisecond in the future produced a gap of four
+billion. Replaying five seconds of a 125Hz mouse through that logic yields **319 phantom
+keystrokes, about 64 a second** — against an `overheat.kps_min` of 4 and a `kps_max` of
+14. The cat went to full steam while its owner did nothing but move the cursor.
+
+Two things fix it, and both are in `KeyInference.cs`:
+
+1. **Read the event's own timestamp**, `MSLLHOOKSTRUCT.time`, which is the same quantity
+   `GetLastInputInfo` reports for that event.
+2. **Do not rule immediately.** `GetLastInputInfo` is updated by the raw input thread the
+   instant an event lands; the hook is a callback dispatched to a different thread
+   afterwards. A poll routinely sees the tick of a mouse event *before* the hook has
+   recorded it. Verdicts are held 50ms, which is far longer than the hook needs and far
+   shorter than anything the cat reacts to.
+
+A second, independent test asks whether the hook fired recently on *our own* monotonic
+clock, comparing it only against itself. That one assumes nothing about two Win32 clocks
+agreeing, so a moving mouse still cannot be read as typing even if the first test is wrong
+on hardware nobody here has. Both tests point the same way — towards blaming the mouse —
+because under-counting costs a moment of kneading nobody notices, and over-counting
+reddens a cat whose owner is not typing.
+
+The cost is that typing *while actively moving the mouse* is not seen. That is a real
+thing to be unable to distinguish rather than an approximation of one, and the honest
+answer to it is the same as everywhere else here: the fix would be a keyboard hook.
+
+Without the mouse hook there is nothing to tell a keystroke apart *from*, so the app
+infers nothing at all rather than treating every mouse move as typing.
 
 That is strictly **less** information than the macOS build gets, which distinguishes key
 events from scroll events at the source. `scripts/check-privacy.sh` blocks
@@ -112,6 +153,12 @@ your choice in Settings is authoritative after that.
 
 ### Smaller things
 
+- **The app has to name itself.** A `.app` bundle carries its own name and gets dragged
+  to Applications; one loose `.exe` has neither, so Windows falls back to the file name —
+  version, CPU architecture and extension included — wherever it has to call the app
+  something. `AssemblyTitle` sets `FileDescription`, which is the string Task Manager,
+  the startup apps list and the tray icon settings all read, and `SelfInstall.cs` deals
+  with the file itself.
 - **The tray icon is not a template.** macOS takes an alpha mask and tints it to match
   the menu bar. Windows draws the icon as-is on a taskbar that may be light, dark, or
   showing the wallpaper, so the generator emits a real two-tone icon whose mid-grey coat
@@ -155,6 +202,12 @@ been checking are asserted mechanically instead.
 - **3× is byte-for-byte the 1× frame with every pixel tripled** — the pixel-art claim
   stated as an equation. Any interpolation, half-pixel offset or fractional transform
   that leaked into the compositor would break it.
+- **a moving mouse is never read as typing.** Five seconds of a 125Hz mouse against the
+  120Hz tick, with the hook running a poll late throughout and the two Win32 clocks
+  disagreeing by 40ms, must produce zero inferred keystrokes — and typing on a still
+  mouse must still be counted exactly. Nobody can move a mouse on a CI runner, so it is
+  replayed. The logic is deliberately split out of the P/Invoke so that it can be.
+- the byte offset the hook reads `MSLLHOOKSTRUCT.time` from still matches the struct
 - an unchanged frame is recognised as unchanged and never sent to the compositor twice.
   How often that happens for a genuinely idle cat is *reported* rather than asserted —
   measured at **97%** (581 of 600 frames), but that depends on where the breathing sine
