@@ -15,44 +15,75 @@ Native Swift/AppKit · macOS 13+ · MIT licensed · **asks for zero permissions*
 
 ## Install
 
-1. Download **`loafcat-<version>.dmg`** from
-   [Releases](https://github.com/aadisaraf/loafcat/releases/latest).
-2. Open it and drag loafcat onto Applications.
-3. **The first launch will be blocked.** See below — this is expected, and it is
-   not a sign that anything is wrong with the download.
+```sh
+curl -fsSL https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.sh | bash
+```
 
-### Getting past the first launch
+That's it — it installs to `/Applications` and starts. **No blocked-app dialog,
+no trip through System Settings.**
 
-loafcat is not notarised. Notarisation requires Apple's $99/year Developer
-Program, and this is a free open-source project, so macOS treats it the way it
-treats any app it has not seen before.
+<details>
+<summary>Why the one-liner avoids the Gatekeeper dialog, and why that isn't a trick</summary>
 
-**In System Settings:**
+macOS attaches its `com.apple.quarantine` flag based on **what downloaded the
+file**. Browsers attach one; `curl` does not. So an app installed by the script
+is never quarantined in the first place and simply opens.
+
+Gatekeeper's question is *"did a human deliberately choose to run this?"*, and
+typing an install command is a clearer yes than clicking through a warning. It's
+the same reason Homebrew and rustup work this way.
+
+What you're trusting is [`install.sh`](install.sh). It's short on purpose. Read
+it first if you like — that's the point of it being one readable file:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+It verifies the release checksum before it copies anything, and never asks for
+`sudo`.
+</details>
+
+To remove it: `… | bash -s -- --uninstall` (add `--purge` to drop settings too).
+
+### Or download the disk image
+
+Grab **`loafcat-<version>.dmg`** from
+[Releases](https://github.com/aadisaraf/loafcat/releases/latest) and drag loafcat
+onto Applications.
+
+**A browser download will be blocked on first launch.** loafcat is not notarised
+— that needs Apple's $99/year Developer Program — so macOS treats it as an app it
+has never seen. Nothing is wrong with the download.
 
 1. Double-click loafcat in Applications. macOS refuses and offers **Done**. Click it.
 2. Open **System Settings → Privacy & Security** and scroll down.
 3. Next to *"loafcat was blocked…"*, click **Open Anyway** and confirm.
 
-**Or in a terminal**, which does the same thing in one line:
+Or in a terminal, equivalently: `xattr -dr com.apple.quarantine /Applications/LoafCat.app`
 
-```sh
-xattr -dr com.apple.quarantine /Applications/LoafCat.app
-```
+> Don't want to trust a stranger's binary at all? Fair —
+> [build it yourself](#building-from-source). Five seconds, and nothing but the
+> Xcode command line tools.
 
-Either way, you only do it once.
+### Turning it on and off
 
-> If you'd rather not trust a stranger's binary at all, that's reasonable —
-> [build it yourself](#building-from-source). It takes about five seconds and
-> needs nothing but the Xcode command line tools.
+**Open loafcat and the cat is on.** From Spotlight, from Applications, from the
+Dock — opening it turns the cat on whether or not it was already running.
 
-### Where it is once it's running
+To turn it off, use the menu bar cat or the switch at the top of Settings. Off
+really is off: nothing animates, no timer fires. loafcat stays in the menu bar,
+so opening the app again turns it straight back on. **Quit** is separate, and is
+also in that menu.
 
-loafcat has no Dock icon by default, because a menu bar pet has no business
-taking a Dock slot. **Look for the cat's face in the menu bar** — Settings, and
-Quit, are in that menu.
+There's no Dock icon by default, because a menu bar pet has no business taking a
+Dock slot. Turn on **Show loafcat in the Dock** in Settings if you'd rather reach
+it like any other app; clicking the Dock icon then opens Settings.
 
-If you'd rather reach it like any other app, turn on **Show loafcat in the Dock**
-in Settings. Clicking its Dock icon then opens Settings.
+Turn on **Open loafcat at login** and you never have to think about any of this
+again.
 
 ---
 
@@ -128,6 +159,10 @@ An app you built yourself is not quarantined, so none of the Gatekeeper business
 above applies.
 
 To build a disk image, `pip install dmgbuild Pillow` then `./tools/make-dmg.sh`.
+
+`packaging/homebrew/loafcat.rb` is a ready-made cask, for anyone who would rather
+install through Homebrew. It needs a tap repository to live in; the file explains
+how.
 
 ---
 

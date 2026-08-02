@@ -156,6 +156,14 @@ makes it launch. Control-click-to-open **stopped working in macOS 15** — Syste
 Settings › Privacy & Security › Open Anyway is now the only GUI route, so don't
 write the old instructions.
 
+**`install.sh` is the recommended route, and it sidesteps all of that.** The
+quarantine flag is attached by whatever *downloads* the file; `curl` attaches
+none, so an app it installs is never quarantined and simply opens. Verified —
+a curl-fetched file carries `com.apple.provenance` and nothing else. This is not
+a bypass: typing an install command is a clearer deliberate choice than clicking
+through a warning, which is why Homebrew and rustup work the same way. Keep that
+script short and readable; it is the thing users are being asked to trust.
+
 **Finder window chrome is a global user preference, not a per-window one.** The
 toolbar, tab bar and status bar flags in a `.DS_Store` are a request Finder is
 free to ignore, and each one eats height from the content area. The background is

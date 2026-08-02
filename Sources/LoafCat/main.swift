@@ -64,6 +64,16 @@ final class CatController: NSObject, NSApplicationDelegate {
         .map { CGFloat($0 as? Double ?? 2) } ?? 2
     private var themeName: String = UserDefaults.standard.string(forKey: "theme") ?? "mono"
 
+    /// The app's on switch.
+    ///
+    /// Quitting is not the same thing as turning the cat off: quitting also takes
+    /// away the menu bar item, which is the only way back in. This is the off
+    /// switch that leaves a way to switch it on again — and it really is off, not
+    /// merely hidden. The tick stops, so nothing animates, no wellness timer fires
+    /// and no window is resized behind your back.
+    private var catVisible: Bool =
+        UserDefaults.standard.object(forKey: "showCat") as? Bool ?? true
+
     func applicationDidFinishLaunching(_ note: Notification) {
         do {
             atlas = try Atlas.load(from: Self.themeDir(themeName))
@@ -102,7 +112,7 @@ final class CatController: NSObject, NSApplicationDelegate {
             .canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle,
         ]
         panel.contentView = view
-        panel.orderFrontRegardless()
+        if catVisible { panel.orderFrontRegardless() }
 
         buildTray()
         MainMenu.install(target: self, settings: #selector(openSettings), quit: #selector(quit))
@@ -194,6 +204,11 @@ final class CatController: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "loafcat", action: nil, keyEquivalent: "")
         menu.addItem(.separator())
+        // The on switch, first, because it is the thing people come here for.
+        menu.addItem(
+            withTitle: catVisible ? "Turn the cat off" : "Turn the cat on",
+            action: #selector(toggleCat), keyEquivalent: "")
+            .target = self
         menu.addItem(
             withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
             .target = self
@@ -219,11 +234,22 @@ final class CatController: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.show(host: self)
     }
 
-    /// Clicking the Dock icon, or opening the app again while it is already
-    /// running. Without this, launching loafcat a second time does nothing at all
-    /// and reads as the app being broken.
+    @objc private func toggleCat() { setCat(visible: !catVisible) }
+
+    /// Clicking the Dock icon, or launching the app again while it is already
+    /// running.
+    ///
+    /// Launching an app is a request for it to be on, so this turns the cat back
+    /// on before anything else — that is what makes "open loafcat and it starts"
+    /// literally true whether or not it was already running. Without any of this,
+    /// launching a second time did nothing at all, which reads as the app being
+    /// broken.
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        openSettings()
+        if !catVisible {
+            setCat(visible: true)
+        } else {
+            openSettings()
+        }
         return true
     }
 
@@ -260,6 +286,9 @@ final class CatController: NSObject, NSApplicationDelegate {
         let now = CFAbsoluteTimeGetCurrent()
         let dt = CGFloat(min(now - lastTick, 0.1))
         lastTick = now
+        // Off means off. `lastTick` is still advanced above so the first frame back
+        // is a normal one rather than a several-second dt fired through the springs.
+        guard catVisible else { return }
 
         let mouse = NSEvent.mouseLocation
         let frame = panel.frame
@@ -354,6 +383,23 @@ extension CatController: SettingsHost {
     }
 
     func centreCat() { centre() }
+
+    var isCatVisible: Bool { catVisible }
+
+    func setCat(visible: Bool) {
+        catVisible = visible
+        UserDefaults.standard.set(visible, forKey: "showCat")
+        if visible {
+            lastTick = CFAbsoluteTimeGetCurrent()
+            panel.orderFrontRegardless()
+        } else {
+            panel.orderOut(nil)
+            // Or the invisible panel keeps swallowing clicks in its own rectangle.
+            panel.ignoresMouseEvents = true
+        }
+        rebuildMenu()
+        SettingsWindowController.shared.refreshPanes()
+    }
 }
 
 let controller = CatController()
