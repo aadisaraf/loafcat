@@ -20,9 +20,14 @@ public sealed class WellnessSettings
     private static int Minutes(string key, int fallback) =>
         Prefs.Has(key) ? Prefs.GetInt(key) : fallback;
 
+    /// Off by default, for the same reason hydration is — more so, in fact. A stretch
+    /// break takes the middle of the screen and holds it for several seconds, so the
+    /// first one arrives as an interruption rather than an invitation unless it was
+    /// asked for. Settings › Wellness turns it on, and the tray menu triggers one
+    /// whenever you want it.
     public int StretchMinutes
     {
-        get => Minutes("wellness.stretchMinutes", 30);
+        get => Minutes("wellness.stretchMinutes", 0);
         set => Prefs.Set("wellness.stretchMinutes", value);
     }
 
