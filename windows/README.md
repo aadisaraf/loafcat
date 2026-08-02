@@ -145,12 +145,41 @@ been checking are asserted mechanically instead.
 - **3× is byte-for-byte the 1× frame with every pixel tripled** — the pixel-art claim
   stated as an equation. Any interpolation, half-pixel offset or fractional transform
   that leaked into the compositor would break it.
-- an idle cat re-presents an identical frame more than half the time
+- an unchanged frame is recognised as unchanged and never sent to the compositor twice.
+  How often that happens for a genuinely idle cat is *reported* rather than asserted —
+  measured at **97%** (581 of 600 frames), but that depends on where the breathing sine
+  sits relative to the pixel grid and is not a number worth failing a build over.
 
 **`LoafCat.exe --demo-drag`** runs the scripted grab-hold-shake-release through the same
 entry points real mouse events use, and fails the build if the cat has not come
-completely to rest three seconds after release. This is the check that the ported
-springs and pendulum behave like the Swift original rather than merely compiling.
+completely to rest three seconds after release.
+
+Both builds print their peak values at the end, which is what makes the physics
+comparable across the port. Measured, same drag feel (`normal`), macOS run three times
+against one Windows CI run:
+
+| | peak stretch | landing | swing | hang px | squash | lean px |
+|---|---|---|---|---|---|---|
+| macOS #1 | +2.4150 | −1.2315 | 22.348° | 31.39 | 0.3842 | 5.32 |
+| macOS #2 | +2.4150 | −1.2286 | 21.817° | 31.39 | 0.3857 | 5.20 |
+| macOS #3 | +2.4150 | −1.2269 | 23.206° | 31.39 | 0.3866 | 5.52 |
+| **Windows** | **+2.4150** | **−1.2296** | **22.616°** | **31.39** | **0.3852** | **5.38** |
+
+Peak stretch and hang are identical to four decimal places — both saturate at the same
+atlas-defined ceiling. Everything else lands *inside* the spread macOS shows against
+itself across three runs of the same binary, which is the strongest statement available
+here: the ported springs differ from the original by less than the original differs
+from itself.
+
+(The swing wobbles run to run on both platforms because the pendulum is driven by the
+*acceleration* of a smoothed velocity, which is sensitive to frame-timing jitter. That
+is a property of the design, not of the port.)
+
+The first comparison found a 1.38× discrepancy on every stretch-derived value. It was
+not a port bug — the Mac had `dragFeel = subtle` stored from an earlier session, and
+1.38 is exactly the ratio between that preset and `normal`. Worth recording because it
+is the failure mode this comparison will keep having: check both machines are on the
+same drag feel before believing a difference.
 
 ### Still needing a human at a Windows machine
 

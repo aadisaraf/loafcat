@@ -228,6 +228,17 @@ why `generate_dmg_background.py` fails the build if content lands below `SAFE_H`
 
 - `./build.sh` succeeds AND the app was launched and looked at. A build that
   compiles is not a feature that works.
+- **Windows: `dotnet build` succeeds, `LoafCat.exe --selftest` passes, and
+  `--demo-drag` reports PASS.** The self-test asserts the things a human would
+  otherwise be checking by eye — the composed frame is opaque on the cat and alpha-0
+  in the margin, 3x is byte-for-byte the 1x frame with every pixel tripled, the hit
+  mask is a real silhouette. If you change the compositor and cannot explain why one
+  of those moved, you have broken it.
+- **A behaviour change touches both ports or it is a bug.** After changing physics or
+  tuning, run `--demo-drag` on both and compare the `peaks` line; the two should agree
+  to within the run-to-run spread each shows against itself (measured at a few percent
+  on the swing, exact on the saturating channels). Check both machines are on the same
+  drag feel first — that is what the first comparison got wrong.
 - Pixel art: run idle for 60s at 2x and 3x. Any crawling or shimmering pixel means a
   fractional transform leaked in — round to whole *logical* pixels before scaling.
 - Click-through: click a transparent area beside the cat; the app underneath must
