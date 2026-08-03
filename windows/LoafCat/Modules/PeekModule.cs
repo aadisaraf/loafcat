@@ -581,17 +581,23 @@ internal static class PeekDemo
         // cut the face in half.
         double seenTo = t.InkMinX + t.RevealPx;     // right park: 0..seenTo is on screen
         double seenFrom = t.InkMaxX - t.RevealPx;   // left park: seenFrom.. is on screen
+        // Spelled out rather than as a ternary on a separate `ok`: nullable flow
+        // analysis cannot see through that and rejects the dereference.
         bool Lo(string n, out double lo)
         {
-            bool ok = atlas.Parts.TryGetValue(n, out var p);
-            lo = ok ? p.Origin.X : 0;
-            return ok;
+            if (atlas.Parts.TryGetValue(n, out var p)) { lo = p.Origin.X; return true; }
+            lo = 0;
+            return false;
         }
         bool Hi(string n, out double hi)
         {
-            bool ok = atlas.Parts.TryGetValue(n, out var p);
-            hi = ok ? p.Origin.X + p.Size.W : 0;
-            return ok;
+            if (atlas.Parts.TryGetValue(n, out var p))
+            {
+                hi = p.Origin.X + p.Size.W;
+                return true;
+            }
+            hi = 0;
+            return false;
         }
         bool ShowsR(string n) => Hi(n, out double hi) && hi <= seenTo + 1;
         bool HidesR(string n) => !Lo(n, out double lo) || lo >= seenTo;
