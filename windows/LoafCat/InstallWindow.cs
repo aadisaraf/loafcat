@@ -104,7 +104,10 @@ internal sealed class InstallForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
         Font = SystemFonts.MessageBoxFont ?? SystemFonts.DefaultFont;
-        ClientSize = new Size(470, 206);
+        // Sized for the longest thing it has to say, which is the failure text: three
+        // wrapped lines, a blank, and two more. A label clips what does not fit and
+        // says nothing about having done so.
+        ClientSize = new Size(480, 236);
         ShowInTaskbar = true;
         BackColor = SystemColors.Window;
         try { Icon = Branding.AppIcon(); } catch (ArgumentException) { }
@@ -113,31 +116,31 @@ internal sealed class InstallForm : Form
         // else this app draws. Not the .ico shrunk to fit: that is a bilinear resample
         // of pixel art, which is the exact mush the art pipeline exists to prevent, and
         // it would be the first thing a new user ever saw of it.
-        _art.SetBounds(24, 24, 96, 96);
+        _art.SetBounds(24, 26, 96, 96);
         _art.SizeMode = PictureBoxSizeMode.CenterImage;
         _art.Image = CatArt();
         Controls.Add(_art);
 
-        _headline.SetBounds(140, 26, 306, 24);
+        _headline.SetBounds(140, 26, 320, 24);
         _headline.Font = new Font(Font.FontFamily, Font.Size + 1.5f, FontStyle.Bold);
         _headline.AutoSize = false;
         Controls.Add(_headline);
 
-        _body.SetBounds(140, 54, 306, 64);
+        _body.SetBounds(140, 56, 320, 92);
         _body.ForeColor = SystemColors.GrayText;
         _body.AutoSize = false;
         Controls.Add(_body);
 
-        _bar.SetBounds(140, 124, 306, 10);
+        _bar.SetBounds(140, 156, 320, 10);
         _bar.Visible = false;
         Controls.Add(_bar);
 
-        _primary.SetBounds(316, 158, 130, 30);
+        _primary.SetBounds(326, 188, 130, 30);
         _primary.Click += (_, _) => _primaryAction();
         _primary.Visible = false;
         Controls.Add(_primary);
 
-        _secondary.SetBounds(168, 158, 140, 30);
+        _secondary.SetBounds(168, 188, 150, 30);
         _secondary.Click += (_, _) => BeginInstall();
         _secondary.Visible = false;
         Controls.Add(_secondary);

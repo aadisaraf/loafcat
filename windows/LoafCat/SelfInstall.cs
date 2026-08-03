@@ -205,8 +205,11 @@ public static class SelfInstall
 
         progress?.Report(new Step(-1, "Closing the copy that is running…"));
         Log.Line("install  the installed copy is running — asking it to stand down");
-        AskRunningCopyToQuit();
-        if (WaitForDelete(40)) return;   // 4s, and a clean exit puts the tray icon away
+        // Only worth waiting on if something was listening. Every copy installed before
+        // this existed has no quit channel, so asking one of those and then waiting is
+        // four seconds of watching a file that was never going to be released — which
+        // is most of what the first person to update by hand would experience.
+        if (AskRunningCopyToQuit() && WaitForDelete(40)) return;   // 4s
 
         // It did not go: a build old enough to predate the quit channel, or one wedged.
         // Ending it is what install.ps1 has always done here, for the same reason.
@@ -275,7 +278,8 @@ public static class SelfInstall
         return false;
     }
 
-    private static void AskRunningCopyToQuit() => Signal(Program.QuitEventName);
+    /// False when nothing was listening, which means there is nothing to wait for.
+    private static bool AskRunningCopyToQuit() => Signal(Program.QuitEventName);
 
     /// Brings the copy that is already running to the front, for when there is nothing
     /// to install. Returns false when nothing answered.
