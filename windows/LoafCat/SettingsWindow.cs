@@ -21,6 +21,7 @@ public interface ISettingsHost
     void ApplyTheme(string theme);
     void ApplyScale(double scale);
     void ApplyDragFeel(DragFeel feel);
+    void ApplyStretchTempo(StretchTempo tempo);
     void CentreCat();
     WellnessSuite? WellnessSuite { get; }
 
@@ -94,6 +95,7 @@ internal sealed class SettingsForm : Form
         AddPane(new CatPane(host));
         AddPane(new WellnessPane(host));
         AddPane(new AgentPane(host));
+        AddPane(new AdvancedPane(host));
         AddPane(new AboutPane(host));
 
         // Panes refresh as they come into view, so switching tabs never shows a stale
@@ -759,6 +761,65 @@ internal sealed class AgentPane(ISettingsHost host) : SettingsPane(host)
 // MARK: - About
 
 [SupportedOSPlatform("windows")]
+/// The knobs that are real but that most people should never have to find.
+///
+/// A separate pane rather than more controls in Cat, because Cat is the pane someone
+/// opens on their first run and every extra row there is one more decision asked of
+/// somebody who only wanted a cat. Nothing in here changes what the app does, only how
+/// it moves.
+internal sealed class AdvancedPane(ISettingsHost host) : SettingsPane(host)
+{
+    public override string Title => "Advanced";
+
+    private readonly ComboBox _tempo =
+        new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
+    private Control _tempoDetail = null!;
+    private bool _updating;
+
+    public override void Build()
+    {
+        Add(Heading("Stretch"));
+
+        foreach (var t in StretchTempoExtensions.All) _tempo.Items.Add(t.Label());
+        _tempo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updating || _tempo.SelectedIndex < 0) return;
+            var picked = StretchTempoExtensions.All[_tempo.SelectedIndex];
+            Host.ApplyStretchTempo(picked);
+            _tempoDetail.Text = $"Unstretches {picked.Detail()}.";
+        };
+        Add(Row("Tempo", _tempo));
+        _tempoDetail = Caption("");
+        Add(_tempoDetail);
+        Add(Caption(
+            "How quickly the stretch comes on and goes away \u2014 separate from how FAR "
+            + "it goes, which is Drag over in Cat. A big slow stretch and a small snappy "
+            + "one are both coherent, and one control cannot give you either.\n\n"
+            + "The gesture is deliberately lopsided: it snaps taut about five times "
+            + "faster than it eases back, and holds the stretch for a moment first. That "
+            + "is what makes it read as elastic rather than as a slider being dragged, so "
+            + "these scale the lopsidedness rather than flattening it."));
+
+        Add(Divider());
+        Add(Caption(
+            "Everything here is a multiplier on the numbers in the theme's cat.json, so a "
+            + "theme that retunes the drag keeps all four presets meaningful. Normal is "
+            + "1.0 by definition \u2014 the shipped tuning is the normal preset."));
+    }
+
+    public override void Refresh()
+    {
+        _updating = true;
+        try
+        {
+            var current = StretchTempoExtensions.Current;
+            _tempo.SelectedIndex = Array.IndexOf(StretchTempoExtensions.All, current);
+            _tempoDetail.Text = $"Unstretches {current.Detail()}.";
+        }
+        finally { _updating = false; }
+    }
+}
+
 internal sealed class AboutPane(ISettingsHost host) : SettingsPane(host)
 {
     public override string Title => "About";
