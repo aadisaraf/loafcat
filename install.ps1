@@ -78,7 +78,10 @@ if ([Environment]::Is64BitOperatingSystem -eq $false) {
 }
 
 function Stop-LoafCat {
-    Get-Process -Name "LoafCat" -ErrorAction SilentlyContinue | ForEach-Object {
+    # Case-insensitive, and matched against the ASSEMBLY name rather than the file on
+    # disk — an installed copy that predates the lower-case rename is still "loafcat"
+    # here, so this keeps working across it.
+    Get-Process -Name "loafcat" -ErrorAction SilentlyContinue | ForEach-Object {
         $_ | Stop-Process -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Milliseconds 400
