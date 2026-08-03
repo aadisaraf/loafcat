@@ -179,6 +179,20 @@ down separately rather than assuming the Mac answer transfers.
   second with a generous ±15% wander it discarded 45 of 159 genuine keystrokes. Tried at
   two window lengths, same answer both times.
 
+- **The cat is always running, so an install that defers to a running copy never runs.**
+  Windows refuses to replace a running executable, and a desktop pet is running by
+  definition — so at the one moment installing matters, the file on disk is locked.
+  Reading that as "another instance is here, stand down" looks like correct
+  single-instance behaviour and is the bug: a newer download hit the locked file, gave
+  up, installed nothing, reported nothing, and brought the **old** cat forward. Shipped
+  in v0.2.0, and CI could not have caught it because every Windows check returns before
+  `SelfInstall` — `--selftest` exits first by design, so not one line of it had ever
+  executed. Ask the running copy to quit through its own event so it exits cleanly and
+  takes its tray icon with it; end it only if it will not.
+- **A tray balloon is not a confirmation of anything.** `ShowBalloonTip` is discarded
+  without error by Focus Assist, Do Not Disturb, or notifications being off. It was the
+  entire announcement that an install had happened, which made success and silent
+  refusal look the same. If a user has to have seen it, it is a window.
 - **One loose `.exe` has no name of its own.** macOS gets this free: a `.app` is a
   bundle you drag to Applications. On Windows it takes three things, and all three are
   load-bearing. Set `AssemblyTitle` (it becomes `FileDescription`, which Task Manager and
