@@ -7,7 +7,8 @@
 **A pixel cat that lives on your desktop, watches your cursor, reacts to your
 typing, and knows when Claude Code has finished working.**
 
-Native Swift/AppKit · macOS 13+ · MIT licensed · **asks for zero permissions**
+macOS 13+ (Swift/AppKit) · Windows 10 1809+ (C#/Win32) · MIT licensed ·
+**asks for zero permissions**
 
 </div>
 
@@ -15,8 +16,16 @@ Native Swift/AppKit · macOS 13+ · MIT licensed · **asks for zero permissions*
 
 ## Install
 
+**macOS**
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.sh | bash
+```
+
+**Windows**
+
+```powershell
+irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
 ```
 
 That's it — it installs to `/Applications` and starts. **No blocked-app dialog,
@@ -68,6 +77,24 @@ Or in a terminal, equivalently: `xattr -dr com.apple.quarantine /Applications/Lo
 > [build it yourself](#building-from-source). Five seconds, and nothing but the
 > Xcode command line tools.
 
+### On Windows
+
+The same reasoning, mirrored. Windows attaches its *mark of the web* based on what
+downloaded the file; browsers do, `Invoke-WebRequest` does not — so an app installed by
+`install.ps1` simply opens, and a browser download shows **"Windows protected your PC"**
+(**More info → Run anyway**) because loafcat is not code-signed.
+
+It installs per-user under `%LOCALAPPDATA%\Programs\loafcat`, adds a Start Menu entry,
+and never asks for administrator. The cat lives in the notification area — if you can't
+see it, drag it out of the `^` overflow, which is where Windows hides new tray icons.
+Left-click for Settings, right-click for the menu.
+
+Everything below applies to both platforms unless it says otherwise.
+[`windows/README.md`](windows/README.md) covers what is genuinely different and why —
+including the one place Windows is simply better (click-through is free and exact there,
+where macOS needs a 120Hz poll to reach 97%) and the one place it needs more work
+(keystroke *counts* have to be inferred from a tick counter rather than read).
+
 ### Turning it on and off
 
 **Open loafcat and the cat is on.** From Spotlight, from Applications, from the
@@ -93,10 +120,11 @@ again.
 |---|---|
 | **Watches your cursor** | Pupils, eyes, head and body track it on four layers, so the turn has depth instead of the whole cat sliding. |
 | **Reacts to typing** | Kneads while you type, and overheats — steam and all — when you type fast. |
-| **Picks up and stretches** | Drag it around; it hangs, stretches on a yank, and settles. Three feels, from Subtle to Springy. |
+| **Picks up and stretches** | Drag it around; it hangs, stretches on a yank, and settles. Three feels, from Subtle to Springy — and a separate tempo control in Advanced for how fast it lets go again. |
 | **Purrs when petted** | Stroke it, and it leans into the cursor. It ignores a cursor that's merely parked on it. |
 | **Hunts** | Fast, reversing cursor movement gets a pounce. |
 | **Knows about Claude Code** | Thinks while a request runs, hops when it finishes, raises an alert when Claude needs you. Optional, reversible, and it cannot slow a session down. |
+| **Updates itself** | Checks GitHub a few times a day and installs a new version only if it carries a valid signature from the project's key. Staged, so it starts the next time you open the app — never swapped out from under a running cat. Off with one checkbox. |
 | **Looks after you** | Optional stretch breaks, hydration nudges, a pomodoro timer, a daily reminder and a pinned note — all off or conservative by default. |
 | **Sleeps** | Goes quiet when you do. |
 
@@ -110,17 +138,29 @@ Three cats ship: **mono**, **cream** and **tuxedo**.
 
 ## Privacy: it asks for nothing
 
-**No Accessibility. No Input Monitoring. No Screen Recording. No prompts at all.**
+**macOS:** no Accessibility, no Input Monitoring, no Screen Recording, no prompts
+at all. **Windows:** no elevation prompt, no keyboard hook, no manifest capability.
 
-Typing reactions come from `CGEventSource.counterForEventType`, which returns an
-integer count of key events. Not which keys — *how many*. There is no code path
-by which a keycode could reach this app, so being unable to read what you type is
-**structural**, not a promise you have to take on trust.
+Typing reactions on macOS come from `CGEventSource.counterForEventType`, which returns
+an integer count of key events. Not which keys — *how many*.
+
+Windows has no equivalent, so the same guarantee is rebuilt from two APIs that each
+individually cannot leak anything: `GetLastInputInfo`, whose entire payload is a tick
+count of the last input event of any kind, and a **mouse-only** hook, whose callback
+receives a structure with no field capable of carrying a keystroke. A keystroke is then
+*inferred* — the input tick moved, and it is not the tick the mouse fired on. The app
+learns that *a* key was pressed and when. It cannot learn which, because neither API it
+called was ever told. That is strictly **less** information than the Mac gets.
+
+Either way, there is no code path by which a keycode could reach this app, so being
+unable to read what you type is **structural**, not a promise you have to take on trust.
 
 This is enforced mechanically, not by review: `scripts/check-privacy.sh` fails the
-build if code appears that would trigger a permission prompt — event taps, global
-keyboard monitors, screen capture, or anything that reads key identity. It runs on
-every build and in CI.
+build if code appears that would trigger a permission prompt or read key identity —
+event taps and global keyboard monitors on macOS; `WH_KEYBOARD_LL`, `GetAsyncKeyState`,
+`GetKeyState`, raw input, journal hooks, `SendInput`, window titles and screen capture
+on Windows. It scans Swift, C#, PowerShell, Python and shell, and runs on every build
+and in CI.
 
 Most desktop pets use `uiohook` or a `CGEventTap`. Those are *active filters* that
 can read and suppress every keystroke system-wide, which is why they trigger the
@@ -139,14 +179,17 @@ network timeout and **exits zero whatever happens** — so it cannot stall a Cla
 Code session, even with loafcat quit. Nothing is hooked into message display.
 
 The cat talks to itself over `127.0.0.1` on a random port, behind a bearer token
-written to `~/.loafcat/endpoint.json` with mode `0600`. Payloads are never logged;
-they contain prompt text and shell commands.
+written to `~/.loafcat/endpoint.json` — mode `0600` on macOS, an owner-only ACL on
+Windows. Payloads are never logged; they contain prompt text and shell commands.
+
+On Windows the hook is `loafcat-hook.ps1` rather than the bash script, because a `.sh`
+will not run natively. Same contract, same five fields, same endpoint.
 
 ---
 
 ## Building from source
 
-Needs the Xcode command line tools. Not full Xcode.
+**macOS** — needs the Xcode command line tools. Not full Xcode.
 
 ```sh
 git clone https://github.com/aadisaraf/loafcat.git
@@ -159,6 +202,21 @@ An app you built yourself is not quarantined, so none of the Gatekeeper business
 above applies.
 
 To build a disk image, `pip install dmgbuild Pillow` then `./tools/make-dmg.sh`.
+
+**Windows** — needs the .NET 8 SDK.
+
+```powershell
+pwsh windows\build.ps1     # -> dist\loafcat-<version>-win-x64.zip
+```
+
+This works on macOS and Linux too: the project sets `EnableWindowsTargeting`, so the
+Windows app cross-compiles to a real PE binary from any machine. That is how the port
+was written and reviewed.
+
+Both builds read the **same** `assets/` directory. That was already the architecture
+rule — no geometry or behaviour constant lives in code, only in
+`assets/themes/<name>/cat.json` — and the second platform is what it was written down
+for. Retuning the cat is a JSON diff, and it retunes both.
 
 `packaging/homebrew/loafcat.rb` is a ready-made cask, for anyone who would rather
 install through Homebrew. It needs a tap repository to live in; the file explains

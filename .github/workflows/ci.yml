@@ -7,6 +7,7 @@ on:
 
 jobs:
   build:
+    name: macOS
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +19,12 @@ jobs:
       # needs no toolchain.
       - name: Privacy check
         run: ./scripts/check-privacy.sh
+
+      # Both ports must carry the same update key, and it must be a real one. The
+      # failure this catches is silent: releases keep going out and every installed
+      # copy quietly declines to install them.
+      - name: Update key
+        run: ./scripts/check-update-key.sh
 
       - name: Build
         run: ./build.sh
@@ -55,3 +62,122 @@ jobs:
           fi
           kill $PID
           cat /tmp/loafcat.log
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Warnings are errors in the csproj, so this is the real gate.
+      - name: Build
+        run: dotnet build windows/LoafCat/LoafCat.csproj -c Release
+
+      - name: Package
+        shell: pwsh
+        run: pwsh windows/build.ps1 -SkipAssets
+
+      # So a tester can get a build off any commit without one being released.
+      # Downloading it needs a GitHub account — artifacts are not anonymous, even on
+      # a public repo — which is the whole reason install.ps1 and the release page
+      # exist for everyone else.
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: loafcat-win-x64
+          path: dist/*.zip
+          retention-days: 30
+          compression-level: 0   # already a zip
+
+      # Everything that can be checked without a person looking at a screen: the
+      # atlas loads from the SAME files the macOS build reads, the hit mask is a
+      # silhouette, the composed frame is opaque on the cat and transparent beside
+      # it (which is exactly what the window manager hit-tests for click-through),
+      # and 3x is byte-for-byte the 1x frame with every pixel tripled.
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
+          Write-Host "running $($exe.FullName) --selftest"
+
+          # Start-Process with redirection rather than `& $exe`: a GUI subsystem
+          # executable does not reliably inherit a usable stdout from a shell
+          # pipeline, and redirecting to real files gives the child handles it can
+          # actually write to. That is how this step failed the first two times it
+          # ever ran — with no output whatsoever to say so.
+          $out = Join-Path $env:RUNNER_TEMP "selftest.out"
+          $err = Join-Path $env:RUNNER_TEMP "selftest.err"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+                 -PassThru -NoNewWindow -Wait `
+                 -RedirectStandardOutput $out -RedirectStandardError $err
+          Get-Content $out -ErrorAction SilentlyContinue
+          Get-Content $err -ErrorAction SilentlyContinue
+
+          # Belt and braces: every place the app might have said something.
+          foreach ($f in @((Join-Path $env:LOCALAPPDATA "loafcat\loafcat.log"),
+                           (Join-Path $exe.DirectoryName "loafcat-crash.log"))) {
+            if (Test-Path $f) { Write-Host "--- $f ---"; Get-Content $f -Tail 80 }
+          }
+          if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
+
+      # The other half of what gets published: one file, with no assets\ beside it,
+      # which has to unpack its own art out of itself before it can do anything. That
+      # is the download most people take, and until now nothing ran it -- the staged
+      # folder above always had the art on disk, so the embedded path was compiled and
+      # never executed. --selftest returns before SelfInstall, so this cannot install
+      # anything on the runner.
+      - name: The one-file download is a complete app
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/loafcat.exe | Select-Object -First 1
+          if (-not $exe) { throw "build.ps1 did not publish dist/loafcat.exe" }
+          $out = Join-Path $env:RUNNER_TEMP "bare.out"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+                 -PassThru -NoNewWindow -Wait -RedirectStandardOutput $out
+          Get-Content $out -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "the bare executable failed its self-test" }
+
+      # The drag physics, driven by a scripted grab-hold-shake-release through the
+      # same entry points real mouse events use. This is the one check that the
+      # ported springs and pendulum actually behave like the Swift original rather
+      # than merely compiling.
+      - name: Drag physics
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
+          $log = Join-Path $env:RUNNER_TEMP "drag.log"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
+                 -PassThru -RedirectStandardOutput $log -NoNewWindow
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the drag demo hung" }
+          # The summary lines rather than 856 frames of trace. `peaks` is the one to
+          # compare against the macOS build — run `./build/LoafCat.app/Contents/MacOS/
+          # LoafCat --demo-drag` there and the two lines should agree to about a
+          # percent, which is what a faithful port of a spring system looks like.
+          Select-String -Path $log -Pattern "# demo:" | ForEach-Object { $_.Line }
+          if ($p.ExitCode -ne 0) { throw "the drag demo did not settle (exit $($p.ExitCode))" }
+
+      # Starting for real, with a window. Allowed to be the flakier check — a CI
+      # runner's desktop session is not a user's — so it reports rather than fails,
+      # and the two checks above are what actually gate the build.
+      - name: App launches
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
+          # About the app starting, not about the first-run settings window.
+          $prefs = Join-Path $env:LOCALAPPDATA "loafcat"
+          New-Item -ItemType Directory -Path $prefs -Force | Out-Null
+          '{ "hasLaunched": true }' | Set-Content (Join-Path $prefs "settings.json")
+
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) {
+            Get-Content (Join-Path $prefs "loafcat.log") -Tail 40
+            throw "the app exited early (exit $($p.ExitCode))"
+          }
+          $p.Kill()
+          Get-Content (Join-Path $prefs "loafcat.log") -Tail 40

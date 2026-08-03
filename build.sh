@@ -8,7 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # A permission regression is cheap to catch here and expensive to catch in review.
-./scripts/check-privacy.sh || exit 1
+./scripts/check-privacy.sh
+# So is an update key the two ports disagree about, which nothing else would notice.
+./scripts/check-update-key.sh
 
 APP="build/LoafCat.app"
 rm -rf build
@@ -28,7 +30,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>dev.loafcat.app</string>
   <key>CFBundleName</key><string>loafcat</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>0.2.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <!-- Accessory app: no Dock icon, no Cmd-Tab. Also required to float over
        fullscreen apps. The menu bar item is therefore the ONLY way to quit. -->

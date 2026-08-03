@@ -52,6 +52,7 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// Features live here, one file each. See CatModule.swift.
     let modules = ModuleRegistry()
     private var wellness: WellnessSuite?
+    private var updater: Updater?
 
     /// Smoothed cursor velocity, in logical px/sec. Raw frame-to-frame deltas are
     /// far too noisy for a velocity threshold to be usable.
@@ -120,6 +121,32 @@ final class CatController: NSObject, NSApplicationDelegate {
         lastKeyCount = InputTelemetry.keyCount()
         lastScrollCount = InputTelemetry.scrollCount()
         registerModules()
+
+        // Announced through the menu bar rather than the cat: an update is news about
+        // the app, not something the cat did, and the bubble is the cat's voice.
+        updater = Updater(
+            announce: { [weak self] message in
+                self?.notifyAboutUpdate(message)
+            },
+            // Terminate first, relaunch second, and never the other way round: `open`
+            // on a bundle this process still owns is a request to activate the copy
+            // already running, not to start a new one. So a detached shell waits for
+            // this pid to go away and then opens the app — which applies the staged
+            // update before it puts anything on screen, exactly as a manual restart
+            // would. The path is the bundle's, and staging never moves the bundle.
+            restart: { [weak self] in
+                let path = Bundle.main.bundlePath
+                let pid = ProcessInfo.processInfo.processIdentifier
+                let sh = Process()
+                sh.executableURL = URL(fileURLWithPath: "/bin/sh")
+                sh.arguments = ["-c",
+                    "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; "
+                    + "open -n \"\(path)\""]
+                try? sh.run()
+                _ = self
+                NSApp.terminate(nil)
+            })
+        updater?.start()
 
         // One 120Hz timer drives everything: cursor tracking, click-through
         // hit-testing, typing rate. Polling rather than event monitors is what
@@ -220,6 +247,14 @@ final class CatController: NSObject, NSApplicationDelegate {
         // Each module supplies its own items, targeted at itself. main.swift only
         // places them, so a feature's menu lives in the feature's file.
         wellness?.addMenuItems(to: menu)
+
+        // Only once there is something to say. A permanently visible "you are up to
+        // date" is one more line to read past every time the menu opens.
+        if let updater, updater.stagedAndReady, let v = updater.availableVersion {
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "loafcat \(v) starts next time you open it",
+                         action: nil, keyEquivalent: "")
+        }
 
         menu.addItem(.separator())
         menu.addItem(AgentModule.shared.statusMenuItem())
@@ -365,6 +400,33 @@ extension CatController: SettingsHost {
     var currentScale: CGFloat { renderScale }
     var wellnessSuite: WellnessSuite? { wellness }
 
+    var updateStatus: String {
+        guard let updater else { return "loafcat \(Branding.version)." }
+        if updater.stagedAndReady, let v = updater.availableVersion {
+            return "loafcat \(v) is ready, and starts the next time you open the app."
+        }
+        if let v = updater.availableVersion { return "loafcat \(v) is available." }
+        return "loafcat \(Branding.version)."
+    }
+
+    var downloadPercent: Int { updater?.downloadPercent ?? -1 }
+
+    func checkForUpdates(_ report: @escaping (String) -> Void) {
+        guard let updater else { report("Updates are unavailable."); return }
+        updater.check(quiet: false) { [weak self] in
+            report(self?.updateStatus ?? "")
+        }
+    }
+
+    /// A user notification would need permission this app has never asked for, and the
+    /// speech bubble is the cat's voice rather than the app's. So the menu bar says it:
+    /// the line appears in the menu, and rebuilding is what makes it show up.
+    private func notifyAboutUpdate(_ message: String) {
+        FileHandle.standardError.write(("loafcat: " + message + "\n").data(using: .utf8)!)
+        rebuildMenu()
+        SettingsWindowController.shared.refreshPanes()
+    }
+
     func apply(theme: String) {
         themeName = theme
         UserDefaults.standard.set(theme, forKey: "theme")
@@ -380,6 +442,16 @@ extension CatController: SettingsHost {
     func apply(dragFeel: DragFeel) {
         UserDefaults.standard.set(dragFeel.rawValue, forKey: "dragFeel")
         reload()   // modules re-read their tuning when the rig is rebuilt
+    }
+
+    func apply(stretchTempo: StretchTempo) {
+        UserDefaults.standard.set(stretchTempo.rawValue, forKey: "stretchTempo")
+        reload()
+    }
+
+    func apply(heatSensitivity: HeatSensitivity) {
+        UserDefaults.standard.set(heatSensitivity.rawValue, forKey: "heatSensitivity")
+        reload()
     }
 
     func centreCat() { centre() }
@@ -401,6 +473,10 @@ extension CatController: SettingsHost {
         SettingsWindowController.shared.refreshPanes()
     }
 }
+
+// Before anything is on screen: a staged update renames the installed bundle out of
+// the way, moves the new one into place, and relaunches into it. See Updater.swift.
+if Updater.applyStagedUpdate() { exit(0) }
 
 let controller = CatController()
 app.delegate = controller

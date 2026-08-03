@@ -18,6 +18,7 @@ on:
 
 jobs:
   dmg:
+    name: macOS disk image
     runs-on: macos-latest
     permissions:
       contents: write
@@ -29,11 +30,21 @@ jobs:
       - name: Privacy check
         run: ./scripts/check-privacy.sh
 
+      # Both ports must carry the same update key, and it must be a real one. The
+      # failure this catches is silent: releases keep going out and every installed
+      # copy quietly declines to install them.
+      - name: Update key
+        run: ./scripts/check-update-key.sh
+
       - uses: ./.github/actions/python-art
 
       - name: Version matches the tag
         run: |
+          # A prerelease suffix is stripped before comparing: v0.2.0-rc.1 IS version
+          # 0.2.0, and a release candidate that had to carry a different version from
+          # the release it is a candidate for would defeat the point of testing it.
           TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG%%-*}"
           PLIST_VERSION=$(grep -o 'CFBundleShortVersionString</key><string>[^<]*' build.sh | sed 's/.*<string>//')
           echo "tag=$TAG  build.sh=$PLIST_VERSION"
           if [ "$TAG" != "$PLIST_VERSION" ]; then
@@ -80,7 +91,10 @@ jobs:
       - name: Checksum
         run: |
           cd dist
-          shasum -a 256 *.dmg > "$(ls *.dmg).sha256"
+          for f in *.dmg *-macos.zip; do
+            [ -f "$f" ] || continue
+            shasum -a 256 "$f" > "$f.sha256"
+          done
           cat *.sha256
 
       - name: Publish
@@ -88,8 +102,14 @@ jobs:
         with:
           files: |
             dist/*.dmg
+            dist/*-macos.zip
             dist/*.sha256
           generate_release_notes: true
+          # Explicit rather than left to the action's tag-name heuristic. A
+          # prerelease is excluded from /releases/latest, which is what install.sh
+          # and install.ps1 ask for when no version is pinned -- so a release
+          # candidate cannot reach anyone who did not ask for it by name.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             ## Installing
 
@@ -120,10 +140,172 @@ jobs:
             building from source takes about five seconds and needs only the Xcode
             command line tools — see the README.
 
+            ## Windows
+
+            ```powershell
+            irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
+            ```
+
+            Or just download **`loafcat.exe`** and double-click
+            it. One file, nothing to install and nothing to extract — the art and
+            the hook script are inside it and unpack themselves on first run.
+            Windows 10 1809 or later, x64.
+
+            The `.zip` is the same executable with `assets\` unpacked beside it,
+            which is where a community theme goes. Take it if you want to edit the
+            art; take the `.exe` otherwise.
+
+            Same reasoning as macOS: Windows attaches its "mark of the web" based
+            on what *downloaded* the file, and `Invoke-WebRequest` does not attach
+            one, so an app installed by the script simply opens. A browser download
+            shows **"Windows protected your PC"** on first launch — click **More
+            info → Run anyway**.
+
             ## Where it lives
 
-            In the menu bar, as a cat's face. Settings and Quit are in that menu.
-            There is no Dock icon unless you turn one on in Settings.
+            macOS: in the menu bar, as a cat's face. Windows: in the notification
+            area — drag it out of the `^` overflow if you cannot see it, since
+            Windows hides new tray icons there. Settings and Quit are in that menu
+            on both, and there is no Dock or taskbar icon unless you turn one on.
 
-            **loafcat asks for zero permissions** — no Accessibility, no Input
-            Monitoring, no Screen Recording, no prompts of any kind.
+            **loafcat asks for zero permissions** on either platform — no
+            Accessibility, no Input Monitoring, no Screen Recording, no elevation
+            prompt, no keyboard hook. A build check blocks any code that would
+            change that.
+
+  windows:
+    name: Windows package
+    # After the macOS job, which creates the release and writes its body. This one
+    # only attaches files: two jobs racing to `generate_release_notes` would leave
+    # whichever finished second overwriting the other's description.
+    needs: dmg
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Version matches the tag
+        shell: pwsh
+        run: |
+          # Leading "v" off, prerelease suffix off: v0.2.0-rc.1 IS version 0.2.0.
+          # `-replace` rather than TrimStart, which takes a CHARACTER set and would
+          # eat every leading v from a hypothetical "vv1".
+          $tag = "${{ github.ref_name }}" -replace '^v', '' -replace '-.*$', ''
+          [xml]$csproj = Get-Content windows/LoafCat/LoafCat.csproj
+          $version = $csproj.Project.PropertyGroup.Version |
+                     Where-Object { $_ } | Select-Object -First 1
+          Write-Host "tag=$tag  LoafCat.csproj=$version"
+          if ($tag -ne $version) {
+            throw "tag $tag does not match <Version> $version in windows/LoafCat/LoafCat.csproj"
+          }
+
+      # -SkipAssets: the macOS job already regenerated the art and proved it
+      # reproduces byte for byte. Regenerating here would need a second pinned
+      # Python and could only ever agree or reveal a bug that job would have caught.
+      - name: Build the package
+        shell: pwsh
+        run: pwsh windows/build.ps1 -SkipAssets
+
+      - name: Self-test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
+          # Start-Process -Wait, not `& $exe`. PowerShell does not WAIT for a GUI
+          # subsystem executable invoked with the call operator, so $LASTEXITCODE
+          # there belongs to whatever ran before it. That is how this step failed a
+          # build whose self-test actually passes.
+          $out = Join-Path $env:RUNNER_TEMP "selftest.out"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+                 -PassThru -NoNewWindow -Wait -RedirectStandardOutput $out
+          Get-Content $out -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "the packaged app failed its self-test" }
+
+      - name: Drag physics
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
+          $log = Join-Path $env:RUNNER_TEMP "drag.log"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
+                 -PassThru -RedirectStandardOutput $log -NoNewWindow
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the drag demo hung" }
+          Get-Content $log -Tail 12
+          if ($p.ExitCode -ne 0) { throw "the drag demo did not settle" }
+
+      # install.ps1 verifies this before it copies anything. Published alongside
+      # rather than embedded, because a checksum a file computes about itself is not
+      # a checksum.
+      - name: Checksum
+        shell: pwsh
+        run: |
+          # Both artefacts, each with its own checksum file. install.ps1 verifies
+          # the zip's before it copies anything; the .exe's is there for anyone who
+          # downloads that directly and wants to check it.
+          foreach ($f in Get-ChildItem dist -Include *.zip, *.exe -File -Recurse -Depth 0) {
+            $hash = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($f.Name)" | Set-Content "$($f.FullName).sha256"
+            Get-Content "$($f.FullName).sha256"
+          }
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.exe
+            dist/*.sha256
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  sign:
+    name: Sign for the updater
+    # Last, because it signs what the other two jobs published. One job rather than a
+    # step in each: the signing key then only ever touches a single runner, and openssl
+    # is there without argument about which shell can find it.
+    needs: [dmg, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Sign the update assets
+        env:
+          KEY: ${{ secrets.LOAFCAT_UPDATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::warning::LOAFCAT_UPDATE_KEY is not set — this release ships"\
+                 "unsigned, so installed copies will report it and refuse to"\
+                 "install it automatically. See tools/make-update-key.sh."
+            exit 0
+          fi
+
+          # 0600 and inside the runner's own workspace. Removed on the way out whether
+          # or not the signing worked.
+          umask 077
+          printf '%s' "$KEY" > signing-key.pem
+          trap 'shred -u signing-key.pem 2>/dev/null || rm -f signing-key.pem' EXIT
+
+          mkdir -p assets && cd assets
+          # Exactly the two files an installed copy will ask for: the Windows
+          # executable and the macOS zip. The .dmg is for humans and is not signed
+          # here -- nothing downloads it unattended.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+             --pattern 'loafcat.exe' --pattern '*-macos.zip'
+
+          for f in loafcat.exe *-macos.zip; do
+            [ -f "$f" ] || continue
+            openssl dgst -sha256 -sign ../signing-key.pem -out "$f.sig" "$f"
+            # Verified here as well as in the app. A signature that does not check out
+            # on the machine that just made it is a broken key, and finding that out
+            # from a user whose app quietly stopped updating is far too late.
+            openssl ec -in ../signing-key.pem -pubout -out pub.pem 2>/dev/null
+            openssl dgst -sha256 -verify pub.pem -signature "$f.sig" "$f"
+            echo "signed $f"
+          done
+          rm -f pub.pem
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber ./*.sig

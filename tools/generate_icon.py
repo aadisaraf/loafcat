@@ -216,8 +216,17 @@ def face(size=16):
 
 
 def small_glyph(size=16):
-    """The 16pt slot: the face on the plate."""
-    img = plate(size, inset=1, n=3.4)
+    """The 16pt slot: the face on the plate.
+
+    Drawn at whatever size is asked for rather than drawn once and resampled, which
+    is what lets the Windows icon carry a native 20px and 24px frame -- the tray
+    sizes at 125% and 150% display scaling, neither of which is a whole multiple of
+    anything else we have. `face` and `plate` are both parametric in `size`, so each
+    one lands on its own pixel grid with no filtering anywhere.
+
+    The border thickens with the glyph. A 1px inset at 24px reads as a hairline.
+    """
+    img = plate(size, inset=max(1, round(size / 16)), n=3.4)
     img.alpha_composite(face(size))
     return img
 
@@ -256,6 +265,24 @@ SLOTS = [
     ("icon_512x512.png",    512, "master"),
     ("icon_512x512@2x.png", 1024, "master"),
 ]
+
+
+# The Windows .ico, which carries every size in one file.
+#
+# Split at 32px for the same reason the macOS grid is: below that a whole cat is a
+# grey smudge and the face is the only thing that reads. Above it the plate has room
+# for the body and the tail.
+#
+# 20 and 24 are here because Windows asks for them and macOS never does -- they are
+# the notification-area sizes at 125% and 150% display scaling, which is most Windows
+# laptops. Neither is a whole multiple of 16 or 64, so both are DRAWN at that size
+# rather than resampled from a neighbour.
+#
+# 48 is deliberately absent: it only appears in Explorer's medium-icon view, it is not
+# a whole multiple of the 64px master, and letting Windows derive it from 64 costs
+# nothing anyone will see. Inventing a 48px master to avoid one downscale in a file
+# browser would be the wrong trade.
+WIN_SLOTS = [16, 20, 24, 32, 64, 128, 256]
 
 
 def resize(img, size):
@@ -304,12 +331,58 @@ def main():
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         print(f"warning: iconutil unavailable, .icns not rebuilt ({e})")
 
+    ico = _windows_icon(big)
+
     _preview(big, small, tray)
 
     print(f"icon   -> {iconset} ({len(SLOTS)} sizes)")
     print(f"icns   -> {icns}")
     print(f"tray   -> {os.path.join(OUT, 'tray.png')} (16 and 32px template)")
+    print(f"ico    -> {ico} ({len(WIN_SLOTS)} sizes: {', '.join(map(str, WIN_SLOTS))})")
     print(f"preview-> {os.path.join(OUT, 'preview_icon.png')}")
+
+
+def _windows_icon(big):
+    """One .ico carrying every size Windows asks for.
+
+    Unlike .icns, this is written by Pillow rather than by a platform tool, so it goes
+    through the same regenerate-and-diff check in CI as the PNGs. That matters: it is
+    the app icon, the taskbar icon and the notification-area icon all at once, and
+    "the icon drifted from the cat" is exactly the failure `scripts/check-assets.sh`
+    exists to catch.
+
+    Pillow's ICO writer resamples with LANCZOS for any size it has to derive, which
+    would blur every edge the outline pass exists to keep hard. `append_images` makes
+    it use the frames handed to it instead, and the base image has to be the LARGEST
+    of them -- the plugin silently drops any requested size bigger than the base.
+    """
+    frames = {
+        size: (small_glyph(size) if size <= 32 else resize(big, size))
+        for size in WIN_SLOTS
+    }
+    ordered = [frames[s] for s in sorted(WIN_SLOTS, reverse=True)]
+    path = os.path.join(OUT, "loafcat.ico")
+    ordered[0].save(
+        path, format="ICO",
+        sizes=[(s, s) for s in WIN_SLOTS],
+        append_images=ordered[1:])
+
+    # Read it back and prove every frame is the artwork we handed over rather than
+    # something Pillow resampled on our behalf. A blurred tray icon is subtle enough
+    # to ship unnoticed, and this is one assert.
+    for size in WIN_SLOTS:
+        with Image.open(path) as check:
+            # Assigning `.size` is how the ICO plugin selects a frame. `getimage()`
+            # did the same thing and was removed in Pillow 12.
+            check.size = (size, size)
+            got = check.convert("RGBA")
+        want = frames[size].convert("RGBA")
+        if got.tobytes() != want.tobytes():
+            raise SystemExit(
+                f"generate_icon: the {size}px frame in loafcat.ico is not the "
+                f"artwork we supplied -- Pillow resampled it. Check that this "
+                f"Pillow supports append_images for ICO.")
+    return path
 
 
 def _preview(big, small, tray):

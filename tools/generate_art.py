@@ -1046,13 +1046,27 @@ BEHAVIOUR = {
 
     # --- overheat -----------------------------------------------------------
     # A continuous curve, never a binary state. Zero below kps_min so ordinary
-    # typing never reddens the cat; 1.0 at kps_max. The exponent front-loads the
-    # curve's flat part into the middle of the range, so the tint only becomes
-    # obvious when the typing is genuinely frantic.
+    # typing never reddens the cat; 1.0 at kps_max.
+    #
+    # Retuned after the first person to use it for real reported that the fully
+    # burning cat was unreachable. It was: with kps_max at 14 and the exponent at
+    # 1.5, `state_at` 0.55 needed t = 0.55**(1/1.5) = 0.67, which is 4 + 0.67*10 =
+    # 10.7 keystrokes a second SUSTAINED across the 1.5s window. That is at
+    # the edge of the fastest typing ever recorded, so in practice the top of the
+    # range was decoration. Steam wanted 8.4/s, which is not much better.
+    #
+    # Now: 3.5 to 9.5 with a gentler exponent, so steam arrives around 5.7/s and
+    # the hot state around 7.0/s -- brisk, sustained typing rather than a record
+    # attempt. `kps_min` stays above the kneading gate (burst_keys / burst_window
+    # = 2.5/s) so there is still a band where the cat kneads without reddening,
+    # which is the whole reason the two thresholds are separate.
+    #
+    # Both ports read these from here, and Advanced > Heat scales them per taste
+    # without touching the file -- see HeatSensitivity in DragModule.
     "overheat": {
-        "kps_min": 4.0,
-        "kps_max": 14.0,
-        "curve": 1.5,
+        "kps_min": 3.5,
+        "kps_max": 9.5,
+        "curve": 1.3,
         "ease_per_frame": 0.10,
         "state_at": 0.55,        # heat above which overheat outranks kneading
         "steam_at": 0.30,

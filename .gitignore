@@ -24,5 +24,10 @@ xcuserdata/
 # Agent worktrees — these are separate checkouts, never part of the repo
 .claude/worktrees/
 
-# Distributable disk images — build with tools/make-dmg.sh
+# Distributable disk images and Windows packages — build with tools/make-dmg.sh
+# and windows/build.ps1
 dist/
+
+# .NET build output — regenerate with windows/build.ps1
+[Bb]in/
+[Oo]bj/
