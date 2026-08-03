@@ -120,7 +120,7 @@ again.
 |---|---|
 | **Watches your cursor** | Pupils, eyes, head and body track it on four layers, so the turn has depth instead of the whole cat sliding. |
 | **Reacts to typing** | Kneads while you type, and overheats — steam and all — when you type fast. |
-| **Picks up and stretches** | Drag it around; it hangs, stretches on a yank, and settles. Three feels, from Subtle to Springy. |
+| **Picks up and stretches** | Drag it around; it hangs, stretches on a yank, and settles. Three feels, from Subtle to Springy — and a separate tempo control in Advanced for how fast it lets go again. |
 | **Purrs when petted** | Stroke it, and it leans into the cursor. It ignores a cursor that's merely parked on it. |
 | **Hunts** | Fast, reversing cursor movement gets a pounce. |
 | **Knows about Claude Code** | Thinks while a request runs, hops when it finishes, raises an alert when Claude needs you. Optional, reversible, and it cannot slow a session down. |

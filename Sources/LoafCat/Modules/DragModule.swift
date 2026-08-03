@@ -36,6 +36,104 @@ enum DragFeel: String, CaseIterable {
     }
 }
 
+/// How QUICKLY the stretch happens, as distinct from how far it goes.
+///
+/// `DragFeel` is the amplitude — how much the cat deforms. This is the tempo, and they
+/// are genuinely separate tastes: a big slow stretch and a small snappy one are both
+/// coherent, and one control cannot give you either.
+///
+/// The atlas deliberately makes the gesture asymmetric — `rise_rate` 9.0 against
+/// `fall_rate` 1.8, so a yank snaps taut about five times faster than it eases back,
+/// plus `stretch_hold_ms` before it starts easing at all. That asymmetry is what makes
+/// it read as elastic rather than as a slider being dragged, so these presets scale it
+/// rather than flattening it.
+///
+/// Multipliers on the atlas baseline rather than replacements, exactly like `DragFeel`
+/// and for the same reason: a theme that retunes the drag keeps all four meaningful
+/// instead of silently drifting. `normal` is 1.0 by definition — the shipped tuning IS
+/// the normal preset.
+enum StretchTempo: String, CaseIterable {
+    case snappy, quick, normal, languid
+
+    var label: String {
+        switch self {
+        case .snappy: return "Snappy"
+        case .quick: return "Quick"
+        case .normal: return "Normal"
+        case .languid: return "Languid"
+        }
+    }
+
+    /// What the preset does, in the units a person can check against the cat.
+    var detail: String {
+        switch self {
+        case .snappy: return "back almost at once"
+        case .quick: return "about twice as fast as normal"
+        case .normal: return "the shipped tuning"
+        case .languid: return "hangs on to the stretch"
+        }
+    }
+
+    /// The onset. Barely scaled: at 9.0 the rise is already close to instant, so making
+    /// it faster is imperceptible and making it much slower loses the snap that the
+    /// whole gesture is built on.
+    var riseScale: CGFloat {
+        switch self {
+        case .snappy: return 1.25
+        case .quick: return 1.10
+        case .normal: return 1.0
+        case .languid: return 0.85
+        }
+    }
+
+    /// The recovery. This is the one that is actually felt.
+    var fallScale: CGFloat {
+        switch self {
+        case .snappy: return 3.0      // fall_rate 1.8 -> 5.4
+        case .quick: return 1.8       // -> 3.24
+        case .normal: return 1.0      // -> 1.8
+        case .languid: return 0.6     // -> 1.08
+        }
+    }
+
+    /// How long a held stretch stays taut before it begins to ease at all.
+    var holdScale: CGFloat {
+        switch self {
+        case .snappy: return 0.25     // stretch_hold_ms 900 -> 225
+        case .quick: return 0.55      // -> 495
+        case .normal: return 1.0      // -> 900
+        case .languid: return 1.6     // -> 1440
+        }
+    }
+
+    /// The bounce after you let go, which measurement says is most of what "slow to
+    /// unstretch" actually means: the cat snaps home in about 110ms and then wobbles,
+    /// +0.28 at 300ms and +0.03 at 620ms, taking two seconds to be properly still.
+    /// `fall_rate` has nothing to do with that -- this spring does.
+    ///
+    /// Note the direction. `Spring.damping` is the fraction of velocity KEPT each
+    /// frame -- `velocity *= pow(damping, h * 60)` -- so a LOWER number is a more
+    /// damped spring that stops sooner. Reading it as "how damped is it" gets the
+    /// presets exactly backwards, which is a mistake worth only making once.
+    ///
+    /// Clamped in `Tuning`: at 1 the spring never comes to rest at all, and this is a
+    /// user-facing multiplier on a value a theme is free to have already moved.
+    var releaseDampingScale: CGFloat {
+        switch self {
+        case .snappy: return 0.78     // release_damping 0.78 -> 0.61, barely bounces
+        case .quick: return 0.89      // -> 0.69
+        case .normal: return 1.0      // -> 0.78
+        case .languid: return 1.10    // -> 0.86, rings on
+        }
+    }
+
+    static var current: StretchTempo {
+        StretchTempo(
+            rawValue: UserDefaults.standard.string(forKey: "stretchTempo") ?? "normal")
+            ?? .normal
+    }
+}
+
 /// Picking the cat up.
 ///
 /// Three coupled behaviours that share a grab but simulate independently:
@@ -120,8 +218,15 @@ final class DragModule: CatModule {
             speedSmoothing = v("speed_smoothing", speedSmoothing)
             riseRate = v("rise_rate", riseRate)
             fallRate = v("fall_rate", fallRate)
+            let tempo = StretchTempo.current
+            riseRate *= tempo.riseScale
+            fallRate *= tempo.fallScale
+            stretchHoldMs *= tempo.holdScale
             releaseStiffness = v("release_stiffness", releaseStiffness)
             releaseDamping = v("release_damping", releaseDamping)
+            // After the atlas read, and clamped: damping is a multiplier on a value
+            // that must stay under 1, or the release spring never comes to rest.
+            releaseDamping = max(0.35, min(releaseDamping * tempo.releaseDampingScale, 0.97))
             releaseVelocityGain = v("release_velocity_gain", releaseVelocityGain)
             releaseSettleEps = v("release_settle_eps", releaseSettleEps)
             landingSquashGain = v("landing_squash_gain", landingSquashGain)
@@ -516,6 +621,13 @@ private final class Demo {
     private var minSquash: CGFloat = 1
     private var maxLean: CGFloat = 0
 
+    // How long the stretch takes to let go, which is the ONLY thing the stretch tempo
+    // presets change. The peaks above are amplitudes and are identical across all four
+    // presets by design, so without this the demo cannot tell the presets apart -- and
+    // a comparison that cannot fail is not one.
+    private var releasedAt: CGFloat = 0
+    private var lastLoud: CGFloat = 0
+
     private let grabAt = CGPoint(x: 24, y: 36)
     private let holdSeconds: CGFloat = 0.80
     private let shakeAmp: CGFloat = 40
@@ -553,6 +665,7 @@ private final class Demo {
         }
         if !released, t > shakeEnd {
             released = true
+            releasedAt = t
             print("# demo: release")
             m.mouseUp(at: grabAt)
         }
@@ -563,6 +676,12 @@ private final class Demo {
         let s = m.debugState
         maxStretch = max(maxStretch, s.stretch)
         minStretch = min(minStretch, s.stretch)
+        // When the stretch channel goes quiet, which is what the tempo presets move and
+        // what the peaks above cannot show -- they are amplitudes, and the presets scale
+        // rates. Measured as the LAST frame that was still visibly moving rather than
+        // the first quiet one, because the recovery bounces and an early sample sits in
+        // a trough. The settle line below is the pendulum, which is a different spring.
+        if released, abs(s.stretch) > 0.02 { lastLoud = t }
         maxAngle = max(maxAngle, abs(s.angleDeg))
         maxDrop = max(maxDrop, s.dropPx)
         minSquash = min(minSquash, s.squash)
@@ -594,9 +713,10 @@ private final class Demo {
                 print("# demo: residual non-zero frames after settle: \(residualBreaches)")
                 print(String(
                     format: "# demo: peaks stretch=+%.4f/%.4f angle=%.3fdeg dropPx=%.2f "
-                          + "squash=%.4f leanPx=%.2f",
+                          + "squash=%.4f leanPx=%.2f quietMs=%.0f",
                     Double(maxStretch), Double(minStretch), Double(maxAngle),
-                    Double(maxDrop), Double(minSquash), Double(maxLean)))
+                    Double(maxDrop), Double(minSquash), Double(maxLean),
+                    Double(max(0, (lastLoud - releasedAt) * 1000))))
                 print(residualBreaches == 0
                       ? "# demo: PASS -- came to rest and stayed there"
                       : "# demo: FAIL -- still moving after settle")

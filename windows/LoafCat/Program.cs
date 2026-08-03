@@ -552,6 +552,12 @@ public sealed class CatController : ISettingsHost
         Reload();   // modules re-read their tuning when the rig is rebuilt
     }
 
+    public void ApplyStretchTempo(StretchTempo tempo)
+    {
+        Prefs.Set("stretchTempo", tempo.Raw());
+        Reload();
+    }
+
     public void CentreCat() => _window.Centre();
 
     public void SetCatVisible(bool visible)

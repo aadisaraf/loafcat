@@ -423,6 +423,11 @@ extension CatController: SettingsHost {
         reload()   // modules re-read their tuning when the rig is rebuilt
     }
 
+    func apply(stretchTempo: StretchTempo) {
+        UserDefaults.standard.set(stretchTempo.rawValue, forKey: "stretchTempo")
+        reload()
+    }
+
     func centreCat() { centre() }
 
     var isCatVisible: Bool { catVisible }

@@ -218,7 +218,10 @@ entry points real mouse events use, and fails the build if the cat has not come
 completely to rest three seconds after release.
 
 Both builds print their peak values at the end, which is what makes the physics
-comparable across the port. Measured, same drag feel (`normal`), macOS run three times
+comparable across the port. The line also carries `quietMs` — how long after release the
+stretch is still visibly moving. That one exists because the stretch tempo presets scale
+*rates* while every other number on the line is an *amplitude*, so without it all four
+presets produce an identical peaks line and the comparison could not fail. Measured, same drag feel (`normal`), macOS run three times
 against one Windows CI run:
 
 | | peak stretch | landing | swing | hang px | squash | lean px |

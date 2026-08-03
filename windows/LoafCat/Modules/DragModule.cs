@@ -52,6 +52,115 @@ public static class DragFeelExtensions
     public static string Raw(this DragFeel f) => f.ToString().ToLowerInvariant();
 }
 
+/// How QUICKLY the stretch happens, as distinct from how far it goes.
+///
+/// `DragFeel` is the amplitude — how much the cat deforms. This is the tempo, and they
+/// are genuinely separate tastes: a big slow stretch and a small snappy one are both
+/// coherent, and one control cannot give you either.
+///
+/// The atlas deliberately makes the gesture asymmetric — `rise_rate` 9.0 against
+/// `fall_rate` 1.8, so a yank snaps taut about five times faster than it eases back,
+/// plus `stretch_hold_ms` before it starts easing at all. That asymmetry is what makes
+/// it read as elastic rather than as a slider being dragged, so these presets scale it
+/// rather than flattening it.
+public enum StretchTempo
+{
+    Snappy,
+    Quick,
+    Normal,
+    Languid,
+}
+
+public static class StretchTempoExtensions
+{
+    public static string Label(this StretchTempo t) => t switch
+    {
+        StretchTempo.Snappy => "Snappy",
+        StretchTempo.Quick => "Quick",
+        StretchTempo.Normal => "Normal",
+        StretchTempo.Languid => "Languid",
+        _ => "Normal",
+    };
+
+    /// What the preset does, in the units a person can check against the cat.
+    public static string Detail(this StretchTempo t) => t switch
+    {
+        StretchTempo.Snappy => "back almost at once",
+        StretchTempo.Quick => "about twice as fast as normal",
+        StretchTempo.Normal => "the shipped tuning",
+        StretchTempo.Languid => "hangs on to the stretch",
+        _ => "",
+    };
+
+    /// Multipliers on the atlas baseline rather than replacements, exactly like
+    /// DragFeel and for the same reason: a theme that retunes the drag keeps all four
+    /// meaningful instead of silently drifting. Normal is 1.0 by definition — the
+    /// shipped tuning IS the normal preset.
+
+    /// The onset. Barely scaled: at 9.0 the rise is already close to instant, so making
+    /// it faster is imperceptible and making it much slower loses the snap the whole
+    /// gesture is built on.
+    public static double RiseScale(this StretchTempo t) => t switch
+    {
+        StretchTempo.Snappy => 1.25,
+        StretchTempo.Quick => 1.10,
+        StretchTempo.Normal => 1.0,
+        StretchTempo.Languid => 0.85,
+        _ => 1.0,
+    };
+
+    /// The recovery. This is the one that is actually felt.
+    public static double FallScale(this StretchTempo t) => t switch
+    {
+        StretchTempo.Snappy => 3.0,      // fall_rate 1.8 -> 5.4
+        StretchTempo.Quick => 1.8,       // -> 3.24
+        StretchTempo.Normal => 1.0,      // -> 1.8
+        StretchTempo.Languid => 0.6,     // -> 1.08
+        _ => 1.0,
+    };
+
+    /// How long a held stretch stays taut before it begins to ease at all.
+    public static double HoldScale(this StretchTempo t) => t switch
+    {
+        StretchTempo.Snappy => 0.25,     // stretch_hold_ms 900 -> 225
+        StretchTempo.Quick => 0.55,      // -> 495
+        StretchTempo.Normal => 1.0,      // -> 900
+        StretchTempo.Languid => 1.6,     // -> 1440
+        _ => 1.0,
+    };
+
+    /// The bounce after you let go, which measurement says is most of what "slow to
+    /// unstretch" actually means: the cat snaps home in about 110ms and then wobbles,
+    /// +0.28 at 300ms and +0.03 at 620ms, taking two seconds to be properly still.
+    /// fall_rate has nothing to do with that -- this spring does.
+    ///
+    /// Note the direction. Spring.Damping is the fraction of velocity KEPT each frame
+    /// -- velocity *= pow(damping, h * 60) -- so a LOWER number is a more damped spring
+    /// that stops sooner. Reading it as "how damped is it" gets the presets exactly
+    /// backwards, which is a mistake worth only making once.
+    public static double ReleaseDampingScale(this StretchTempo t) => t switch
+    {
+        StretchTempo.Snappy => 0.78,     // release_damping 0.78 -> 0.61, barely bounces
+        StretchTempo.Quick => 0.89,      // -> 0.69
+        StretchTempo.Normal => 1.0,      // -> 0.78
+        StretchTempo.Languid => 1.10,    // -> 0.86, rings on
+        _ => 1.0,
+    };
+
+    public static readonly StretchTempo[] All =
+        [StretchTempo.Snappy, StretchTempo.Quick, StretchTempo.Normal, StretchTempo.Languid];
+
+    public static StretchTempo Current =>
+        Enum.TryParse(Prefs.GetString("stretchTempo", "normal"), ignoreCase: true,
+                      out StretchTempo t)
+            ? t
+            : StretchTempo.Normal;
+
+    /// Lower-case, matching the Swift enum's raw values, so the two builds write the
+    /// same string into their settings.
+    public static string Raw(this StretchTempo t) => t.ToString().ToLowerInvariant();
+}
+
 /// Picking the cat up.
 ///
 /// Three coupled behaviours that share a grab but simulate independently:
@@ -135,8 +244,16 @@ public sealed class DragModule : ICatModule
             SpeedSmoothing = V("speed_smoothing", SpeedSmoothing);
             RiseRate = V("rise_rate", RiseRate);
             FallRate = V("fall_rate", FallRate);
+            var tempo = StretchTempoExtensions.Current;
+            RiseRate *= tempo.RiseScale();
+            FallRate *= tempo.FallScale();
+            StretchHoldMs *= tempo.HoldScale();
             ReleaseStiffness = V("release_stiffness", ReleaseStiffness);
             ReleaseDamping = V("release_damping", ReleaseDamping);
+            // After the atlas read, and clamped: damping is a multiplier on a value that
+            // must stay under 1, or the release spring never comes to rest.
+            ReleaseDamping = Math.Max(0.35,
+                Math.Min(ReleaseDamping * tempo.ReleaseDampingScale(), 0.97));
             ReleaseVelocityGain = V("release_velocity_gain", ReleaseVelocityGain);
             ReleaseSettleEps = V("release_settle_eps", ReleaseSettleEps);
             LandingSquashGain = V("landing_squash_gain", LandingSquashGain);
@@ -561,10 +678,23 @@ internal sealed class DragDemo
     private double _maxStretch, _minStretch, _maxAngle, _maxDrop, _maxLean;
     private double _minSquash = 1;
 
+    // How long the stretch takes to let go, which is the ONLY thing the stretch tempo
+    // presets change. The peaks above are amplitudes and are identical across all four
+    // presets by design, so without this the demo cannot tell the presets apart -- and
+    // a comparison that cannot fail is not one.
+    private double _releasedAt;
+    private double _lastLoud;
+
     private void Track(DragModule.DebugState s)
     {
         _maxStretch = Math.Max(_maxStretch, s.Stretch);
         _minStretch = Math.Min(_minStretch, s.Stretch);
+        // When the stretch channel goes quiet, which is what the tempo presets move and
+        // what the peaks above cannot show -- they are amplitudes, and the presets scale
+        // rates. Measured as the LAST frame that was still visibly moving rather than
+        // the first quiet one, because the recovery bounces and an early sample sits in
+        // a trough. The settle line is the pendulum, which is a different spring.
+        if (_released && Math.Abs(s.Stretch) > 0.02) _lastLoud = _t;
         _maxAngle = Math.Max(_maxAngle, Math.Abs(s.AngleDeg));
         _maxDrop = Math.Max(_maxDrop, s.DropPx);
         _minSquash = Math.Min(_minSquash, s.Squash);
@@ -574,7 +704,8 @@ internal sealed class DragDemo
     private string Peaks() =>
         $"# demo: peaks stretch=+{_maxStretch:F4}/{_minStretch:F4} " +
         $"angle={_maxAngle:F3}deg dropPx={_maxDrop:F2} " +
-        $"squash={_minSquash:F4} leanPx={_maxLean:F2}";
+        $"squash={_minSquash:F4} leanPx={_maxLean:F2} " +
+        $"quietMs={Math.Max(0, (_lastLoud - _releasedAt) * 1000):F0}";
 
     private static readonly Pt GrabAt = new(24, 36);
     private const double HoldSeconds = 0.80;
@@ -617,6 +748,7 @@ internal sealed class DragDemo
         if (!_released && _t > shakeEnd)
         {
             _released = true;
+            _releasedAt = _t;
             Log.Line("# demo: release");
             m.MouseUp(GrabAt);
         }

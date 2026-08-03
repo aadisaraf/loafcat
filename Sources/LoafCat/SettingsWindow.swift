@@ -15,6 +15,7 @@ protocol SettingsHost: AnyObject {
     func apply(theme: String)
     func apply(scale: CGFloat)
     func apply(dragFeel: DragFeel)
+    func apply(stretchTempo: StretchTempo)
     func centreCat()
     var wellnessSuite: WellnessSuite? { get }
 
@@ -77,6 +78,7 @@ final class SettingsWindowController: NSWindowController {
             CatPane(host: host),
             WellnessPane(host: host),
             AgentPane(host: host),
+            AdvancedPane(host: host),
             AboutPane(host: host),
         ] as [SettingsPane] {
             // Built explicitly rather than letting addChild synthesise one: the tab
@@ -634,6 +636,60 @@ final class AgentPane: SettingsPane {
 }
 
 // MARK: - About
+
+/// The knobs that are real but that most people should never have to find.
+///
+/// A separate pane rather than more controls in Cat, because Cat is the pane someone
+/// opens on their first run and every extra row there is one more decision asked of
+/// somebody who only wanted a cat. Nothing in here changes what the app does, only how
+/// it moves.
+final class AdvancedPane: SettingsPane {
+    override var paneTitle: String { "Advanced" }
+    override var paneSymbol: String { "slider.horizontal.3" }
+
+    private let tempo = NSSegmentedControl()
+    private let tempoDetail = NSTextField(labelWithString: "")
+
+    override func populate() {
+        stack.addArrangedSubview(heading("Stretch"))
+
+        tempo.segmentCount = StretchTempo.allCases.count
+        for (i, t) in StretchTempo.allCases.enumerated() {
+            tempo.setLabel(t.label, forSegment: i)
+        }
+        tempo.target = self
+        tempo.action = #selector(pickTempo)
+        stack.addArrangedSubview(row("Tempo", tempo))
+        tempoDetail.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(tempoDetail)
+        stack.addArrangedSubview(caption(
+            "How quickly the stretch comes on and goes away — separate from how FAR it "
+            + "goes, which is Drag over in Cat. A big slow stretch and a small snappy "
+            + "one are both coherent, and one control cannot give you either.\n\n"
+            + "The gesture is deliberately lopsided: it snaps taut about five times "
+            + "faster than it eases back, and holds the stretch for a moment first. "
+            + "That is what makes it read as elastic rather than as a slider being "
+            + "dragged, so these scale the lopsidedness rather than flattening it."))
+
+        stack.addArrangedSubview(divider())
+        stack.addArrangedSubview(caption(
+            "Everything here is a multiplier on the numbers in the theme's cat.json, so "
+            + "a theme that retunes the drag keeps all four presets meaningful. Normal "
+            + "is 1.0 by definition — the shipped tuning is the normal preset."))
+    }
+
+    override func refresh() {
+        let current = StretchTempo.current
+        tempo.selectedSegment = StretchTempo.allCases.firstIndex(of: current) ?? 0
+        tempoDetail.stringValue = "Unstretches \(current.detail)."
+    }
+
+    @objc private func pickTempo() {
+        let picked = StretchTempo.allCases[max(tempo.selectedSegment, 0)]
+        host.apply(stretchTempo: picked)
+        tempoDetail.stringValue = "Unstretches \(picked.detail)."
+    }
+}
 
 final class AboutPane: SettingsPane {
     private static let repo = "https://github.com/aadisaraf/loafcat"
