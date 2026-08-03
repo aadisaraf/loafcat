@@ -22,6 +22,7 @@ public interface ISettingsHost
     void ApplyScale(double scale);
     void ApplyDragFeel(DragFeel feel);
     void ApplyStretchTempo(StretchTempo tempo);
+    void ApplyHeatSensitivity(HeatSensitivity sensitivity);
     void CentreCat();
     WellnessSuite? WellnessSuite { get; }
 
@@ -777,6 +778,8 @@ internal sealed class AdvancedPane(ISettingsHost host) : SettingsPane(host)
     private readonly ComboBox _tempo =
         new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
     private Control _tempoDetail = null!;
+    private readonly ComboBox _heat =
+        new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 130 };
     private bool _updating;
 
     public override void Build()
@@ -804,10 +807,30 @@ internal sealed class AdvancedPane(ISettingsHost host) : SettingsPane(host)
             + "these scale the lopsidedness rather than flattening it."));
 
         Add(Divider());
+        Add(Heading("Heat"));
+
+        foreach (var h in HeatSensitivityExtensions.All) _heat.Items.Add(h.Label());
+        _heat.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updating || _heat.SelectedIndex < 0) return;
+            Host.ApplyHeatSensitivity(HeatSensitivityExtensions.All[_heat.SelectedIndex]);
+        };
+        Add(Row("Sensitivity", _heat));
+        Add(Caption(
+            "How much typing it takes before the cat starts steaming. The shipped "
+            + "tuning reaches a fully burning cat at about nine and a half keystrokes a "
+            + "second, sustained over a second and a half \u2014 brisk, but not a record attempt. "
+            + "Patient is roughly where this sat before it was retuned.\n\n"
+            + "This scales the whole range at once rather than just the threshold, so "
+            + "every preset keeps a band where the cat kneads at your typing without "
+            + "reddening. Steam always arrives before the colour does."));
+
+        Add(Divider());
         Add(Caption(
             "Everything here is a multiplier on the numbers in the theme's cat.json, so a "
-            + "theme that retunes the drag keeps all four presets meaningful. Normal is "
-            + "1.0 by definition \u2014 the shipped tuning is the normal preset."));
+            + "theme that retunes the drag or the overheating keeps every preset "
+            + "meaningful. Normal is 1.0 by definition \u2014 the shipped tuning is the "
+            + "normal preset."));
     }
 
     public override void Refresh()
@@ -818,6 +841,8 @@ internal sealed class AdvancedPane(ISettingsHost host) : SettingsPane(host)
             var current = StretchTempoExtensions.Current;
             _tempo.SelectedIndex = Array.IndexOf(StretchTempoExtensions.All, current);
             _tempoDetail.Text = $"Unstretches {current.Detail()}.";
+            _heat.SelectedIndex = Array.IndexOf(HeatSensitivityExtensions.All,
+                                                HeatSensitivityExtensions.Current);
         }
         finally { _updating = false; }
     }

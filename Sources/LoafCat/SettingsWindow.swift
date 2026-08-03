@@ -16,6 +16,7 @@ protocol SettingsHost: AnyObject {
     func apply(scale: CGFloat)
     func apply(dragFeel: DragFeel)
     func apply(stretchTempo: StretchTempo)
+    func apply(heatSensitivity: HeatSensitivity)
     func centreCat()
     var wellnessSuite: WellnessSuite? { get }
 
@@ -652,6 +653,7 @@ final class AdvancedPane: SettingsPane {
 
     private let tempo = NSSegmentedControl()
     private let tempoDetail = NSTextField(labelWithString: "")
+    private let heat = NSSegmentedControl()
 
     override func populate() {
         stack.addArrangedSubview(heading("Stretch"))
@@ -675,16 +677,42 @@ final class AdvancedPane: SettingsPane {
             + "dragged, so these scale the lopsidedness rather than flattening it."))
 
         stack.addArrangedSubview(divider())
+        stack.addArrangedSubview(heading("Heat"))
+
+        heat.segmentCount = HeatSensitivity.allCases.count
+        for (i, h) in HeatSensitivity.allCases.enumerated() {
+            heat.setLabel(h.label, forSegment: i)
+        }
+        heat.target = self
+        heat.action = #selector(pickHeat)
+        stack.addArrangedSubview(row("Sensitivity", heat))
+        stack.addArrangedSubview(caption(
+            "How much typing it takes before the cat starts steaming. The shipped "
+            + "tuning reaches a fully burning cat at about nine and a half keystrokes a "
+            + "second, sustained over a second and a half — brisk, but not a record attempt. "
+            + "Patient is roughly where this sat before it was retuned.\n\n"
+            + "This scales the whole range at once rather than just the threshold, so "
+            + "every preset keeps a band where the cat kneads at your typing without "
+            + "reddening. Steam always arrives before the colour does."))
+
+        stack.addArrangedSubview(divider())
         stack.addArrangedSubview(caption(
             "Everything here is a multiplier on the numbers in the theme's cat.json, so "
-            + "a theme that retunes the drag keeps all four presets meaningful. Normal "
-            + "is 1.0 by definition — the shipped tuning is the normal preset."))
+            + "a theme that retunes the drag or the overheating keeps every preset "
+            + "meaningful. Normal is 1.0 by definition — the shipped tuning is the "
+            + "normal preset."))
     }
 
     override func refresh() {
         let current = StretchTempo.current
         tempo.selectedSegment = StretchTempo.allCases.firstIndex(of: current) ?? 0
         tempoDetail.stringValue = "Unstretches \(current.detail)."
+        heat.selectedSegment = HeatSensitivity.allCases
+            .firstIndex(of: HeatSensitivity.current) ?? 0
+    }
+
+    @objc private func pickHeat() {
+        host.apply(heatSensitivity: HeatSensitivity.allCases[max(heat.selectedSegment, 0)])
     }
 
     @objc private func pickTempo() {

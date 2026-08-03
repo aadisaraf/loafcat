@@ -601,6 +601,12 @@ public sealed class CatController : ISettingsHost
         Reload();
     }
 
+    public void ApplyHeatSensitivity(HeatSensitivity sensitivity)
+    {
+        Prefs.Set("heatSensitivity", sensitivity.Raw());
+        Reload();
+    }
+
     public void CentreCat() => _window.Centre();
 
     public void SetCatVisible(bool visible)

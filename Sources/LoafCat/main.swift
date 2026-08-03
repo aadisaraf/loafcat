@@ -449,6 +449,11 @@ extension CatController: SettingsHost {
         reload()
     }
 
+    func apply(heatSensitivity: HeatSensitivity) {
+        UserDefaults.standard.set(heatSensitivity.rawValue, forKey: "heatSensitivity")
+        reload()
+    }
+
     func centreCat() { centre() }
 
     var isCatVisible: Bool { catVisible }
