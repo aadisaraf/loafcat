@@ -157,10 +157,16 @@ public static class SelfInstall
         // browser attached to the download — otherwise the installed copy would raise
         // SmartScreen again every single time it started, having already been allowed
         // to run once.
+        //
+        // Written beside the target and moved onto it, so 66MB of copying cannot be
+        // interrupted into a half an executable sitting at the path the Start menu
+        // entry points at. A crash leaves the staging file, which the next run
+        // overwrites.
+        string staging = Target + ".new";
         var source = new FileInfo(self);
         long total = Math.Max(source.Length, 1);
         using (var src = source.OpenRead())
-        using (var dst = File.Create(Target))
+        using (var dst = File.Create(staging))
         {
             // 1MB at a time. Small enough that the bar moves on a 66MB executable,
             // large enough that reporting is not what the copy spends its time on.
@@ -174,6 +180,7 @@ public static class SelfInstall
                 progress?.Report(new Step((int)(done * 100 / total), "Copying loafcat…"));
             }
         }
+        File.Move(staging, Target, overwrite: true);
 
         progress?.Report(new Step(100, "Adding it to the Start menu…"));
         // The Start menu entry is what makes loafcat answer to its name in the search

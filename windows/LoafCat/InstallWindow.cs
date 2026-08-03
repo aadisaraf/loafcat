@@ -85,6 +85,7 @@ internal sealed class InstallForm : Form
     private readonly Button _primary = new();
     private readonly Button _secondary = new();
     private Action _primaryAction = () => { };
+    private bool _installing;
 
     /// False only when installing failed, which is the one case where the copy sitting
     /// in Downloads should carry on and be the cat. An app that refuses to start
@@ -171,8 +172,10 @@ internal sealed class InstallForm : Form
         _bar.Visible = true;
         _primary.Visible = false;
         _secondary.Visible = false;
-        // No closing it mid-copy: the file being written is the one the Start menu
-        // entry is about to point at.
+        // No closing it mid-copy. Closing this window ends the process doing the
+        // copying, and Alt+F4 gets past a missing close button, so OnFormClosing
+        // refuses as well.
+        _installing = true;
         ControlBox = false;
 
         // Constructed here, on the UI thread, which is what makes Progress<T> post its
@@ -190,17 +193,39 @@ internal sealed class InstallForm : Form
             {
                 failure = e;
             }
-            BeginInvoke(() =>
+            try
             {
-                ControlBox = true;
-                if (failure is null) ShowDone(); else ShowFailure(failure);
-            });
+                BeginInvoke(() =>
+                {
+                    _installing = false;
+                    ControlBox = true;
+                    if (failure is null) ShowDone(); else ShowFailure(failure);
+                });
+            }
+            catch (Exception e) when (e is ObjectDisposedException or InvalidOperationException)
+            {
+                // The window went while the copy was in flight. The install either
+                // finished or did not; either way there is nobody left to tell.
+                _installing = false;
+            }
         })
         {
             IsBackground = true,
             Name = "loafcat.install",
         };
         worker.Start();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        // Ending the process mid-copy is the one way to arrive at a half-written
+        // executable, and this is the process doing the copying.
+        if (_installing && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            return;
+        }
+        base.OnFormClosing(e);
     }
 
     private void Report(SelfInstall.Step step)

@@ -212,7 +212,8 @@ jobs:
             Write-Host "--- $why ---"
             $p = Start-Process -FilePath $from -ArgumentList "--install-unattended" `
                    -WorkingDirectory (Split-Path $from) -PassThru
-            if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "$why: it never handed over" }
+            # ${why} braced, because "$why:" parses as a scope-qualified variable.
+            if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "${why}: it never handed over" }
             Start-Sleep -Seconds 5
           }
 
