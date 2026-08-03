@@ -25,7 +25,21 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Panic(e.ExceptionObject);
         try
         {
-            return Run(args);
+            int code = Run(args);
+            // Outside Run, and that is the whole point: `using var mutex` inside it has
+            // been disposed by now, so the copy started here can actually take the
+            // single-instance name instead of bouncing off it. It runs the same binary
+            // we are, which applies the staged update before it opens a window.
+            if (RestartAfterExit && Environment.ProcessPath is { } self)
+            {
+                Log.Line("update  restarting to apply it");
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(self)
+                {
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(self)!,
+                });
+            }
+            return code;
         }
         catch (Exception e)
         {
@@ -33,6 +47,10 @@ internal static class Program
             return 1;
         }
     }
+
+    /// Set when a staged update should be applied without waiting for the user to
+    /// happen to start the app again. Read by Main after Run has returned.
+    internal static bool RestartAfterExit;
 
     private static void Panic(object? error)
     {
@@ -205,11 +223,22 @@ public sealed class CatController : ISettingsHost
 
         // Announced through the tray rather than the cat: an update is news about the
         // app, not something the cat did, and the speech bubble is the cat's voice.
-        _updater = new Updater(message => PostToUi(() =>
-        {
-            _tray.Notify("loafcat", message);
-            _tray.Rebuild();
-        }));
+        _updater = new Updater(
+            message => PostToUi(() =>
+            {
+                _tray.Notify("loafcat", message);
+                _tray.Rebuild();
+            }),
+            // Not `Process.Start` from here. The relaunch has to happen after this
+            // process has let go of the single-instance mutex, or the copy it starts
+            // finds the name still held, decides a cat is already running, and quietly
+            // exits — leaving the update staged and the app shut down. So: ask for a
+            // clean exit, and Main starts the new one on the way out. See Program.Main.
+            () => PostToUi(() =>
+            {
+                Program.RestartAfterExit = true;
+                Application.Exit();
+            }));
         _tray.BindUpdater(() => _updater);
         _updater.Start();
 
@@ -536,6 +565,8 @@ public sealed class CatController : ISettingsHost
         _ => $"loafcat {Branding.Version}.",
     };
 
+    public int DownloadPercent => _updater?.DownloadPercent ?? -1;
+
     public async Task CheckForUpdates(Action<string> report)
     {
         if (_updater is not { } updater) { report("Updates are unavailable."); return; }
@@ -567,6 +598,12 @@ public sealed class CatController : ISettingsHost
     public void ApplyStretchTempo(StretchTempo tempo)
     {
         Prefs.Set("stretchTempo", tempo.Raw());
+        Reload();
+    }
+
+    public void ApplyHeatSensitivity(HeatSensitivity sensitivity)
+    {
+        Prefs.Set("heatSensitivity", sensitivity.Raw());
         Reload();
     }
 

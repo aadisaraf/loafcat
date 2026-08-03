@@ -124,9 +124,28 @@ final class CatController: NSObject, NSApplicationDelegate {
 
         // Announced through the menu bar rather than the cat: an update is news about
         // the app, not something the cat did, and the bubble is the cat's voice.
-        updater = Updater { [weak self] message in
-            self?.notifyAboutUpdate(message)
-        }
+        updater = Updater(
+            announce: { [weak self] message in
+                self?.notifyAboutUpdate(message)
+            },
+            // Terminate first, relaunch second, and never the other way round: `open`
+            // on a bundle this process still owns is a request to activate the copy
+            // already running, not to start a new one. So a detached shell waits for
+            // this pid to go away and then opens the app — which applies the staged
+            // update before it puts anything on screen, exactly as a manual restart
+            // would. The path is the bundle's, and staging never moves the bundle.
+            restart: { [weak self] in
+                let path = Bundle.main.bundlePath
+                let pid = ProcessInfo.processInfo.processIdentifier
+                let sh = Process()
+                sh.executableURL = URL(fileURLWithPath: "/bin/sh")
+                sh.arguments = ["-c",
+                    "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; "
+                    + "open -n \"\(path)\""]
+                try? sh.run()
+                _ = self
+                NSApp.terminate(nil)
+            })
         updater?.start()
 
         // One 120Hz timer drives everything: cursor tracking, click-through
@@ -390,6 +409,8 @@ extension CatController: SettingsHost {
         return "loafcat \(Branding.version)."
     }
 
+    var downloadPercent: Int { updater?.downloadPercent ?? -1 }
+
     func checkForUpdates(_ report: @escaping (String) -> Void) {
         guard let updater else { report("Updates are unavailable."); return }
         updater.check(quiet: false) { [weak self] in
@@ -425,6 +446,11 @@ extension CatController: SettingsHost {
 
     func apply(stretchTempo: StretchTempo) {
         UserDefaults.standard.set(stretchTempo.rawValue, forKey: "stretchTempo")
+        reload()
+    }
+
+    func apply(heatSensitivity: HeatSensitivity) {
+        UserDefaults.standard.set(heatSensitivity.rawValue, forKey: "heatSensitivity")
         reload()
     }
 

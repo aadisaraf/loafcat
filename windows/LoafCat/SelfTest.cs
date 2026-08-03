@@ -270,6 +270,48 @@ public static class SelfTest
         Check("garbage is not a valid signature",
             !Updater.VerifySignature([1, 2, 3], [4, 5, 6])
             && !Updater.VerifySignature([1, 2, 3], []), "");
+
+        // A release with nothing this platform can install. This is the shape of the
+        // real v0.1.0 — published months before there was a Windows build, so its only
+        // assets are a .dmg and its checksum — and `/releases/latest` resolves to it for
+        // as long as every newer release is a prerelease.
+        //
+        // Reported by a user as "could not reach GitHub" on a machine whose network was
+        // fine, because a release carrying no matching asset and a request that never
+        // completed were the same `null` by the time anyone looked. Nothing about that
+        // is visible from inside the app: it simply never updates, and says the wrong
+        // reason forever.
+        const string olderRelease = """
+            {"tag_name":"v0.1.0","assets":[
+              {"name":"loafcat-0.1.0.dmg","browser_download_url":"https://x/a.dmg"},
+              {"name":"loafcat-0.1.0.dmg.sha256","browser_download_url":"https://x/a.dmg.sha256"}
+            ]}
+            """;
+        var parsed = Updater.ParseRelease(olderRelease);
+        Check("a release with no Windows download still parses",
+            parsed is { Version: "0.1.0", AssetUrl: null },
+            parsed is null ? "it came back as nothing at all"
+                           : $"version {parsed.Version}, asset {parsed.AssetUrl ?? "none"}");
+
+        // And the answer the app then gives is about versions, not about the network.
+        Check("...and is correctly judged older than what is installed",
+            parsed is not null && !Updater.IsNewer(parsed.Version, "0.2.0"),
+            "so the honest answer is that this build is the latest");
+
+        // The shape that should actually install.
+        var full = Updater.ParseRelease("""
+            {"tag_name":"v9.9.9","assets":[
+              {"name":"loafcat.exe","browser_download_url":"https://x/loafcat.exe"},
+              {"name":"loafcat.exe.sha256","browser_download_url":"https://x/loafcat.exe.sha256"},
+              {"name":"loafcat.exe.sig","browser_download_url":"https://x/loafcat.exe.sig"},
+              {"name":"loafcat-9.9.9-macos.zip","browser_download_url":"https://x/m.zip"}
+            ]}
+            """);
+        Check("a Windows release resolves to all three files",
+            full is { Version: "9.9.9", AssetUrl: not null, ChecksumUrl: not null,
+                      SignatureUrl: not null }
+            && full.AssetUrl.EndsWith("loafcat.exe", StringComparison.Ordinal),
+            full is null ? "nothing parsed" : $"asset {full.AssetUrl}");
     }
 
     /// One 5-second run of the mouse-move stream. `clockSkewMs` is how far

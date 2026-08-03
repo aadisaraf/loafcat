@@ -8,6 +8,46 @@ import AppKit
 /// file, which is what makes the privacy claim structural rather than a promise.
 /// See CLAUDE.md: never reach for a CGEventTap or a global keyboard monitor to make
 /// a reaction here nicer.
+/// How much typing it takes to make the cat steam.
+///
+/// The atlas decides what "a lot of typing" means for a theme; this decides how much of
+/// that a particular person has to do. Multipliers on `overheat.kps_min` and `kps_max`
+/// together, so the SHAPE of the curve is untouched and only the range it spans moves —
+/// which is why every preset still has a band where the cat kneads without reddening.
+///
+/// The same pattern as `DragFeel` and `StretchTempo`, for the same reason: a theme that
+/// retunes overheating keeps all four presets meaningful instead of silently drifting.
+/// `normal` is 1.0 by definition — the shipped tuning IS the normal preset.
+enum HeatSensitivity: String, CaseIterable {
+    case instant, quick, normal, patient
+
+    var label: String {
+        switch self {
+        case .instant: return "Instant"
+        case .quick: return "Quick"
+        case .normal: return "Normal"
+        case .patient: return "Patient"
+        }
+    }
+
+    /// Against the shipped 3.5-to-9.5, these put a fully burning cat at roughly 5.7,
+    /// 7.6, 9.5 and 12.8 keystrokes a second. Patient is about where the whole thing sat
+    /// before it was retuned, which is the point of keeping it.
+    var scale: CGFloat {
+        switch self {
+        case .instant: return 0.60
+        case .quick: return 0.80
+        case .normal: return 1.0
+        case .patient: return 1.35
+        }
+    }
+
+    static var current: HeatSensitivity {
+        HeatSensitivity(rawValue:
+            UserDefaults.standard.string(forKey: "heatSensitivity") ?? "normal") ?? .normal
+    }
+}
+
 final class TypingModule: CatModule, AtlasTuned {
     let id = "typing"
     var tunedGeneration = -1
@@ -60,8 +100,11 @@ final class TypingModule: CatModule, AtlasTuned {
         attack = max(b.f("typing.attack"), 0.001)
         decay = max(b.f("typing.decay"), 0.001)
 
-        kpsMin = b.f("overheat.kps_min")
-        kpsSpan = max(b.f("overheat.kps_max") - kpsMin, 0.001)
+        // Read after the atlas, exactly like the drag presets: the theme's numbers are
+        // the baseline and the preference scales them.
+        let sensitivity = HeatSensitivity.current.scale
+        kpsMin = b.f("overheat.kps_min") * sensitivity
+        kpsSpan = max(b.f("overheat.kps_max") * sensitivity - kpsMin, 0.001)
         curve = b.f("overheat.curve")
         easePerFrame = b.f("overheat.ease_per_frame")
         stateAt = b.f("overheat.state_at")

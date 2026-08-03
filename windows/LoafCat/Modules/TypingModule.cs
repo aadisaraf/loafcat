@@ -7,6 +7,62 @@ namespace LoafCat.Modules;
 /// identity of a key could reach this file. See CLAUDE.md, and the long note at the
 /// top of Interop/InputTelemetry.cs: never reach for a keyboard hook to make a
 /// reaction here nicer.
+/// How much typing it takes to make the cat steam.
+///
+/// The atlas decides what "a lot of typing" means for a theme; this decides how much of
+/// that a particular person has to do. Multipliers on `overheat.kps_min` and `kps_max`
+/// together, so the SHAPE of the curve is untouched and only the range it spans moves --
+/// which is why every preset still has a band where the cat kneads without reddening.
+///
+/// The same pattern as DragFeel and StretchTempo, for the same reason: a theme that
+/// retunes overheating keeps all four presets meaningful instead of silently drifting.
+/// `Normal` is 1.0 by definition -- the shipped tuning IS the normal preset.
+public enum HeatSensitivity
+{
+    Instant,
+    Quick,
+    Normal,
+    Patient,
+}
+
+public static class HeatSensitivityExtensions
+{
+    public static string Label(this HeatSensitivity h) => h switch
+    {
+        HeatSensitivity.Instant => "Instant",
+        HeatSensitivity.Quick => "Quick",
+        HeatSensitivity.Normal => "Normal",
+        HeatSensitivity.Patient => "Patient",
+        _ => "Normal",
+    };
+
+    /// Against the shipped 3.5-to-9.5, these put a fully burning cat at roughly 5.7,
+    /// 7.6, 9.5 and 12.8 keystrokes a second. Patient is about where the whole thing sat
+    /// before it was retuned, which is the point of keeping it.
+    public static double Scale(this HeatSensitivity h) => h switch
+    {
+        HeatSensitivity.Instant => 0.60,
+        HeatSensitivity.Quick => 0.80,
+        HeatSensitivity.Normal => 1.0,
+        HeatSensitivity.Patient => 1.35,
+        _ => 1.0,
+    };
+
+    public static readonly HeatSensitivity[] All =
+        [HeatSensitivity.Instant, HeatSensitivity.Quick, HeatSensitivity.Normal,
+         HeatSensitivity.Patient];
+
+    public static HeatSensitivity Current =>
+        Enum.TryParse(Prefs.GetString("heatSensitivity", "normal"), ignoreCase: true,
+                      out HeatSensitivity h)
+            ? h
+            : HeatSensitivity.Normal;
+
+    /// Lower-case, matching the Swift enum's raw values, so the two builds write the
+    /// same string into their settings.
+    public static string Raw(this HeatSensitivity h) => h.ToString().ToLowerInvariant();
+}
+
 public sealed class TypingModule : ICatModule, IAtlasTuned
 {
     public string Id => "typing";
@@ -61,8 +117,11 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
         _attack = Math.Max(b.F("typing.attack"), 0.001);
         _decay = Math.Max(b.F("typing.decay"), 0.001);
 
-        _kpsMin = b.F("overheat.kps_min");
-        _kpsSpan = Math.Max(b.F("overheat.kps_max") - _kpsMin, 0.001);
+        // Read after the atlas, exactly like the drag presets: the theme's numbers are
+        // the baseline and the preference scales them.
+        double sensitivity = HeatSensitivityExtensions.Current.Scale();
+        _kpsMin = b.F("overheat.kps_min") * sensitivity;
+        _kpsSpan = Math.Max(b.F("overheat.kps_max") * sensitivity - _kpsMin, 0.001);
         _curve = b.F("overheat.curve");
         _easePerFrame = b.F("overheat.ease_per_frame");
         _stateAt = b.F("overheat.state_at");
