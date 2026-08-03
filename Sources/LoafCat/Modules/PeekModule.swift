@@ -367,8 +367,9 @@ final class PeekModule: CatModule, AtlasTuned {
 
         var out = ModuleOutput()
         let toEdge: CGFloat = edge == .right ? 1 : -1
+        let bobY = sin(bobPhase * 2 * .pi) * bobPx * settled
         out.offset.x = toEdge * bodyTuckPx * settled
-        out.offset.y = sin(bobPhase * 2 * .pi) * bobPx * settled
+        out.offset.y = bobY
         stage.headOffset.x -= toEdge * headLeanPx * settled
         stage.headOffset.y -= headRisePx * settled
         // The paw hooked over the edge. An overlay rather than a body part, which
@@ -377,10 +378,26 @@ final class PeekModule: CatModule, AtlasTuned {
         // `bodyOffset` — it stays pinned to the screen edge while the body tucks away
         // behind it. That last one is the whole gag: the cat slides back, the paw
         // does not let go.
+        //
+        // Two things it must NOT do, both of which looked fine in a still and wrong
+        // the moment anything moved:
+        //
+        //   It rides the BOB but not the TUCK. The bob is the cat breathing and the
+        //   paw is attached to the cat, so a paw pinned in y while the body rises and
+        //   falls behind it reads as the cat sliding up and down behind a nail. The
+        //   tuck is the opposite case — that one it must ignore, because the whole
+        //   point is that the body retreats and the grip does not.
+        //
+        //   It appears only once the cat has ARRIVED. Fading it in with `settled`
+        //   tracks the slide, so the paw materialised over the cat's chest out in the
+        //   middle of the screen and travelled to the edge with it — a paw gripping
+        //   nothing at all. It now ramps over the last quarter, by which point the
+        //   edge it is holding is actually there.
         let grip = edge == .right ? "grip_r" : "grip_l"
-        if atlas.overlays[grip] != nil {
-            stage.overlays.append(
-                OverlayInstance(part: grip, offset: .zero, alpha: settled))
+        let gripAlpha = max(0, (settled - 0.75) * 4)
+        if gripAlpha > 0.001, atlas.overlays[grip] != nil {
+            stage.overlays.append(OverlayInstance(
+                part: grip, offset: CGPoint(x: 0, y: bobY), alpha: gripAlpha))
         }
         // The paw on the side still showing lifts to the edge, as if holding on to
         // it. The other one is behind the screen edge and would be lifting in

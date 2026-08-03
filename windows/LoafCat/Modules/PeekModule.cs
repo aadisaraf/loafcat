@@ -384,8 +384,9 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
 
         var outv = new ModuleOutput();
         double toEdge = edgeNow == PeekEdge.Right ? 1 : -1;
+        double bobY = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
         outv.Offset.X = toEdge * _bodyTuckPx * _settled;
-        outv.Offset.Y = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
+        outv.Offset.Y = bobY;
         stage.HeadOffset.X -= toEdge * _headLeanPx * _settled;
         stage.HeadOffset.Y -= _headRisePx * _settled;
         // The paw hooked over the edge. An overlay rather than a body part, which gets
@@ -393,10 +394,26 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         // be faded in with the park, and — because overlays do not take `BodyOffset` —
         // it stays pinned to the screen edge while the body tucks away behind it. That
         // last one is the whole gag: the cat slides back, the paw does not let go.
+        //
+        // Two things it must NOT do, both of which looked fine in a still and wrong the
+        // moment anything moved:
+        //
+        //   It rides the BOB but not the TUCK. The bob is the cat breathing and the paw
+        //   is attached to the cat, so a paw pinned in y while the body rises and falls
+        //   behind it reads as the cat sliding up and down behind a nail. The tuck is
+        //   the opposite case — that one it must ignore, because the whole point is that
+        //   the body retreats and the grip does not.
+        //
+        //   It appears only once the cat has ARRIVED. Fading it in with `_settled`
+        //   tracks the slide, so the paw materialised over the cat's chest out in the
+        //   middle of the screen and travelled to the edge with it — a paw gripping
+        //   nothing at all. It now ramps over the last quarter, by which point the edge
+        //   it is holding is actually there.
         string grip = edgeNow == PeekEdge.Right ? "grip_r" : "grip_l";
-        if (atlas.Overlays.ContainsKey(grip))
+        double gripAlpha = Math.Max(0, (_settled - 0.75) * 4);
+        if (gripAlpha > 0.001 && atlas.Overlays.ContainsKey(grip))
         {
-            stage.Overlays.Add(new OverlayInstance(grip, Pt.Zero, _settled));
+            stage.Overlays.Add(new OverlayInstance(grip, new Pt(0, bobY), gripAlpha));
         }
         // The paw on the side still showing lifts to the edge, as if holding on to it.
         // The other one is behind the screen edge and would be lifting in private.
