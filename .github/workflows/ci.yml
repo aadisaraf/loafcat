@@ -124,22 +124,114 @@ jobs:
           }
           if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
 
-      # The other half of what gets published: one file, with no assets\ beside it,
-      # which has to unpack its own art out of itself before it can do anything. That
-      # is the download most people take, and until now nothing ran it -- the staged
-      # folder above always had the art on disk, so the embedded path was compiled and
-      # never executed. --selftest returns before SelfInstall, so this cannot install
-      # anything on the runner.
+      # The other half of what gets published: one file, alone in a folder, which has
+      # to unpack its own art out of itself before it can do anything. That is the
+      # download most people take.
+      #
+      # It runs from a directory of its own AND with the working directory set to that
+      # directory. Both halves are load-bearing: Assets.Root() looks beside the
+      # executable and then in the current directory, and this step used to start the
+      # exe from the repo -- where `assets\` is the current directory, so the on-disk
+      # branch answered and the embedded one this exists to prove was never reached.
+      # --selftest returns before SelfInstall, so this step still cannot install.
       - name: The one-file download is a complete app
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist/loafcat.exe | Select-Object -First 1
-          if (-not $exe) { throw "build.ps1 did not publish dist/loafcat.exe" }
+          $src = Get-ChildItem dist/loafcat.exe | Select-Object -First 1
+          if (-not $src) { throw "build.ps1 did not publish dist/loafcat.exe" }
+          $downloads = Join-Path $env:RUNNER_TEMP "downloads"
+          New-Item -ItemType Directory -Path $downloads -Force | Out-Null
+          $exe = Join-Path $downloads "loafcat.exe"
+          Copy-Item -LiteralPath $src.FullName -Destination $exe -Force
+
           $out = Join-Path $env:RUNNER_TEMP "bare.out"
-          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+          $p = Start-Process -FilePath $exe -ArgumentList "--selftest" `
+                 -WorkingDirectory $downloads `
                  -PassThru -NoNewWindow -Wait -RedirectStandardOutput $out
           Get-Content $out -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { throw "the bare executable failed its self-test" }
+
+          $unpacked = Get-ChildItem (Join-Path $env:LOCALAPPDATA "loafcat") `
+                        -Filter "payload-*" -Directory -ErrorAction SilentlyContinue
+          if (-not $unpacked) { throw "it never unpacked its embedded art" }
+          Write-Host "unpacked $($unpacked[0].FullName)"
+
+      # Installing itself, for real, on a real Windows machine.
+      #
+      # This is the one thing a downloaded loafcat.exe does that no other route does,
+      # and every check above deliberately returns before it, so until now not one line
+      # of SelfInstall had ever run anywhere. It is also the step most likely to be
+      # reported as broken, because when it works its entire visible outcome is a file
+      # appearing somewhere the user was not looking -- and when it silently declines,
+      # that looks exactly the same.
+      #
+      # Two scenarios, because they take different branches and only the first one is
+      # the happy path anybody thought about: a clean machine, and then the same
+      # download run a second time while the copy it installed is still running.
+      - name: A downloaded exe installs itself
+        shell: pwsh
+        run: |
+          $root      = Join-Path $env:LOCALAPPDATA "Programs\loafcat"
+          $installed = Join-Path $root "loafcat.exe"
+          $lnk       = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\loafcat.lnk"
+          $log       = Join-Path $env:LOCALAPPDATA "loafcat\loafcat.log"
+          $downloads = Join-Path $env:RUNNER_TEMP "downloads"
+          $exe       = Join-Path $downloads "loafcat.exe"
+
+          function Kill-Cats {
+            Get-Process -Name loafcat -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 600
+          }
+          function Running-From {
+            (Get-Process -Name loafcat -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.Path }) -join ", "
+          }
+          function Show-Log { param($why)
+            Write-Host "--- $why ---"
+            Get-Content $log -Tail 30 -ErrorAction SilentlyContinue
+          }
+
+          Kill-Cats
+          Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $lnk -Force -ErrorAction SilentlyContinue
+          Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+          # About installing, not about the first-run settings window.
+          New-Item -ItemType Directory -Path (Split-Path $log) -Force | Out-Null
+          '{ "hasLaunched": true }' | Set-Content (Join-Path (Split-Path $log) "settings.json")
+
+          Write-Host "=== 1. a clean machine ==="
+          $p = Start-Process -FilePath $exe -WorkingDirectory $downloads -PassThru
+          if (-not $p.WaitForExit(45000)) { $p.Kill(); throw "the download never handed over" }
+          Start-Sleep -Seconds 4
+          Show-Log "after the first run"
+          Write-Host "installed exe : $(Test-Path $installed)"
+          Write-Host "start menu    : $(Test-Path $lnk)"
+          Write-Host "running from  : $(Running-From)"
+
+          $failures = @()
+          if (-not (Test-Path $installed)) { $failures += "it did not copy itself to $root" }
+          if (-not (Test-Path $lnk))       { $failures += "it left no Start menu entry" }
+          if ((Running-From) -notlike "*$root*") {
+            $failures += "the installed copy is not the one running"
+          }
+
+          Write-Host ""
+          Write-Host "=== 2. the same download, run again, with loafcat already running ==="
+          # The report this step was written for. Somebody downloads a newer exe while
+          # the cat is on -- which it always is, that is the whole point of it -- and
+          # double-clicks it the way they would any other installer.
+          $before = Running-From
+          $p2 = Start-Process -FilePath $exe -WorkingDirectory $downloads -PassThru
+          if (-not $p2.WaitForExit(45000)) { $p2.Kill(); throw "the second run hung" }
+          Start-Sleep -Seconds 4
+          Show-Log "after the second run"
+          Write-Host "running before: $before"
+          Write-Host "running after : $(Running-From)"
+          if (-not (Running-From)) { $failures += "the second run left no cat running at all" }
+
+          Kill-Cats
+          if ($failures) { throw ($failures -join "; ") }
 
       # The drag physics, driven by a scripted grab-hold-shake-release through the
       # same entry points real mouse events use. This is the one check that the
