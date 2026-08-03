@@ -38,7 +38,7 @@
     <!-- Must match CFBundleShortVersionString in build.sh. Nothing syncs the two
          automatically; the release workflow refuses to publish if either disagrees
          with the tag, which catches it at the only moment it matters. -->
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <Company>loafcat</Company>
     <Product>loafcat</Product>
     <!-- Becomes FileDescription in the version resource, which is the string Windows
