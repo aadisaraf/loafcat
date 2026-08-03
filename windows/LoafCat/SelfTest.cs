@@ -4,7 +4,7 @@ using LoafCat.Interop;
 
 namespace LoafCat;
 
-/// `LoafCat.exe --selftest` — everything that can be checked without a desktop.
+/// `loafcat.exe --selftest` — everything that can be checked without a desktop.
 ///
 /// This exists because the port cannot be verified the way `CLAUDE.md` demands of the
 /// macOS build ("the app was launched and looked at"). A CI runner has no one to look
@@ -90,27 +90,122 @@ public static class SelfTest
             PhantomKeys(clockSkewMs: 40) == 0,
             $"{PhantomKeys(clockSkewMs: 40)} phantom keystroke(s) with a 40ms clock skew");
 
-        // The other direction, which is the failure that would make the fix pointless:
+        // A device reporting while nobody touches anything: a finger resting on a
+        // precision touchpad, a hand on a mouse with nothing to report, a controller
+        // left plugged in. Every one of these advances GetLastInputInfo and produces no
+        // mouse message at all, so the hook has nothing to clear them with and the
+        // original inference called all of them typing. It reproduced as a cat that
+        // overheated while the cursor sat still and cooled down when the mouse moved.
+        //
+        // 15.6ms is the GetTickCount grid, which is where the ticks land whatever the
+        // device's own rate is.
+        Check("input from a device the hook cannot see is not typing",
+            IdleChatter(spacingMs: 15.6) == 0,
+            $"{IdleChatter(spacingMs: 15.6)} phantom keystroke(s) in 5s of a resting touchpad");
+
+        // The same, on a machine where something has raised the system timer to 1ms —
+        // Chrome and most games do, and it moves the whole stream onto the poll rate.
+        Check("...at 1ms timer resolution too",
+            IdleChatter(spacingMs: 8.4) == 0,
+            $"{IdleChatter(spacingMs: 8.4)} phantom keystroke(s) with a 1ms system timer");
+
+        // And at 50 a second, which is the slowest a device can report and still be
+        // closed outright by the gap test.
+        Check("...and at the edge of what the gap test reaches",
+            IdleChatter(spacingMs: 20) == 0,
+            $"{IdleChatter(spacingMs: 20)} phantom keystroke(s) from a 50Hz stream");
+
+        // Slow enough to look isolated, still far faster than a person: caught by the
+        // sustained-rate backstop rather than by the gap test. One burst gets through
+        // before there is enough evidence to write the stream off, which is the cost of
+        // not delaying every real keystroke by a full second to be sure of it. Measured
+        // at 22; asserted loosely because the exact figure is a property of the window
+        // length, and the thing that matters is that it is a burst and not a stream.
+        Check("a slower inhuman stream is written off after one burst",
+            IdleChatter(spacingMs: 33) < 30,
+            $"{IdleChatter(spacingMs: 33)} in 5s, against 151 unfiltered");
+
+        // The other direction, which is the failure that would make all of it pointless:
         // conservative is only acceptable if actual typing still registers.
+        Check("typing on a still mouse is counted exactly", Typing(0.1, 20, 3.0) == 20,
+              $"{Typing(0.1, 20, 3.0)} of 20 keystrokes at ten a second");
+        Check("...and at a gentler pace", Typing(0.2, 25, 6.0) == 25,
+              $"{Typing(0.2, 25, 6.0)} of 25 keystrokes at five a second");
+
+        // Suppression has to end when the device does, or one controller left plugged in
+        // would switch the cat's typing reactions off for the rest of the session.
         {
             var k = new KeyInference(0);
             double dt = 1.0 / 120.0;
-            int injected = 0;
-            double nextKey = 0;
-            for (int i = 0; i < 360; i++)      // three seconds
+            int typed = 0;
+            double nextKey = 5.0;
+            for (int i = 0; i < 1200; i++)     // ten seconds
             {
                 double now = i * dt;
-                if (injected < 20 && now >= nextKey)
+                // Two seconds of chatter, then three seconds of nothing, then typing.
+                if (now < 2.0 && i % 2 == 0)
                 {
                     k.NoteInput((uint)(now * 1000), now);
-                    injected++;
-                    nextKey = now + 0.1;       // ten keys a second
+                }
+                else if (typed < 25 && now >= nextKey)
+                {
+                    k.NoteInput((uint)(now * 1000), now);
+                    typed++;
+                    nextKey = now + 0.2;
                 }
                 k.Resolve(now);
             }
-            Check("typing on a still mouse is counted exactly", k.Keys == 20,
-                  $"{k.Keys} of 20 keystrokes");
+            // 25 keys in the five seconds after it stops. Exact rather than approximate:
+            // the hold is 2s and the typing starts 3s after the last chatter, so nothing
+            // about this is meant to be near a boundary.
+            Check("typing works again once the device stops", k.Keys == 25,
+                  $"{k.Keys} of 25 keystrokes after the chatter ended, {k.Ignored} ignored");
         }
+    }
+
+    /// Unexplained input arriving every `spacingMs`, for five seconds, with no mouse
+    /// event anywhere — which is exactly what the hook sees while a finger rests on a
+    /// touchpad. Returns how much of it was believed to be typing.
+    private static long IdleChatter(double spacingMs)
+    {
+        var k = new KeyInference(0);
+        double dt = 1.0 / 120.0;
+        uint lastSeen = 0;
+        for (int i = 0; i < 600; i++)
+        {
+            double now = i * dt;
+            // The poll only ever notices a CHANGE in the tick, so the device's rate is
+            // modelled where it actually shows up: in the value, not in the polling.
+            uint tick = (uint)(Math.Floor(now * 1000 / spacingMs) * spacingMs);
+            if (tick != lastSeen)
+            {
+                lastSeen = tick;
+                k.NoteInput(tick, now);
+            }
+            k.Resolve(now);
+        }
+        return k.Keys;
+    }
+
+    /// `count` keystrokes `gap` seconds apart, on a still mouse, over `seconds`.
+    private static long Typing(double gap, int count, double seconds)
+    {
+        var k = new KeyInference(0);
+        double dt = 1.0 / 120.0;
+        int injected = 0;
+        double nextKey = 0;
+        for (int i = 0; i < (int)(seconds * 120); i++)
+        {
+            double now = i * dt;
+            if (injected < count && now >= nextKey)
+            {
+                k.NoteInput((uint)(now * 1000), now);
+                injected++;
+                nextKey = now + gap;
+            }
+            k.Resolve(now);
+        }
+        return k.Keys;
     }
 
     /// Whether loafcat will be findable by typing its name.
@@ -130,7 +225,7 @@ public static class SelfTest
 
         string dir = Path.Combine(Path.GetTempPath(), "loafcat-selftest");
         string link = Path.Combine(dir, "loafcat.lnk");
-        string target = Environment.ProcessPath ?? Path.Combine(dir, "LoafCat.exe");
+        string target = Environment.ProcessPath ?? Path.Combine(dir, "loafcat.exe");
         try
         {
             bool written = SelfInstall.WriteShortcut(

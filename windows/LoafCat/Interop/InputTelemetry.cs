@@ -199,7 +199,29 @@ public static class InputTelemetry
             _keys.NoteInput(info.Time, Clock.Now);
         }
         _keys.Resolve(Clock.Now);
+
+        // Edge-triggered, so it is one line per episode rather than one per tick. A cat
+        // that overheats while nobody types is now two different bug reports, and this
+        // is the line that tells them apart: with it, some device on the machine is
+        // reporting input the mouse hook cannot see and loafcat is ignoring it; without
+        // it, the keystrokes are being inferred from something real.
+        bool chattering = _keys.Chattering;
+        if (chattering != _chatterLogged)
+        {
+            _chatterLogged = chattering;
+            Log.Line(chattering
+                ? "input: something is reporting faster than a person types — "
+                  + "a resting touchpad or a connected controller. Not counting it as typing."
+                : "input: that stopped.");
+        }
     }
+
+    private static bool _chatterLogged;
+
+    /// Unexplained input that was not believed to be typing. On the state line beside
+    /// `kps`, because the two together are the whole diagnosis: a cat that is hot with
+    /// nobody at the keyboard is a different bug depending on which of them is moving.
+    public static long IgnoredInput => _keys.Ignored;
 
     /// Monotonic count of inferred keystrokes. A rate is all any caller wants; the
     /// count exists so the caller can difference it exactly like the macOS build does.

@@ -84,9 +84,16 @@ Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
 # script are embedded and unpacked on first run — so this is the one file you can
 # hand to somebody with no instructions attached. The zip still exists because it
 # puts assets\ on disk, which is where a community theme goes.
-$exe = Join-Path $dist "$stageName.exe"
+#
+# Published as plain `loafcat.exe`, with no version and no architecture in the name.
+# The container carries those: the .dmg is loafcat-<version>.dmg and holds LoafCat.app,
+# the .zip is loafcat-<version>-win-x64.zip and holds loafcat.exe. A bare executable IS
+# the app rather than a container for it, so it is named the way the app is named —
+# otherwise the thing sitting in the user's Downloads folder, and every shell surface
+# that has nothing better to call it, says loafcat-0.2.0-win-x64.
+$exe = Join-Path $dist "loafcat.exe"
 if (Test-Path -LiteralPath $exe) { Remove-Item -LiteralPath $exe -Force }
-Copy-Item -LiteralPath (Join-Path $stage "LoafCat.exe") -Destination $exe
+Copy-Item -LiteralPath (Join-Path $stage "loafcat.exe") -Destination $exe
 
 $size = [math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 1)
 $exeSize = [math]::Round((Get-Item -LiteralPath $exe).Length / 1MB, 1)

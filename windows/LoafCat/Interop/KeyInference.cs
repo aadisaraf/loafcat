@@ -10,8 +10,74 @@ namespace LoafCat.Interop;
 ///
 /// It has no counterpart in the macOS build, which is handed a key-event count directly
 /// and never has to infer anything. See `windows/README.md`.
+///
+/// -------------------------------------------------------------------------------
+/// "NOT THE MOUSE" IS NOT THE SAME AS "A KEY"
+/// -------------------------------------------------------------------------------
+/// The first version of this class assumed the machine has exactly two input devices,
+/// so ruling out one proved the other. It does not. `GetLastInputInfo` is reset by any
+/// raw input the session receives — a finger resting on a precision touchpad reports at
+/// ~125Hz whether or not it moves, a hand resting on a high-polling-rate mouse reports
+/// with no displacement to deliver, a connected game controller reports forever, a pen
+/// digitizer reports while it hovers. None of those produce a `WM_MOUSEMOVE`, so the
+/// mouse hook never sees them, so every one of them used to arrive here as typing.
+///
+/// It reproduced as the exact inverse of the bug before it: the cat overheated while the
+/// cursor sat still and cooled down the moment the mouse actually moved, because moving
+/// it filled the ring with events that explained the ticks away.
+///
+/// There is no permission-free way to ask what the input actually was, and asking is
+/// banned regardless. So the inference is no longer "not the mouse, therefore a key" but
+/// "not the mouse, AND shaped like something a person did" — see `Resolve`. Both shape
+/// tests are about the timing of the stream, which is all this class is ever told.
 public sealed class KeyInference
 {
+    /// The closest together two keystrokes can be and still be two keystrokes.
+    ///
+    /// A device reporting on its own schedule lands on the `GetTickCount` grid, so its
+    /// ticks arrive ~15.6ms apart — or one poll apart, ~8.3ms, when something else on the
+    /// machine has raised the timer resolution to 1ms, which Chrome and most games do.
+    /// Human typing is nowhere near either: 25ms between keys is 40 a second, roughly
+    /// twice the fastest sustained typing ever recorded, and well past `overheat.kps_max`.
+    ///
+    /// This is checked in BOTH directions, which is only possible because a verdict is
+    /// already deferred by `ResolveAfter` — 50ms is longer than this gap, so by the time
+    /// anything is ruled on, its successor has already arrived and can be looked at.
+    ///
+    /// Measured against jittered typing from 3 to 18 keys a second, at +-15% and +-30%
+    /// wander, 40 seeds each: worst case one keystroke lost in a hundred. Widening it to
+    /// 40ms would close more of the band below, and starts eating real ones.
+    public const double KeyGap = 0.025;
+
+    /// The backstop, for a stream slow enough to pass `KeyGap` and still not be a person:
+    /// keystrokes per second, sustained across `ChatterWindow`, that nobody reaches.
+    ///
+    /// Sustained records are around 14-15 characters a second and `overheat.kps_max` is
+    /// 14, so this leaves the whole of real typing — including the part that is supposed
+    /// to redden the cat — comfortably below it.
+    public const double HumanMaxKps = 22;
+    public const double ChatterWindow = 1.0;
+
+    /// How long a stream stays written off after it stops looking inhuman. Long enough
+    /// that a continuous one is judged once rather than repeatedly: the window is still
+    /// full when the hold expires, so it re-trips immediately and credits nothing.
+    public const double ChatterHold = 2.0;
+
+    // A third test was written and thrown away, and it is worth saying why so nobody
+    // adds it back. Between roughly 3 and 22 reports a second, an idle device is inside
+    // human typing range and spaced too far apart to trip `KeyGap`, so neither test above
+    // can reach it. Evenness looks like the answer — a clock repeats its interval exactly
+    // and hands never do — but this stream has already been through an 8.3ms poll, and
+    // that quantisation destroys the very jitter the test needs: at 18 keys a second with
+    // a generous +-15% wander, real typing lands in one or two poll bins and reads as
+    // perfectly even. Measured, it discarded 45 of 159 genuine keystrokes across 24 gaps.
+    // Two runs of it, at two window lengths, said the same thing.
+    //
+    // So that band is left open, deliberately. Nothing is known to sit in it: every device
+    // that reports while idle — touchpad, controller, pen, mouse — runs at 60Hz or faster,
+    // and anything above 64Hz lands on the GetTickCount grid, which `KeyGap` closes
+    // outright. A slower one would need a real report to fix properly, not a guess here.
+
     /// How long to wait before ruling on an observed input tick.
     ///
     /// `GetLastInputInfo` is updated by the raw input thread the instant an event
@@ -55,11 +121,29 @@ public sealed class KeyInference
     private long _keys;
     private double _lastKeyAt;
 
+    // The stream of input the mouse could not account for, whether or not it was
+    // believed. Recorded even while it is being written off, so the rate test keeps
+    // seeing a chattering device for as long as it chatters.
+    private readonly Queue<double> _unexplained = new();
+    private double _lastUnexplainedAt = double.NegativeInfinity;
+    private double _chatterUntil = double.NegativeInfinity;
+    private long _ignored;
+
     public KeyInference(double now) => _lastKeyAt = now;
 
     public long Keys => Interlocked.Read(ref _keys);
     public double LastKeyAt => _lastKeyAt;
     public int Pending => _pending.Count;
+
+    /// Unexplained input this refused to call typing. Only the log and `--selftest`
+    /// read it — but a user whose cat overheats can send a log that says which of the
+    /// two failure modes they are in, which is the whole reason it is counted.
+    public long Ignored => Interlocked.Read(ref _ignored);
+
+    /// Whether something on this machine is currently producing input faster than a
+    /// person types. Edge-logged by `InputTelemetry`.
+    public bool Chattering => _lastResolveAt < _chatterUntil;
+    private double _lastResolveAt;
 
     /// From the mouse hook, once per mouse event.
     ///
@@ -84,11 +168,43 @@ public sealed class KeyInference
     /// just become sure of, which is only ever used by the test.
     public int Resolve(double now)
     {
+        _lastResolveAt = now;
         int found = 0;
         while (_pending.Count > 0 && now - _pending.Peek().At >= ResolveAfter)
         {
             var p = _pending.Dequeue();
             if (WasMouse(p.Tick, p.At)) continue;
+
+            // Past here, all that is known is that input arrived and the mouse cannot
+            // account for it. Record it before deciding anything: the rate test has to
+            // watch a chattering device for as long as it chatters, including through
+            // the hold in which nothing it produces is being believed.
+            double sincePrevious = p.At - _lastUnexplainedAt;
+            _lastUnexplainedAt = p.At;
+            _unexplained.Enqueue(p.At);
+            while (_unexplained.Count > 0 && p.At - _unexplained.Peek() > ChatterWindow)
+                _unexplained.Dequeue();
+
+            if (_unexplained.Count / ChatterWindow > HumanMaxKps)
+                _chatterUntil = p.At + ChatterHold;
+
+            // One: is it on its own? A device reporting on a schedule always has a
+            // neighbour within one tick of the system clock. The successor is knowable
+            // because this verdict was already held back for longer than the gap.
+            double untilNext = _pending.Count > 0
+                ? _pending.Peek().At - p.At
+                : double.PositiveInfinity;
+            bool isolated = sincePrevious >= KeyGap && untilNext >= KeyGap;
+
+            // Two: is the stream it belongs to one a person could produce at all?
+            bool chattering = p.At < _chatterUntil;
+
+            if (!isolated || chattering)
+            {
+                Interlocked.Increment(ref _ignored);
+                continue;
+            }
+
             Interlocked.Increment(ref _keys);
             _lastKeyAt = p.At;
             found++;

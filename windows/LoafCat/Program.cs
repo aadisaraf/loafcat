@@ -96,7 +96,7 @@ internal static class Program
         {
             Log.Warn(e.Message);
             MessageBox.Show(
-                e.Message + "\n\nThe assets folder should sit next to LoafCat.exe.",
+                e.Message + "\n\nThe assets folder should sit next to loafcat.exe.",
                 "loafcat could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
@@ -225,10 +225,22 @@ public sealed class CatController : ISettingsHost
         // "I am running, here is where I live, here is how to turn me off."
         bool firstRun = !Prefs.GetBool("hasLaunched");
         Prefs.Set("hasLaunched", true);
-        if (firstRun || Environment.GetCommandLineArgs().Contains("--settings"))
+        var argv = Environment.GetCommandLineArgs();
+        if (firstRun || argv.Contains("--settings"))
         {
             OpenSettings();
             if (firstRun) _tray.SayHello();
+        }
+
+        // This copy was started by the one the user double-clicked, which has already
+        // exited. Without a word, the only visible outcome of that is that the file in
+        // Downloads still has the release's name on it and appears to be the app — which
+        // is exactly the report this exists to answer.
+        if (argv.Contains(SelfInstall.JustInstalledFlag))
+        {
+            _tray.Notify("loafcat is installed",
+                "It is in the Start menu now — press Start and type loafcat. "
+                + "The file you downloaded has done its job and can be deleted.");
         }
 
         var (w, h) = CatView.PanelSize(_atlas, _renderScale);
