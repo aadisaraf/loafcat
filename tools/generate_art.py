@@ -1160,13 +1160,30 @@ BEHAVIOUR = {
         # How much of the cat's INK stays on screen once parked. Measured off the
         # ink rather than the canvas, so the transparent bubble margin does not
         # eat the reveal and leave the cat entirely off screen.
-        "reveal_px": 20,
+        #
+        # The ink spans x 9..46, so this is a slice of 37 and not of 48. At 15 the
+        # visible band is 9..24, which lands on exactly one ear (10..25), one whole
+        # eye (11..23), half a head (9..39) and one paw (13..23) — the far eye,
+        # the far paw and the tail are all behind the edge. That specific cut is
+        # what makes it read as a cat looking round a corner. Anything past about
+        # 18 shows both eyes and stops being a peek at all: at 20 it was 54% of the
+        # cat, which reads as a window clipping a cat rather than a cat hiding.
+        "reveal_px": 15,
         # Exponential approach to the parked position, and back out of it.
         "slide_rate": 11.0,
         # Close enough, in screen points, to stop easing and sit exactly.
         "settle_pt": 0.35,
-        # The peeking pose: lean in towards the screen, and breathe.
-        "lean_px": 3.0,
+        # The peeking pose. The whole trick is the DIFFERENCE between these first
+        # two: the body settles a little further behind the edge while the head
+        # cranes the other way, out past it. Moving the whole cat inward instead
+        # just puts more cat on screen, which is the opposite of peeking — and was
+        # the first version's mistake.
+        "body_tuck_px": 1.5,
+        "head_lean_px": 3.0,
+        # And cranes up a touch, the way anything looking round a corner does.
+        "head_rise_px": 1.0,
+        # The paw on the visible side lifts to the edge, as if holding on.
+        "grip_px": 1.5,
         "bob_px": 1.5,
         "bob_hz": 0.42,
         # The armed indicator. System chrome rather than cat art -- the same

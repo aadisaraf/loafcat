@@ -109,7 +109,10 @@ final class PeekModule: CatModule, AtlasTuned {
     private var revealPx: CGFloat = 20
     private var slideRate: CGFloat = 11
     private var settlePt: CGFloat = 0.35
-    private var leanPx: CGFloat = 3
+    private var bodyTuckPx: CGFloat = 1.5
+    private var headLeanPx: CGFloat = 3
+    private var headRisePx: CGFloat = 1
+    private var gripPx: CGFloat = 1.5
     private var bobPx: CGFloat = 1.5
     private var bobHz: CGFloat = 0.42
     private var indicatorWPx: CGFloat = 3
@@ -129,7 +132,10 @@ final class PeekModule: CatModule, AtlasTuned {
         revealPx = v("reveal_px", revealPx)
         slideRate = v("slide_rate", slideRate)
         settlePt = v("settle_pt", settlePt)
-        leanPx = v("lean_px", leanPx)
+        bodyTuckPx = v("body_tuck_px", bodyTuckPx)
+        headLeanPx = v("head_lean_px", headLeanPx)
+        headRisePx = v("head_rise_px", headRisePx)
+        gripPx = v("grip_px", gripPx)
         bobPx = v("bob_px", bobPx)
         bobHz = v("bob_hz", bobHz)
         indicatorWPx = v("indicator_w_px", indicatorWPx)
@@ -330,20 +336,33 @@ final class PeekModule: CatModule, AtlasTuned {
         guard settled > 0.002, let edge = parkedEdge ?? lastEdge else { return .none }
         lastEdge = edge
 
-        // Lean INTO the screen and bob slowly. This is the difference between a cat
-        // peeking round a corner and half a cat sliced off by the screen edge — and
-        // it is why the pose is offsets rather than new art: nothing here needs a
-        // sprite that does not already exist.
+        // The pose, and the whole thing rests on ONE idea: the body tucks a little
+        // further behind the edge while the head cranes the other way, out past it.
+        // It is the DIFFERENCE between those two that reads as an animal looking
+        // round a corner.
+        //
+        // The first version moved the whole cat inward instead, which does nothing
+        // but put more cat on screen — the opposite of peeking, and it looked like a
+        // window had sliced the cat rather than the cat had hidden. Combined with a
+        // reveal that left 54% of the ink showing, there was no peek there at all.
+        //
+        // Offsets rather than new art, so nothing here needs a sprite that does not
+        // already exist — and so a theme retunes the pose in the same JSON diff that
+        // retunes everything else.
         bobPhase += ctx.dt * bobHz
         while bobPhase >= 1 { bobPhase -= 1 }
 
         var out = ModuleOutput()
-        let inward: CGFloat = edge == .right ? -1 : 1
-        out.offset.x = inward * leanPx * settled
+        let toEdge: CGFloat = edge == .right ? 1 : -1
+        out.offset.x = toEdge * bodyTuckPx * settled
         out.offset.y = sin(bobPhase * 2 * .pi) * bobPx * settled
-        // Head leads the lean, so it reads as the cat craning to look rather than
-        // the whole animal sliding.
-        stage.headOffset.x += inward * leanPx * 0.45 * settled
+        stage.headOffset.x -= toEdge * headLeanPx * settled
+        stage.headOffset.y -= headRisePx * settled
+        // The paw on the side still showing lifts to the edge, as if holding on to
+        // it. The other one is behind the screen edge and would be lifting in
+        // private.
+        if edge == .right { stage.pawOffsetL.y -= gripPx * settled }
+        else { stage.pawOffsetR.y -= gripPx * settled }
         if park.isParked { out.state = .peeking }
         return out
     }
@@ -519,7 +538,28 @@ extension PeekModule {
         check("parked left shows \(Int(revealPx))px of cat", abs(shownL - want) < 0.01,
               String(format: "%.2fpt vs %.2fpt", Double(shownL), Double(want)))
 
-        // 6. Live, and the only check here that needs a screen.
+        // 6. WHICH parts the cut lands between, which is the whole difference between
+        //    a peek and a cat with a slice taken off it. One eye showing and one
+        //    hidden is the thing being aimed at; at reveal 20 both were on screen and
+        //    it read as a window clipping a cat. Retuning past that is a design
+        //    change and should have to argue with a failing check first.
+        let visibleTo = inkMinX + revealPx
+        func hides(_ name: String) -> Bool {
+            guard let p = atlas.parts[name] else { return true }
+            return p.origin.x >= visibleTo
+        }
+        func shows(_ name: String) -> Bool {
+            guard let p = atlas.parts[name] else { return false }
+            return p.origin.x + p.size.width <= visibleTo + 1
+        }
+        // Symmetric art, so checking the right-edge park checks both.
+        check("the near eye is on screen", shows("eye_l"))
+        check("the far eye is behind the edge", hides("eye_r"))
+        check("the near paw is on screen", shows("paw_l"))
+        check("the far paw is behind the edge", hides("paw_r"))
+        check("the tail is behind the edge", hides("tail"))
+
+        // 7. Live, and the only check here that needs a screen.
         let y = panel.frame.origin.y
         panel.setFrameOrigin(NSPoint(x: pr, y: y))
         let got = panel.frame.origin

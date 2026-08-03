@@ -120,7 +120,10 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private double _revealPx = 20;
     private double _slideRate = 11;
     private double _settlePt = 0.35;
-    private double _leanPx = 3;
+    private double _bodyTuckPx = 1.5;
+    private double _headLeanPx = 3;
+    private double _headRisePx = 1;
+    private double _gripPx = 1.5;
     private double _bobPx = 1.5;
     private double _bobHz = 0.42;
     private double _indicatorWPx = 3;
@@ -141,7 +144,10 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         _revealPx = V("reveal_px", _revealPx);
         _slideRate = V("slide_rate", _slideRate);
         _settlePt = V("settle_pt", _settlePt);
-        _leanPx = V("lean_px", _leanPx);
+        _bodyTuckPx = V("body_tuck_px", _bodyTuckPx);
+        _headLeanPx = V("head_lean_px", _headLeanPx);
+        _headRisePx = V("head_rise_px", _headRisePx);
+        _gripPx = V("grip_px", _gripPx);
         _bobPx = V("bob_px", _bobPx);
         _bobHz = V("bob_hz", _bobHz);
         _indicatorWPx = V("indicator_w_px", _indicatorWPx);
@@ -347,20 +353,32 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         if ((IsParked ? _parkEdge : _lastEdge) is not { } edgeNow) return ModuleOutput.None;
         _lastEdge = edgeNow;
 
-        // Lean INTO the screen and bob slowly. This is the difference between a cat
-        // peeking round a corner and half a cat sliced off by the screen edge — and it
-        // is why the pose is offsets rather than new art: nothing here needs a sprite
-        // that does not already exist.
+        // The pose, and the whole thing rests on ONE idea: the body tucks a little
+        // further behind the edge while the head cranes the other way, out past it. It
+        // is the DIFFERENCE between those two that reads as an animal looking round a
+        // corner.
+        //
+        // The first version moved the whole cat inward instead, which does nothing but
+        // put more cat on screen — the opposite of peeking, and it looked like a window
+        // had sliced the cat rather than the cat had hidden. Combined with a reveal that
+        // left 54% of the ink showing, there was no peek there at all.
+        //
+        // Offsets rather than new art, so nothing here needs a sprite that does not
+        // already exist — and so a theme retunes the pose in the same JSON diff that
+        // retunes everything else.
         _bobPhase += ctx.Dt * _bobHz;
         while (_bobPhase >= 1) _bobPhase -= 1;
 
         var outv = new ModuleOutput();
-        double inward = edgeNow == PeekEdge.Right ? -1 : 1;
-        outv.Offset.X = inward * _leanPx * _settled;
+        double toEdge = edgeNow == PeekEdge.Right ? 1 : -1;
+        outv.Offset.X = toEdge * _bodyTuckPx * _settled;
         outv.Offset.Y = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
-        // Head leads the lean, so it reads as the cat craning to look rather than the
-        // whole animal sliding.
-        stage.HeadOffset.X += inward * _leanPx * 0.45 * _settled;
+        stage.HeadOffset.X -= toEdge * _headLeanPx * _settled;
+        stage.HeadOffset.Y -= _headRisePx * _settled;
+        // The paw on the side still showing lifts to the edge, as if holding on to it.
+        // The other one is behind the screen edge and would be lifting in private.
+        if (edgeNow == PeekEdge.Right) stage.PawOffsetL.Y -= _gripPx * _settled;
+        else stage.PawOffsetR.Y -= _gripPx * _settled;
         if (IsParked) outv.State = CatState.Peeking;
         return outv;
     }
@@ -529,7 +547,25 @@ internal static class PeekDemo
         Check($"parked left shows {(int)t.RevealPx}px of cat", Math.Abs(shownL - want) < 0.01,
               $"{shownL:F2}pt vs {want:F2}pt");
 
-        // 6. A parked cat must still overlap the work area, or ClampIntoView will
+        // 6. WHICH parts the cut lands between, which is the whole difference between a
+        //    peek and a cat with a slice taken off it. One eye showing and one hidden
+        //    is the thing being aimed at; at reveal 20 both were on screen and it read
+        //    as a window clipping a cat. Retuning past that is a design change and
+        //    should have to argue with a failing check first.
+        double visibleTo = t.InkMinX + t.RevealPx;
+        bool Hides(string name) =>
+            !atlas.Parts.TryGetValue(name, out var p) || p.Origin.X >= visibleTo;
+        bool Shows(string name) =>
+            atlas.Parts.TryGetValue(name, out var p)
+            && p.Origin.X + p.Size.W <= visibleTo + 1;
+        // Symmetric art, so checking the right-edge park checks both.
+        Check("the near eye is on screen", Shows("eye_l"));
+        Check("the far eye is behind the edge", Hides("eye_r"));
+        Check("the near paw is on screen", Shows("paw_l"));
+        Check("the far paw is behind the edge", Hides("paw_r"));
+        Check("the tail is behind the edge", Hides("tail"));
+
+        // 7. A parked cat must still overlap the work area, or ClampIntoView will
         //    haul it back the next time a monitor is plugged in and the park will
         //    silently stop working on exactly the machines that have two screens.
         var f = window.Frame;
