@@ -50,6 +50,12 @@ final class CatStage {
     /// to know which module owns dragging.
     private(set) var state: CatState = .idle
 
+    /// True while a full-screen window is covering the cat's display and something is
+    /// holding the screen awake — a film, a call, a presentation. Published by
+    /// `PeekModule`; read by the wellness reminders, which must not blow the cat up
+    /// to the size of the screen over any of those.
+    var fullscreenBusy = false
+
     func publish(atlas: Atlas) {
         self.atlas = atlas
         atlasGeneration &+= 1

@@ -755,6 +755,19 @@
       "steam_period": 0.85,
       "steam_rise": 11.0
     },
+    "peek": {
+      "arm_ms": 320,
+      "bob_hz": 0.42,
+      "bob_px": 1.5,
+      "disarm_ms": 80,
+      "edge_zone_px": 12,
+      "indicator_fade_ms": 120,
+      "indicator_w_px": 3.0,
+      "lean_px": 3.0,
+      "reveal_px": 20,
+      "settle_pt": 0.35,
+      "slide_rate": 11.0
+    },
     "pet": {
       "attack": 0.14,
       "body_response": 0.65,

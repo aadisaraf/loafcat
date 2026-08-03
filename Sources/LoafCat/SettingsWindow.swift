@@ -270,6 +270,8 @@ final class CatPane: SettingsPane {
     private var loginNote: NSTextField!
     private var dock: NSButton!
     private var onOff: NSButton!
+    private var autoPeek: NSButton!
+    private var snapDrag: NSButton!
 
     private static let sizes: [(String, CGFloat)] = [("Small", 2), ("Medium", 3), ("Large", 4)]
 
@@ -333,6 +335,25 @@ final class CatPane: SettingsPane {
             + "droops; springy snaps back hardest."))
 
         stack.addArrangedSubview(divider())
+        stack.addArrangedSubview(heading("Getting out of the way"))
+        autoPeek = checkbox("Move aside for full-screen video", #selector(togglePeek))
+        stack.addArrangedSubview(autoPeek)
+        stack.addArrangedSubview(caption(
+            "When a full-screen window covers this display and something is holding "
+            + "the screen awake — a film, a call, a presentation — the cat parks "
+            + "against the nearer edge and peers in, keeping the height it was at. "
+            + "It walks back when the video ends, and dragging it out overrules it."))
+
+        snapDrag = checkbox("Snap to the screen edge when dragged there",
+                            #selector(toggleSnapDrag))
+        stack.addArrangedSubview(snapDrag)
+        stack.addArrangedSubview(caption(
+            "Hold the cat against the left or right edge for a moment while dragging "
+            + "and a white line appears where it will land; let go and it parks "
+            + "there. Passing the edge without stopping never snaps, and no line "
+            + "means no snap."))
+
+        stack.addArrangedSubview(divider())
         stack.addArrangedSubview(heading("Starting up"))
         login = checkbox("Open loafcat at login", #selector(toggleLogin))
         stack.addArrangedSubview(login)
@@ -360,11 +381,24 @@ final class CatPane: SettingsPane {
             DragFeel.allCases.firstIndex(of: DragFeel.current) ?? 0
         dock.state = DockPresence.showInDock ? .on : .off
         onOff.state = host.isCatVisible ? .on : .off
+        autoPeek.state = PeekModule.autoPeekEnabled ? .on : .off
+        snapDrag.state = PeekModule.snapOnDragEnabled ? .on : .off
         refreshLogin()
     }
 
     @objc private func toggleCat() {
         host.setCat(visible: onOff.state == .on)
+    }
+
+    // Read straight off the defaults by the module on the next tick, so neither of
+    // these needs a reload — and turning the automatic half off while the cat is
+    // parked lets it walk back out on its own.
+    @objc private func togglePeek() {
+        UserDefaults.standard.set(autoPeek.state == .on, forKey: "peekFullscreen")
+    }
+
+    @objc private func toggleSnapDrag() {
+        UserDefaults.standard.set(snapDrag.state == .on, forKey: "peekSnapDrag")
     }
 
     @objc private func toggleDock() {

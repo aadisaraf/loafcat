@@ -44,6 +44,7 @@ public static class SelfTest
         CheckKeyInference();
         CheckStartMenuEntry();
         CheckInstallPlan();
+        CheckPeekPlan();
         CheckUpdater();
         foreach (string theme in themes) CheckTheme(theme);
 
@@ -281,8 +282,66 @@ public static class SelfTest
         // from installing anything on the machine testing it has to hold.
         Check("a test run never installs anything",
             SelfInstall.Plan(["--portable"]) == InstallPlan.None
-                && SelfInstall.Plan(["--demo-drag"]) == InstallPlan.None,
-            "--portable and --demo-drag both opt out");
+                && SelfInstall.Plan(["--demo-drag"]) == InstallPlan.None
+                && SelfInstall.Plan(["--demo-peek"]) == InstallPlan.None,
+            "--portable, --demo-drag and --demo-peek all opt out");
+    }
+
+    /// The edge-snap gesture, which nobody on a CI runner can perform by hand.
+    ///
+    /// `--demo-peek` covers the same ground in more detail against a real display; this
+    /// is the part that must hold on a headless runner too, and it is here so that a
+    /// change to the thresholds fails a build rather than being noticed by a user.
+    private static void CheckPeekPlan()
+    {
+        Log.Line("--- peek ---");
+
+        // 1000pt wide screen, a 40pt band, 320ms to arm.
+        var a = new Arming { ArmMs = 320, DisarmMs = 80 };
+        void Hold(ref Arming arm, double x, double from, double to)
+        {
+            for (double t = from; t < to; t += 1.0 / 120) arm.Step(x, 0, 1000, 40, t);
+        }
+
+        Hold(ref a, 990, 0, 0.15);
+        Check("brushing the edge does not arm", a.Armed is null, "150ms < 320ms");
+
+        Hold(ref a, 990, 0.15, 0.40);
+        Check("dwelling on it does", a.Armed == PeekEdge.Right, "400ms > 320ms");
+
+        Hold(ref a, 500, 0.40, 0.44);
+        Check("a 40ms wobble out of the band is forgiven",
+            a.Armed == PeekEdge.Right, "40ms < 80ms");
+
+        Hold(ref a, 500, 0.44, 0.60);
+        Check("leaving it properly disarms", a.Armed is null, "160ms > 80ms");
+
+        var b = new Arming { ArmMs = 320, DisarmMs = 80 };
+        Hold(ref b, 10, 0, 0.40);
+        Check("the left edge arms too", b.Armed == PeekEdge.Left, "");
+
+        // Parked geometry. A 48px canvas with a 4px margin at 2x: the ink's left edge
+        // must land exactly `reveal` inside the right screen edge.
+        double x = PeekModule.ParkedX(PeekEdge.Right, 0, 1000, padX: 4,
+                                      inkMinX: 0, inkMaxX: 48, revealPx: 20, scale: 2);
+        Check("a right park leaves exactly the reveal on screen",
+            Math.Abs(1000 - (x + (4 + 0) * 2) - 40) < 1e-9, $"x={x}");
+
+        // And it must not send the cat somewhere a monitor change would drag it back
+        // from, which is the one thing that can silently undo a park on Windows.
+        Check("a parked cat still overlaps the screen",
+            new Rect(x, 0, (48 + 8) * 2, (48 + 6) * 2)
+                .IntersectionArea(new Rect(0, 0, 1000, 1000)) > 0, "");
+
+        var screen = new Rect(0, 0, 1000, 1000);
+        Check("auto-peek picks the nearer edge",
+            PeekModule.NearerEdge(new Rect(10, 0, 100, 100), screen) == PeekEdge.Left
+            && PeekModule.NearerEdge(new Rect(880, 0, 100, 100), screen) == PeekEdge.Right,
+            "so a cat living on the left is not flung across the display");
+
+        Check("a dead-centre cat goes right",
+            PeekModule.NearerEdge(new Rect(450, 0, 100, 100), screen) == PeekEdge.Right,
+            "midX 500 of 1000 — the tie the user asked to break rightwards");
     }
 
     /// The two pure decisions the updater makes, which between them decide whether a

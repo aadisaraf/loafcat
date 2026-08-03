@@ -208,6 +208,34 @@ internal static class Win32
     public static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip,
         MonitorEnumProc callback, IntPtr data);
 
+    // --- "is something full screen, and is it keeping the screen awake" ----------
+    // Both permission-free, and deliberately the *narrowest* calls that answer the
+    // question. GetWindowRect returns bounds and nothing else — it is the direct
+    // counterpart of the kCGWindowBounds the macOS build reads, and the counterpart of
+    // the field it is NOT allowed to read (kCGWindowName / GetWindowText) is banned by
+    // scripts/check-privacy.sh on both platforms. The cat learns that a window is big.
+    // It cannot learn what is in it.
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RectL rect);
+
+    /// POWER_INFORMATION_LEVEL.SystemExecutionState.
+    public const int SystemExecutionState = 16;
+
+    /// EXECUTION_STATE flag: something has asked that the display stay on. Video
+    /// players take it so the screen cannot dim mid-scene; a text editor does not.
+    public const uint EsDisplayRequired = 0x00000002;
+
+    /// The system's current EXECUTION_STATE — the counterpart of reading
+    /// IOPMCopyAssertionsStatus on macOS. Needs no privilege, unlike `powercfg
+    /// /requests`, which is why the assertion is queried this way and not that one.
+    [DllImport("powrprof.dll")]
+    public static extern uint CallNtPowerInformation(int level, IntPtr input,
+        uint inputSize, out uint output, uint outputSize);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetCapture(IntPtr hWnd);
 

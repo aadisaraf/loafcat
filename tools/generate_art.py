@@ -1138,6 +1138,42 @@ BEHAVIOUR = {
         "attack": 0.06,
         "decay": 0.18,
     },
+
+    # --- parking against a screen edge --------------------------------------
+    # Lengths are logical pixels of this 48px canvas and are multiplied by the
+    # render scale where they are used, so the snap band and the parked reveal
+    # both grow with the cat. That is deliberate: a cat drawn at 3x is a bigger
+    # target and earns a wider band, and a fixed number of screen points would
+    # make the gesture feel twitchy at 3x and sluggish at 1x.
+    "peek": {
+        # How close to the screen edge the CURSOR has to be before the dwell
+        # starts counting. 12 logical px is 24pt at the default 2x, which is
+        # about what Windows and macOS use for their own snap zones.
+        "edge_zone_px": 12,
+        # How long it has to stay there before the snap arms and the line
+        # appears. This is the entire "come in a certain way and it won't snap"
+        # gesture: brushing the edge on the way past never reaches it.
+        "arm_ms": 320,
+        # Grace before disarming again. Without it, one pixel of hand wobble at
+        # the boundary strobes the line on and off.
+        "disarm_ms": 80,
+        # How much of the cat's INK stays on screen once parked. Measured off the
+        # ink rather than the canvas, so the transparent bubble margin does not
+        # eat the reveal and leave the cat entirely off screen.
+        "reveal_px": 20,
+        # Exponential approach to the parked position, and back out of it.
+        "slide_rate": 11.0,
+        # Close enough, in screen points, to stop easing and sit exactly.
+        "settle_pt": 0.35,
+        # The peeking pose: lean in towards the screen, and breathe.
+        "lean_px": 3.0,
+        "bob_px": 1.5,
+        "bob_hz": 0.42,
+        # The armed indicator. System chrome rather than cat art -- the same
+        # shape the OS uses to say "this is where it lands".
+        "indicator_w_px": 3.0,
+        "indicator_fade_ms": 120,
+    },
 }
 
 

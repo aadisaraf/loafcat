@@ -174,3 +174,48 @@ The one fractional transform left is the squash/breathe **scale** on the body an
 **Worth knowing:** don't test this by rendering and comparing colours. The claim is about geometry; test the geometry.
 
 **Reproduce:** `./pixelgrid/build.sh && ./pixelgrid/build/PixelGridSpike` from the repo root.
+
+---
+
+## S6 — Detecting a full-screen video without asking for anything
+
+**Question:** the cat should get out of the way for a full-screen video. Can either half of that — "is a window covering this display" and "is a video playing" — be answered by a process with no permissions at all? If not, the feature is the wrong design and has to be dropped (CLAUDE.md).
+
+**Method.** Two probes. The first ran from the terminal and was *worthless*: iTerm2 has Screen Recording and Accessibility granted, and anything it spawns inherits that. So the second probe was built as its own ad-hoc-signed `.app` with a bundle identifier nothing had ever seen, launched through `open` so launchd — not the terminal — is its responsible process. It reports what it was granted before it reports anything else.
+
+### Result: **both, and with room to spare.**
+
+```
+bundle id: dev.loafcat.fsprobe.a1b2c3
+ScreenRecording granted: false
+Accessibility granted:   false
+windows: 80  bounds:80 owner:80 layer:80 pid:80 NAME:1
+IOPM ok: PreventUserIdleDisplaySleep=0 PreventUserIdleSystemSleep=1
+```
+
+With both permissions **denied**, `CGWindowListCopyWindowInfo` returned bounds, owner, layer and pid for all 80 on-screen windows. Only `kCGWindowName` is gated — 46 of 80 windows had a name when run from the privileged terminal, 1 of 80 from the unprivileged bundle. A desktop pet does not need titles, and `check-privacy.sh` bans the field outright.
+
+`IOPMCopyAssertionsStatus` — the table `pmset -g assertions` prints — needs no privilege either.
+
+### Why the assertion is the interesting half
+
+"Is a video playing" cannot be asked directly without recording the screen. `PreventUserIdleDisplaySleep` is the closest honest proxy: **every** video player takes it so the picture cannot dim mid-scene, and nothing that is merely being typed into does. That is the whole difference between parking the cat for a film and parking it for a full-screen text editor. Measured at 0 on an idle machine, 1 under `caffeinate -d`.
+
+It is required to **enter** the parked state and not to **stay** in it, because a paused film drops the assertion and a cat that walked back out in front of the picture on every pause would be worse than one that never moved.
+
+**Windows counterpart:** `CallNtPowerInformation(SystemExecutionState)` → `ES_DISPLAY_REQUIRED`, which is the same question and also needs no privilege — unlike `powercfg /requests`, which needs admin. The window half is cheaper there: the foreground window's rect answers it in three calls, so that port polls inline while this one does the 80-dictionary enumeration on a background queue.
+
+### Verified end to end
+
+A synthetic film — `caffeinate -d` plus a layer-0 window at exactly the display bounds, held at 3% alpha so testing it does not black out the machine — then removing each half in turn:
+
+| | fs | awake | parked | window x |
+|---|---:|---:|---:|---:|
+| nothing playing | 0 | 0 | 0.00 | 727 |
+| full screen + awake | 1 | 1 | 1.00 | 1572 |
+| "paused" — assertion dropped, still full screen | 1 | 0 | **1.00** | 1572 |
+| left full screen | 0 | 0 | 0.00 | **727** |
+
+**One real bug, found only because the last column was measured.** The cat first walked home to x=**728** and stopped there for good, one point short. The slide eases exponentially toward its target and read its own position back off the window each frame — but the window server quantises that position, so the last sub-point steps were rounded away faster than they could accumulate. Keep the slide in a float of your own and round only on the way out. It is the same lesson as the pixel grid in S5, arriving from the opposite direction: there the danger was a fractional value reaching the screen, here it was the screen's integer value being read back as truth.
+
+**Reproduce:** `./build/LoafCat.app/Contents/MacOS/LoafCat --demo-peek`, and on Windows `loafcat.exe --demo-peek`. Both print the same summary line.

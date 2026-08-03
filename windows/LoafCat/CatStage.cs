@@ -50,6 +50,12 @@ public sealed class CatStage
     /// which module owns dragging.
     public CatState State { get; private set; } = CatState.Idle;
 
+    /// True while a full-screen window is covering the cat's display and something is
+    /// holding the screen awake — a film, a call, a presentation. Published by
+    /// `PeekModule`; read by the wellness reminders, which must not blow the cat up to
+    /// the size of the screen over any of those.
+    public bool FullscreenBusy;
+
     public void Publish(Atlas atlas)
     {
         Atlas = atlas;

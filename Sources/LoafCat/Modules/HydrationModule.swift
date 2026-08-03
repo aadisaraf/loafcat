@@ -46,8 +46,11 @@ final class HydrationModule: CatModule {
         let now = CFAbsoluteTimeGetCurrent()
 
         if now >= nextFire, let iv = interval {
-            if bus.busy {
-                // Never interrupt a stretch break; try again shortly.
+            if bus.busy || CatStage.shared.fullscreenBusy {
+                // Never interrupt a stretch break, and never speak over a
+                // full-screen video — the cat is parked at the edge by then, and a
+                // bubble would put it right back over the picture. Try again
+                // shortly rather than skipping: this one is still owed.
                 nextFire = now + 5
             } else if ctx.secondsSinceKey > bus.awaySeconds {
                 nextFire = now + iv
