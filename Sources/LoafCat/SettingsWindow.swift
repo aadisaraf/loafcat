@@ -23,6 +23,9 @@ protocol SettingsHost: AnyObject {
     /// the same rule that keeps Settings from holding a Rig or a CatView.
     var updateStatus: String { get }
     func checkForUpdates(_ report: @escaping (String) -> Void)
+
+    /// -1 when nothing is downloading, otherwise 0-100.
+    var downloadPercent: Int { get }
 }
 
 /// The settings window: one place to change everything the cat can be told.
@@ -698,7 +701,10 @@ final class AboutPane: SettingsPane {
     override var paneSymbol: String { "info.circle" }
 
     private let autoUpdate = NSButton()
+    private let restartWhenReady = NSButton()
     private let updateStatus = NSTextField(labelWithString: "")
+    private let progress = NSProgressIndicator()
+    private var progressTicker: Timer?
     private var updating = false
 
     override func populate() {
@@ -737,16 +743,36 @@ final class AboutPane: SettingsPane {
         let auto = checkbox("Install updates automatically", #selector(toggleAutoUpdate))
         autoUpdate.cell = auto.cell
         stack.addArrangedSubview(auto)
+        let restart = checkbox("Restart loafcat as soon as an update is ready",
+                               #selector(toggleRestartWhenReady))
+        restartWhenReady.cell = restart.cell
+        stack.addArrangedSubview(restart)
+        stack.addArrangedSubview(caption(
+            "Off, an update waits for the next time you happen to start the app — which "
+            + "for something that lives in the menu bar can be a very long time. On, the "
+            + "cat blinks out and comes straight back on the new version."))
+
         updateStatus.textColor = .secondaryLabelColor
         stack.addArrangedSubview(updateStatus)
+
+        // Hidden until there is something to show. A progress bar sitting at zero
+        // whenever the app is idle reads as a stuck download.
+        progress.isIndeterminate = false
+        progress.minValue = 0
+        progress.maxValue = 100
+        progress.controlSize = .small
+        progress.isHidden = true
+        stack.addArrangedSubview(progress)
+
         stack.addArrangedSubview(button("Check now", #selector(checkNow)))
         stack.addArrangedSubview(caption(
             "loafcat checks GitHub a few times a day, and installs a new version only "
             + "if it carries a valid signature from the project's update key. A "
             + "checksum on its own would prove the download was not corrupted, not who "
             + "made it, so anything unsigned is reported here and never installed.\n\n"
-            + "An update is staged and starts the next time you open the app. Nothing "
-            + "is ever swapped out from under a running cat."))
+            + "The download is verified before anything is written where the app would "
+            + "find it, and the swap itself happens at startup, before there is a "
+            + "window. Nothing is ever exchanged underneath a running cat."))
 
         stack.addArrangedSubview(divider())
         stack.addArrangedSubview(heading("Art"))
@@ -761,14 +787,41 @@ final class AboutPane: SettingsPane {
 
     override func refresh() {
         updating = true
-        defer { updating = false }
         autoUpdate.state = Updater.enabled ? .on : .off
+        restartWhenReady.state = Updater.restartWhenReady ? .on : .off
         updateStatus.stringValue = host.updateStatus
+        updating = false
+
+        // Polled rather than pushed. The download runs off the main actor and publishes
+        // one integer; a timer that only exists while the window is open is a great deal
+        // less to get wrong than plumbing an observer out of it, and four times a second
+        // is as often as a progress bar is worth redrawing.
+        progressTicker?.invalidate()
+        progressTicker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) {
+            [weak self] _ in self?.showProgress()
+        }
+        showProgress()
+    }
+
+    private func showProgress() {
+        let pct = host.downloadPercent
+        guard pct >= 0 else {
+            if !progress.isHidden { progress.isHidden = true }
+            return
+        }
+        progress.isHidden = false
+        progress.doubleValue = Double(min(max(pct, 0), 100))
+        updateStatus.stringValue = "Downloading… \(pct)%"
     }
 
     @objc private func toggleAutoUpdate(_ sender: NSButton) {
         guard !updating else { return }
         Updater.enabled = sender.state == .on
+    }
+
+    @objc private func toggleRestartWhenReady(_ sender: NSButton) {
+        guard !updating else { return }
+        Updater.restartWhenReady = sender.state == .on
     }
 
     @objc private func checkNow() {

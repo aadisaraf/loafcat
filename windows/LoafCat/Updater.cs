@@ -66,10 +66,23 @@ public sealed class Updater : IDisposable
     private static readonly TimeSpan FirstCheck = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan Interval = TimeSpan.FromHours(6);
 
+    // 30s is the whole request when the body is read in one call, which was fine for a
+    // JSON document and wrong for a 66MB executable on a slow line. The download reads
+    // headers first and streams the body, so this now bounds getting a response rather
+    // than getting all of it.
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
     private System.Threading.Timer? _timer;
     private readonly Action<string> _announce;
+    private readonly Action _restart;
     private int _busy;
+
+    /// -1 when nothing is downloading, otherwise 0-100. One int rather than a pair of
+    /// fields because it is written by the download and read by the settings window on
+    /// the UI thread, and a percentage that cannot disagree with a separate "is it
+    /// running" flag is one less thing to get wrong.
+    private int _progressPct = -1;
+    public int DownloadPercent => Volatile.Read(ref _progressPct);
+    public bool Downloading => DownloadPercent >= 0;
 
     /// Set once a newer version has been seen. Read by the tray menu.
     public string? AvailableVersion { get; private set; }
@@ -81,9 +94,24 @@ public sealed class Updater : IDisposable
         set => Prefs.Set("updateAutomatically", value);
     }
 
-    public Updater(Action<string> announce)
+    /// Whether a staged update is applied straight away rather than waiting for the
+    /// next time the app happens to be started.
+    ///
+    /// Default on, and the reason is that the alternative is indefinite: a desktop pet
+    /// is started once and left running for weeks, so "next time you open it" can mean
+    /// never. The restart itself is the same code path as any other launch — the swap
+    /// still happens before there is a window, and nothing is ever exchanged underneath
+    /// a running app.
+    public static bool RestartWhenReady
+    {
+        get => !Prefs.Has("restartWhenUpdated") || Prefs.GetBool("restartWhenUpdated");
+        set => Prefs.Set("restartWhenUpdated", value);
+    }
+
+    public Updater(Action<string> announce, Action restart)
     {
         _announce = announce;
+        _restart = restart;
         _http.DefaultRequestHeaders.Add("User-Agent", $"loafcat/{Branding.Version}");
     }
 
@@ -167,13 +195,28 @@ public sealed class Updater : IDisposable
             Release? release = await LatestRelease().ConfigureAwait(false);
             if (release is null)
             {
-                if (!quiet) _announce("Could not reach GitHub.");
+                // GitHub answered with something that had no version in it at all.
+                if (!quiet) _announce("GitHub did not say what the latest version is.");
                 return;
             }
 
+            // Before anything is asked about assets. The published release being older
+            // than the installed one is the ordinary case, and answering it needs
+            // nothing but the two version numbers.
             if (!IsNewer(release.Version, Branding.Version))
             {
                 if (!quiet) _announce($"loafcat {Branding.Version} is the latest version.");
+                return;
+            }
+
+            if (release.AssetUrl is null)
+            {
+                // Newer, but nothing here can install it — a release that shipped only
+                // for the other platform, or one still being uploaded.
+                Log.Warn($"update: {release.Version} has no Windows download");
+                if (!quiet)
+                    _announce($"loafcat {release.Version} exists, but with no Windows "
+                              + "download yet.");
                 return;
             }
 
@@ -197,8 +240,16 @@ public sealed class Updater : IDisposable
             if (await Download(release).ConfigureAwait(false))
             {
                 StagedAndReady = true;
-                _announce($"loafcat {release.Version} is ready — it will be running "
-                          + "the next time you open the app.");
+                if (RestartWhenReady)
+                {
+                    _announce($"loafcat {release.Version} is ready — restarting into it now.");
+                    _restart();
+                }
+                else
+                {
+                    _announce($"loafcat {release.Version} is ready — it will be running "
+                              + "the next time you open the app.");
+                }
             }
             else if (!quiet)
             {
@@ -208,8 +259,9 @@ public sealed class Updater : IDisposable
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException
                                     or JsonException or IOException)
         {
+            // The only place this message is true: the request itself did not complete.
             Log.Warn($"update: check failed ({e.Message})");
-            if (!quiet) _announce("Could not check for updates.");
+            if (!quiet) _announce("Could not reach GitHub — check your connection.");
         }
         finally
         {
@@ -217,8 +269,13 @@ public sealed class Updater : IDisposable
         }
     }
 
-    private sealed record Release(string Version, string AssetUrl, string? ChecksumUrl,
-                                  string? SignatureUrl);
+    /// `AssetUrl` is nullable on purpose. A release that carries nothing this platform
+    /// can install is a perfectly ordinary thing — v0.1.0 shipped a `.dmg` and nothing
+    /// else, months before there was a Windows build — and it is emphatically not the
+    /// same event as failing to reach GitHub. Collapsing the two is what made the
+    /// Settings button report a network error on a machine with a working network.
+    internal sealed record Release(string Version, string? AssetUrl, string? ChecksumUrl,
+                                   string? SignatureUrl);
 
     private async Task<Release?> LatestRelease()
     {
@@ -226,7 +283,14 @@ public sealed class Updater : IDisposable
         // reaching anyone who did not ask for it by name.
         string json = await _http.GetStringAsync(
             $"https://api.github.com/repos/{Repo}/releases/latest").ConfigureAwait(false);
+        return ParseRelease(json);
+    }
 
+    /// Split from the fetch so `--selftest` can drive it with a real captured response.
+    /// The bug it exists to catch does not look like a bug from inside: an installed copy
+    /// simply reports that GitHub is unreachable, forever, on a working network.
+    internal static Release? ParseRelease(string json)
+    {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
         string tag = root.GetProperty("tag_name").GetString() ?? "";
@@ -247,7 +311,7 @@ public sealed class Updater : IDisposable
             else if (name.EndsWith(".exe.sig", StringComparison.Ordinal)) sig = url;
             else if (name.EndsWith(".exe", StringComparison.Ordinal)) asset = url;
         }
-        return asset is null ? null : new Release(version, asset, sum, sig);
+        return new Release(version, asset, sum, sig);
     }
 
     /// Downloads, verifies, and stages. Returns false and leaves nothing behind if
@@ -257,15 +321,47 @@ public sealed class Updater : IDisposable
         string temp = Staged + ".part";
         try
         {
-            byte[] payload = await _http.GetByteArrayAsync(release.AssetUrl)
-                                        .ConfigureAwait(false);
+            Volatile.Write(ref _progressPct, 0);
 
+            // Streamed to disk rather than pulled into a byte[]. Two reasons: the
+            // payload is 66MB, and a progress figure cannot exist at all until the body
+            // is read in pieces. Hashed on the way past, so the bytes are never walked
+            // twice and never all resident at once.
+            byte[] hash;
+            using (var response = await _http
+                       .GetAsync(release.AssetUrl, HttpCompletionOption.ResponseHeadersRead)
+                       .ConfigureAwait(false))
+            {
+                response.EnsureSuccessStatusCode();
+                long total = response.Content.Headers.ContentLength ?? 0;
+                long read = 0;
+
+                using var source = await response.Content.ReadAsStreamAsync()
+                                                 .ConfigureAwait(false);
+                using var sink = File.Create(temp);
+                using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+                var buffer = new byte[81920];
+                int n;
+                while ((n = await source.ReadAsync(buffer).ConfigureAwait(false)) > 0)
+                {
+                    await sink.WriteAsync(buffer.AsMemory(0, n)).ConfigureAwait(false);
+                    sha.AppendData(buffer, 0, n);
+                    read += n;
+                    // A chunked response carries no length. The bar then simply does not
+                    // move, which is more honest than inventing a denominator.
+                    if (total > 0)
+                        Volatile.Write(ref _progressPct, (int)(read * 100 / total));
+                }
+                hash = sha.GetHashAndReset();
+            }
+
+            string actual = Convert.ToHexString(hash).ToLowerInvariant();
             if (release.ChecksumUrl is { } sumUrl)
             {
                 string published = (await _http.GetStringAsync(sumUrl).ConfigureAwait(false))
                     .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
                     .FirstOrDefault()?.ToLowerInvariant() ?? "";
-                string actual = Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
                 if (published != actual)
                 {
                     Log.Warn($"update: checksum mismatch, discarding {release.Version}");
@@ -275,15 +371,16 @@ public sealed class Updater : IDisposable
 
             byte[] signature = await _http.GetByteArrayAsync(release.SignatureUrl!)
                                           .ConfigureAwait(false);
-            if (!VerifySignature(payload, signature))
+            // The same digest the checksum was compared against. ECDSA-with-SHA256
+            // verifies a hash, so hashing 66MB a second time would prove nothing extra.
+            if (!VerifyHash(hash, signature))
             {
                 Log.Warn($"update: signature does not verify, discarding {release.Version}");
                 return false;
             }
 
-            // Written under a temporary name and moved into place, so a download that
-            // dies halfway cannot leave something that looks staged.
-            await File.WriteAllBytesAsync(temp, payload).ConfigureAwait(false);
+            // Moved into place only now, so a download that dies halfway — or one that
+            // arrives intact and unsigned — cannot leave something that looks staged.
             File.Move(temp, Staged, overwrite: true);
             Log.Line($"update  staged {release.Version}, applies on next start");
             return true;
@@ -296,20 +393,26 @@ public sealed class Updater : IDisposable
         }
         finally
         {
+            Volatile.Write(ref _progressPct, -1);
             try { if (File.Exists(temp)) File.Delete(temp); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
     }
 
     /// ECDSA P-256 over the file, DER-encoded, against the compiled-in public key.
-    internal static bool VerifySignature(byte[] payload, byte[] signature)
+    internal static bool VerifySignature(byte[] payload, byte[] signature) =>
+        VerifyHash(SHA256.HashData(payload), signature);
+
+    /// The same check, given a digest that has already been computed — which the
+    /// download has, because it hashed the stream on the way to disk.
+    internal static bool VerifyHash(byte[] sha256, byte[] signature)
     {
         if (UpdateKey.Length == 0) return false;
         try
         {
             using var ecdsa = ECDsa.Create();
             ecdsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(UpdateKey), out _);
-            return ecdsa.VerifyData(payload, signature, HashAlgorithmName.SHA256,
+            return ecdsa.VerifyHash(sha256, signature,
                                     DSASignatureFormat.Rfc3279DerSequence);
         }
         catch (Exception e) when (e is CryptographicException or FormatException)

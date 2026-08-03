@@ -29,6 +29,9 @@ public interface ISettingsHost
     /// the same rule that keeps Settings from holding a Rig or a CatView.
     string UpdateStatus { get; }
     Task CheckForUpdates(Action<string> report);
+
+    /// -1 when nothing is downloading, otherwise 0-100.
+    int DownloadPercent { get; }
 }
 
 /// The settings window: one place to change everything the cat can be told.
@@ -825,7 +828,10 @@ internal sealed class AboutPane(ISettingsHost host) : SettingsPane(host)
     public override string Title => "About";
 
     private CheckBox _autoUpdate = null!;
+    private CheckBox _restartWhenReady = null!;
     private Control _updateStatus = null!;
+    private ProgressBar _progress = null!;
+    private System.Windows.Forms.Timer? _progressTicker;
     private bool _updating;
 
     public override void Build()
@@ -890,8 +896,30 @@ internal sealed class AboutPane(ISettingsHost host) : SettingsPane(host)
             if (!_updating) Updater.Enabled = _autoUpdate.Checked;
         });
         Add(_autoUpdate);
+        _restartWhenReady = Checkbox("Restart loafcat as soon as an update is ready", () =>
+        {
+            if (!_updating) Updater.RestartWhenReady = _restartWhenReady.Checked;
+        });
+        Add(_restartWhenReady);
+        Add(Caption(
+            "Off, an update waits for the next time you happen to start the app — which "
+            + "for something that lives in the notification area can be a very long "
+            + "time. On, the cat blinks out and comes straight back on the new version."));
+
         _updateStatus = Caption("");
         Add(_updateStatus);
+
+        // Hidden until there is something to show. A progress bar that sits at zero
+        // whenever the app is idle reads as a stuck download.
+        _progress = new ProgressBar
+        {
+            Width = Wide,
+            Height = 6,
+            Style = ProgressBarStyle.Continuous,
+            Visible = false,
+            Margin = new Padding(0, 2, 0, 6),
+        };
+        Add(_progress);
         Add(MakeButton("Check now", () =>
         {
             _updateStatus.Text = "Checking\u2026";
@@ -905,8 +933,9 @@ internal sealed class AboutPane(ISettingsHost host) : SettingsPane(host)
             + "if it carries a valid signature from the project's update key. A checksum "
             + "on its own would prove the download was not corrupted, not who made it, "
             + "so anything unsigned is reported here and never installed.\n\n"
-            + "An update is staged and starts the next time you open the app. Nothing is "
-            + "ever swapped out from under a running cat."));
+            + "The download is verified before anything is written where the app would "
+            + "find it, and the swap itself happens at startup, before there is a "
+            + "window. Nothing is ever exchanged underneath a running cat."));
 
         Add(Divider());
         Add(Heading("Art"));
@@ -954,8 +983,32 @@ internal sealed class AboutPane(ISettingsHost host) : SettingsPane(host)
         try
         {
             _autoUpdate.Checked = Updater.Enabled;
+            _restartWhenReady.Checked = Updater.RestartWhenReady;
             _updateStatus.Text = Host.UpdateStatus;
         }
         finally { _updating = false; }
+
+        // Polled rather than pushed. The download runs on a thread pool thread and
+        // publishes one int; a timer that only exists while the window is open is a
+        // great deal less to get wrong than marshalling an event out of it, and four
+        // times a second is as often as a progress bar is worth redrawing.
+        _progressTicker ??= new System.Windows.Forms.Timer { Interval = 250 };
+        _progressTicker.Tick -= OnProgressTick;
+        _progressTicker.Tick += OnProgressTick;
+        _progressTicker.Start();
+        OnProgressTick(this, EventArgs.Empty);
+    }
+
+    private void OnProgressTick(object? sender, EventArgs e)
+    {
+        int pct = Host.DownloadPercent;
+        if (pct < 0)
+        {
+            if (_progress.Visible) _progress.Visible = false;
+            return;
+        }
+        _progress.Visible = true;
+        _progress.Value = Math.Clamp(pct, 0, 100);
+        _updateStatus.Text = $"Downloading\u2026 {pct}%";
     }
 }

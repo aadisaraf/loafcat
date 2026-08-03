@@ -69,10 +69,16 @@ final class Updater {
 
     private var timer: Timer?
     private let announce: (String) -> Void
+    private let restart: () -> Void
     private var busy = false
 
     private(set) var availableVersion: String?
     private(set) var stagedAndReady = false
+
+    /// -1 when nothing is downloading, otherwise 0-100. One value rather than a pair,
+    /// because a percentage that cannot disagree with a separate "is it running" flag is
+    /// one less thing to get wrong. Read by the settings window.
+    private(set) var downloadPercent: Int = -1
 
     static var enabled: Bool {
         get {
@@ -83,8 +89,26 @@ final class Updater {
         set { UserDefaults.standard.set(newValue, forKey: "updateAutomatically") }
     }
 
-    init(announce: @escaping (String) -> Void) {
+    /// Whether a staged update is applied straight away rather than waiting for the
+    /// next time the app happens to be started.
+    ///
+    /// Default on, and the reason is that the alternative is indefinite: a desktop pet
+    /// is started once and left running for weeks, so "next time you open it" can mean
+    /// never. The restart itself is the same code path as any other launch — the swap
+    /// still happens before there is a window, and nothing is ever exchanged underneath
+    /// a running app.
+    static var restartWhenReady: Bool {
+        get {
+            let d = UserDefaults.standard
+            return d.object(forKey: "restartWhenUpdated") == nil
+                || d.bool(forKey: "restartWhenUpdated")
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "restartWhenUpdated") }
+    }
+
+    init(announce: @escaping (String) -> Void, restart: @escaping () -> Void) {
         self.announce = announce
+        self.restart = restart
     }
 
     func start() {
@@ -172,11 +196,25 @@ final class Updater {
 
     private func run(quiet: Bool) async {
         guard let release = await latestRelease() else {
-            if !quiet { await say("Could not reach GitHub.") }
+            // The request did not complete, or came back with no version in it. This is
+            // the ONLY case that is about reaching GitHub.
+            if !quiet { await say("Could not reach GitHub — check your connection.") }
             return
         }
+        // Before anything is asked about assets. The published release being older than
+        // the installed one is the ordinary case, and answering it needs nothing but the
+        // two version numbers.
         guard Self.isNewer(release.version, than: Branding.version) else {
             if !quiet { await say("loafcat \(Branding.version) is the latest version.") }
+            return
+        }
+        guard let assetURL = release.assetURL else {
+            // Newer, but nothing here can install it — a release that shipped only for
+            // the other platform, or one still being uploaded.
+            note("update: \(release.version) has no macOS download")
+            if !quiet {
+                await say("loafcat \(release.version) exists, but with no macOS download yet.")
+            }
             return
         }
 
@@ -193,10 +231,15 @@ final class Updater {
             return
         }
 
-        if await download(release, signatureURL: signatureURL) {
+        if await download(release, from: assetURL, signatureURL: signatureURL) {
             await MainActor.run { self.stagedAndReady = true }
-            await say("loafcat \(release.version) is ready — it will be running the "
-                      + "next time you open the app.")
+            if Self.restartWhenReady {
+                await say("loafcat \(release.version) is ready — restarting into it now.")
+                await MainActor.run { self.restart() }
+            } else {
+                await say("loafcat \(release.version) is ready — it will be running the "
+                          + "next time you open the app.")
+            }
         } else if !quiet {
             await say("That update did not verify. Nothing was installed.")
         }
@@ -204,9 +247,14 @@ final class Updater {
 
     @MainActor private func say(_ message: String) { announce(message) }
 
+    /// `assetURL` is optional on purpose. A release that carries nothing this platform
+    /// can install is a perfectly ordinary thing — v0.1.0 shipped a `.dmg` and nothing
+    /// else, before there was a signed zip to update from — and it is emphatically not
+    /// the same event as failing to reach GitHub. Collapsing the two is what made the
+    /// Settings button report a network error on a machine with a working network.
     private struct Release {
         let version: String
-        let assetURL: URL
+        let assetURL: URL?
         let checksumURL: URL?
         let signatureURL: URL?
     }
@@ -238,19 +286,19 @@ final class Updater {
             else if name.hasSuffix(".zip.sig") { sig = url }
             else if name.hasSuffix(".zip") { asset = url }
         }
-        guard let asset else { return nil }
         return Release(version: version, assetURL: asset, checksumURL: sum, signatureURL: sig)
     }
 
     /// Downloads, verifies, and stages. Returns false and leaves nothing behind if
     /// anything about it fails to check out.
-    private func download(_ release: Release, signatureURL: URL) async -> Bool {
+    private func download(_ release: Release, from assetURL: URL,
+                          signatureURL: URL) async -> Bool {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("loafcat-update-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: work) }
 
         do {
-            let payload = try await fetch(release.assetURL)
+            let payload = try await fetchWithProgress(assetURL)
 
             if let sumURL = release.checksumURL,
                let published = String(data: try await fetch(sumURL), encoding: .utf8)?
@@ -303,6 +351,40 @@ final class Updater {
             note("update: download failed (\(error.localizedDescription))")
             return false
         }
+    }
+
+    /// The asset itself, read in pieces so there is something to report while it
+    /// arrives. Everything else here is a checksum or a signature — a hundred bytes,
+    /// nothing worth a progress bar — and goes through `fetch` unchanged.
+    private func fetchWithProgress(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60
+        request.setValue("loafcat/\(Branding.version)", forHTTPHeaderField: "User-Agent")
+
+        await MainActor.run { self.downloadPercent = 0 }
+        defer { Task { @MainActor in self.downloadPercent = -1 } }
+
+        let (stream, response) = try await URLSession.shared.bytes(for: request)
+        let total = response.expectedContentLength
+        var payload = Data()
+        if total > 0 { payload.reserveCapacity(Int(total)) }
+
+        var sinceLastReport = 0
+        for try await byte in stream {
+            payload.append(byte)
+            sinceLastReport += 1
+            // A percentage recomputed per byte would cost more than the download. An
+            // expectedContentLength of -1 means the server did not say, and the bar then
+            // simply does not move, which is more honest than inventing a denominator.
+            if sinceLastReport >= 16384 {
+                sinceLastReport = 0
+                if total > 0 {
+                    let pct = Int(Int64(payload.count) * 100 / total)
+                    await MainActor.run { self.downloadPercent = pct }
+                }
+            }
+        }
+        return payload
     }
 
     private func fetch(_ url: URL) async throws -> Data {
