@@ -101,7 +101,7 @@ jobs:
       - name: Self-test
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
           Write-Host "running $($exe.FullName) --selftest"
 
           # Start-Process with redirection rather than `& $exe`: a GUI subsystem
@@ -124,6 +124,23 @@ jobs:
           }
           if ($p.ExitCode -ne 0) { throw "self-test failed (exit $($p.ExitCode))" }
 
+      # The other half of what gets published: one file, with no assets\ beside it,
+      # which has to unpack its own art out of itself before it can do anything. That
+      # is the download most people take, and until now nothing ran it -- the staged
+      # folder above always had the art on disk, so the embedded path was compiled and
+      # never executed. --selftest returns before SelfInstall, so this cannot install
+      # anything on the runner.
+      - name: The one-file download is a complete app
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/loafcat.exe | Select-Object -First 1
+          if (-not $exe) { throw "build.ps1 did not publish dist/loafcat.exe" }
+          $out = Join-Path $env:RUNNER_TEMP "bare.out"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" `
+                 -PassThru -NoNewWindow -Wait -RedirectStandardOutput $out
+          Get-Content $out -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "the bare executable failed its self-test" }
+
       # The drag physics, driven by a scripted grab-hold-shake-release through the
       # same entry points real mouse events use. This is the one check that the
       # ported springs and pendulum actually behave like the Swift original rather
@@ -131,7 +148,7 @@ jobs:
       - name: Drag physics
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
           $log = Join-Path $env:RUNNER_TEMP "drag.log"
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
                  -PassThru -RedirectStandardOutput $log -NoNewWindow
@@ -150,7 +167,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
           # About the app starting, not about the first-run settings window.
           $prefs = Join-Path $env:LOCALAPPDATA "loafcat"
           New-Item -ItemType Directory -Path $prefs -Force | Out-Null

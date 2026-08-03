@@ -214,7 +214,7 @@ jobs:
       - name: Self-test
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
           # Start-Process -Wait, not `& $exe`. PowerShell does not WAIT for a GUI
           # subsystem executable invoked with the call operator, so $LASTEXITCODE
           # there belongs to whatever ran before it. That is how this step failed a
@@ -228,7 +228,7 @@ jobs:
       - name: Drag physics
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
           $log = Join-Path $env:RUNNER_TEMP "drag.log"
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
                  -PassThru -RedirectStandardOutput $log -NoNewWindow
