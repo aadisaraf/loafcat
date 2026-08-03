@@ -217,6 +217,22 @@
         "slots": 1,
         "follow": "head"
       },
+      "grip_l": {
+        "file": "parts/grip_l.png",
+        "x": 29,
+        "y": 25,
+        "w": 11,
+        "h": 10,
+        "slots": 1
+      },
+      "grip_r": {
+        "file": "parts/grip_r.png",
+        "x": 15,
+        "y": 25,
+        "w": 12,
+        "h": 10,
+        "slots": 1
+      },
       "heart": {
         "file": "parts/heart.png",
         "x": 20,

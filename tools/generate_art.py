@@ -299,6 +299,42 @@ OVERLAY_G = {
     # Exclamation mark for "needs your permission". Deliberately the only red
     # glyph in the set -- it is the one the user has to act on.
     "alert": (43, 2),
+
+    # --- the paw that hooks over a screen edge while the cat peeks ---------
+    # Placed against the cut, not against the canvas. When the cat parks on the
+    # right, `reveal_px` of ink stays on screen and the screen edge therefore
+    # falls at canvas x = ink_min + reveal = 9 + 15 = 24; on the left it falls at
+    # ink_max - reveal = 46 - 15 = 31. Each paw is drawn so its wrist is well
+    # inside the visible band and its TOES cross the cut -- so the toes are half
+    # clipped by the edge itself, which is exactly what a paw hooked round a
+    # corner looks like from the near side. A paw drawn entirely inside the band
+    # would just be a paw; the clipping is the whole illusion.
+    #
+    # Mirrored about the ink's centre (27.5), not the canvas's (24), because the
+    # cat's ink is not centred in its canvas -- mirroring about 24 puts the left
+    # paw almost entirely outside the left band.
+    # Small, round, and high -- beside the face rather than across the chest. A
+    # big pad low down reads as a slatted box the cat is holding, not as a paw
+    # it is holding ON with; up at chin height next to one wide eye it reads the
+    # way a hand curled round a doorframe does. n=2.2 is the roundness the real
+    # paws use, and it is what stops it looking like a crate.
+    "grip_r": dict(cx=20.5, cy=30, w=10, h=8, n=2.2),
+    "grip_l": dict(cx=34.5, cy=30, w=10, h=8, n=2.2),
+    # Toe separations, as two grooves cut in from the outer edge of the pad.
+    #
+    # Two earlier attempts failed for opposite reasons and both are worth not
+    # repeating. Bumps along the rim were invisible: they sat past the cut, and
+    # where they showed at all they were the colour of the pad they sat on, so
+    # the paw read as one more lump of body. Dark beans then merged with the
+    # pad's own outline into a single thick edge, because at fifteen pixels
+    # across there is no room between a bean and the rim it sits against.
+    # A groove has no such problem -- it is a line, it starts at the rim, and it
+    # divides rather than decorates.
+    # Short, and only across the outer half: a groove that runs the full width of
+    # the pad divides it into slats, where one that starts at the rim and stops
+    # halfway divides it into toes.
+    "grip_grooves_r": [(21, 28, 26), (21, 32, 26)],   # (x0, y, x1)
+    "grip_grooves_l": [(29, 28, 34), (29, 32, 34)],
 }
 
 
@@ -406,6 +442,27 @@ def build_overlays():
                 px(img, 21 + dx, 14 + dy, "heart")
     outline(img)
     add("heart", img, slots=3)
+
+    # --- peeking: a forepaw hooked over the screen edge -------------------
+    # The one piece of art that exists to be half off screen. See OVERLAY_G for
+    # why each is placed against its own cut rather than symmetrically.
+    #
+    # Coloured like the real paws, white-socked cats included, because it IS a
+    # paw -- a theme that gives the cat white socks and then a grey gripping paw
+    # would look like two different animals.
+    for side in ("l", "r"):
+        img = new_layer()
+        spans = superellipse_spans(**OVERLAY_G[f"grip_{side}"])
+        white = f"paw_{side}" in WHITE_PARTS
+        fill_spans(img, spans, "muzzle" if white else "coat_hi")
+        shade_spans(img, spans, "coat_sh" if white else "coat", depth=1)
+        # Outline the pad FIRST, then cut the grooves, so they read as divisions
+        # in one paw rather than as three separate shapes each given their own
+        # outline -- which at this size is three blobs in a row, not a paw.
+        outline(img)
+        for x0, y, x1 in OVERLAY_G[f"grip_grooves_{side}"]:
+            block(img, x0, y, x1, y, "outline")
+        add(f"grip_{side}", img)
 
     return ov
 

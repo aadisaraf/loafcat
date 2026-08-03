@@ -124,6 +124,19 @@ final class PeekModule: CatModule, AtlasTuned {
     private var inkMaxX: CGFloat = 48
     private var inkHeight: CGFloat = 48
 
+    /// Parts that are drawn but do not count as "cat" when deciding how much of it to
+    /// leave on screen.
+    ///
+    /// The shadow for the obvious reason. The tail because it is an APPENDAGE that
+    /// reaches far past the body — 30..46 against a body that stops at 36 — so
+    /// measuring the reveal against it spends a left-edge park's whole budget on tail
+    /// and on the empty notch between tail and flank, and cuts the face in half.
+    /// Excluding it is also what makes the two edges symmetric: 9..24 on the right,
+    /// 24..39 on the left, one whole eye and one whole ear either way. The tail still
+    /// gets drawn, and on a left park it is now the part hanging off the screen, which
+    /// is exactly where a tail should be.
+    private static let notCat: Set<String> = ["shadow", "tail", "tail_hot"]
+
     func retune(_ atlas: Atlas) {
         func v(_ k: String, _ d: CGFloat) -> CGFloat { atlas.tune("peek", k, d) }
         edgeZonePx = v("edge_zone_px", edgeZonePx)
@@ -145,7 +158,7 @@ final class PeekModule: CatModule, AtlasTuned {
         var maxX = -CGFloat.greatestFiniteMagnitude
         var minY = CGFloat.greatestFiniteMagnitude
         var maxY = -CGFloat.greatestFiniteMagnitude
-        for (name, p) in atlas.parts where name != "shadow" {
+        for (name, p) in atlas.parts where !Self.notCat.contains(name) {
             minX = min(minX, p.origin.x)
             maxX = max(maxX, p.origin.x + p.size.width)
             minY = min(minY, p.origin.y)
@@ -358,6 +371,17 @@ final class PeekModule: CatModule, AtlasTuned {
         out.offset.y = sin(bobPhase * 2 * .pi) * bobPx * settled
         stage.headOffset.x -= toEdge * headLeanPx * settled
         stage.headOffset.y -= headRisePx * settled
+        // The paw hooked over the edge. An overlay rather than a body part, which
+        // gets it three things for free: it is not in the draw order or the hit mask,
+        // it can be faded in with the park, and — because overlays do not take
+        // `bodyOffset` — it stays pinned to the screen edge while the body tucks away
+        // behind it. That last one is the whole gag: the cat slides back, the paw
+        // does not let go.
+        let grip = edge == .right ? "grip_r" : "grip_l"
+        if atlas.overlays[grip] != nil {
+            stage.overlays.append(
+                OverlayInstance(part: grip, offset: .zero, alpha: settled))
+        }
         // The paw on the side still showing lifts to the edge, as if holding on to
         // it. The other one is behind the screen edge and would be lifting in
         // private.
@@ -543,21 +567,34 @@ extension PeekModule {
         //    hidden is the thing being aimed at; at reveal 20 both were on screen and
         //    it read as a window clipping a cat. Retuning past that is a design
         //    change and should have to argue with a failing check first.
-        let visibleTo = inkMinX + revealPx
-        func hides(_ name: String) -> Bool {
-            guard let p = atlas.parts[name] else { return true }
-            return p.origin.x >= visibleTo
+        // Both edges, separately. They are NOT mirror images of each other — the cat
+        // carries a tail on one side and nothing on the other — and assuming they
+        // were is exactly how a left-edge park came to spend its whole reveal on tail
+        // and cut the face in half.
+        let seenTo = inkMinX + revealPx        // right-edge park: 0..seenTo is on screen
+        let seenFrom = inkMaxX - revealPx      // left-edge park: seenFrom.. is on screen
+        func box(_ name: String) -> (lo: CGFloat, hi: CGFloat)? {
+            guard let p = atlas.parts[name] else { return nil }
+            return (p.origin.x, p.origin.x + p.size.width)
         }
-        func shows(_ name: String) -> Bool {
-            guard let p = atlas.parts[name] else { return false }
-            return p.origin.x + p.size.width <= visibleTo + 1
-        }
-        // Symmetric art, so checking the right-edge park checks both.
-        check("the near eye is on screen", shows("eye_l"))
-        check("the far eye is behind the edge", hides("eye_r"))
-        check("the near paw is on screen", shows("paw_l"))
-        check("the far paw is behind the edge", hides("paw_r"))
-        check("the tail is behind the edge", hides("tail"))
+        func showsR(_ n: String) -> Bool { box(n).map { $0.hi <= seenTo + 1 } ?? false }
+        func hidesR(_ n: String) -> Bool { box(n).map { $0.lo >= seenTo } ?? true }
+        func showsL(_ n: String) -> Bool { box(n).map { $0.lo >= seenFrom - 1 } ?? false }
+        func hidesL(_ n: String) -> Bool { box(n).map { $0.hi <= seenFrom } ?? true }
+
+        check("right park: the near eye and ear are on screen",
+              showsR("eye_l") && showsR("paw_l"))
+        check("right park: the far eye, far paw and tail are not",
+              hidesR("eye_r") && hidesR("paw_r") && hidesR("tail"))
+        check("left park: the near eye and paw are on screen",
+              showsL("eye_r") && showsL("paw_r"))
+        check("left park: the far eye and far paw are not",
+              hidesL("eye_l") && hidesL("paw_l"))
+        check("the two edges show the same amount of cat",
+              abs((seenTo - inkMinX) - (inkMaxX - seenFrom)) < 0.001,
+              "which is only true because the tail is excluded from the ink")
+        check("a gripping paw exists for each edge",
+              atlas.overlays["grip_l"] != nil && atlas.overlays["grip_r"] != nil)
 
         // 7. Live, and the only check here that needs a screen.
         let y = panel.frame.origin.y

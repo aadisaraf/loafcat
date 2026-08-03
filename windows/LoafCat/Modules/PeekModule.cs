@@ -135,6 +135,19 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private double _inkMaxX = 48;
     private double _inkHeight = 48;
 
+    /// Parts that are drawn but do not count as "cat" when deciding how much of it to
+    /// leave on screen.
+    ///
+    /// The shadow for the obvious reason. The tail because it is an APPENDAGE that
+    /// reaches far past the body — 30..46 against a body that stops at 36 — so
+    /// measuring the reveal against it spends a left-edge park's whole budget on tail
+    /// and on the empty notch between tail and flank, and cuts the face in half.
+    /// Excluding it is also what makes the two edges symmetric: 9..24 on the right,
+    /// 24..39 on the left, one whole eye and one whole ear either way. The tail still
+    /// gets drawn, and on a left park it is now the part hanging off the screen, which
+    /// is exactly where a tail should be.
+    private static readonly HashSet<string> NotCat = ["shadow", "tail", "tail_hot"];
+
     public void Retune(Atlas atlas)
     {
         double V(string k, double d) => atlas.Tune("peek", k, d);
@@ -157,7 +170,7 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         double minY = double.MaxValue, maxY = double.MinValue;
         foreach (var (name, p) in atlas.Parts)
         {
-            if (name == "shadow") continue;
+            if (NotCat.Contains(name)) continue;
             minX = Math.Min(minX, p.Origin.X);
             maxX = Math.Max(maxX, p.Origin.X + p.Size.W);
             minY = Math.Min(minY, p.Origin.Y);
@@ -375,6 +388,16 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         outv.Offset.Y = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
         stage.HeadOffset.X -= toEdge * _headLeanPx * _settled;
         stage.HeadOffset.Y -= _headRisePx * _settled;
+        // The paw hooked over the edge. An overlay rather than a body part, which gets
+        // it three things for free: it is not in the draw order or the hit mask, it can
+        // be faded in with the park, and — because overlays do not take `BodyOffset` —
+        // it stays pinned to the screen edge while the body tucks away behind it. That
+        // last one is the whole gag: the cat slides back, the paw does not let go.
+        string grip = edgeNow == PeekEdge.Right ? "grip_r" : "grip_l";
+        if (atlas.Overlays.ContainsKey(grip))
+        {
+            stage.Overlays.Add(new OverlayInstance(grip, Pt.Zero, _settled));
+        }
         // The paw on the side still showing lifts to the edge, as if holding on to it.
         // The other one is behind the screen edge and would be lifting in private.
         if (edgeNow == PeekEdge.Right) stage.PawOffsetL.Y -= _gripPx * _settled;
@@ -552,18 +575,43 @@ internal static class PeekDemo
         //    is the thing being aimed at; at reveal 20 both were on screen and it read
         //    as a window clipping a cat. Retuning past that is a design change and
         //    should have to argue with a failing check first.
-        double visibleTo = t.InkMinX + t.RevealPx;
-        bool Hides(string name) =>
-            !atlas.Parts.TryGetValue(name, out var p) || p.Origin.X >= visibleTo;
-        bool Shows(string name) =>
-            atlas.Parts.TryGetValue(name, out var p)
-            && p.Origin.X + p.Size.W <= visibleTo + 1;
-        // Symmetric art, so checking the right-edge park checks both.
-        Check("the near eye is on screen", Shows("eye_l"));
-        Check("the far eye is behind the edge", Hides("eye_r"));
-        Check("the near paw is on screen", Shows("paw_l"));
-        Check("the far paw is behind the edge", Hides("paw_r"));
-        Check("the tail is behind the edge", Hides("tail"));
+        // Both edges, separately. They are NOT mirror images of each other — the cat
+        // carries a tail on one side and nothing on the other — and assuming they were
+        // is exactly how a left-edge park came to spend its whole reveal on tail and
+        // cut the face in half.
+        double seenTo = t.InkMinX + t.RevealPx;     // right park: 0..seenTo is on screen
+        double seenFrom = t.InkMaxX - t.RevealPx;   // left park: seenFrom.. is on screen
+        bool Lo(string n, out double lo)
+        {
+            bool ok = atlas.Parts.TryGetValue(n, out var p);
+            lo = ok ? p.Origin.X : 0;
+            return ok;
+        }
+        bool Hi(string n, out double hi)
+        {
+            bool ok = atlas.Parts.TryGetValue(n, out var p);
+            hi = ok ? p.Origin.X + p.Size.W : 0;
+            return ok;
+        }
+        bool ShowsR(string n) => Hi(n, out double hi) && hi <= seenTo + 1;
+        bool HidesR(string n) => !Lo(n, out double lo) || lo >= seenTo;
+        bool ShowsL(string n) => Lo(n, out double lo) && lo >= seenFrom - 1;
+        bool HidesL(string n) => !Hi(n, out double hi) || hi <= seenFrom;
+
+        Check("right park: the near eye and paw are on screen",
+              ShowsR("eye_l") && ShowsR("paw_l"));
+        Check("right park: the far eye, far paw and tail are not",
+              HidesR("eye_r") && HidesR("paw_r") && HidesR("tail"));
+        Check("left park: the near eye and paw are on screen",
+              ShowsL("eye_r") && ShowsL("paw_r"));
+        Check("left park: the far eye and far paw are not",
+              HidesL("eye_l") && HidesL("paw_l"));
+        Check("the two edges show the same amount of cat",
+              Math.Abs((seenTo - t.InkMinX) - (t.InkMaxX - seenFrom)) < 0.001,
+              "which is only true because the tail is excluded from the ink");
+        Check("a gripping paw exists for each edge",
+              atlas.Overlays.ContainsKey("grip_l") && atlas.Overlays.ContainsKey("grip_r"),
+              "");
 
         // 7. A parked cat must still overlap the work area, or ClampIntoView will
         //    haul it back the next time a monitor is plugged in and the park will
