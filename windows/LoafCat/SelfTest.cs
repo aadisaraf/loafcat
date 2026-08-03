@@ -43,6 +43,7 @@ public static class SelfTest
 
         CheckKeyInference();
         CheckStartMenuEntry();
+        CheckInstallPlan();
         CheckUpdater();
         foreach (string theme in themes) CheckTheme(theme);
 
@@ -243,6 +244,45 @@ public static class SelfTest
             try { Directory.Delete(dir, recursive: true); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    /// What a downloaded executable decides to do about itself.
+    ///
+    /// Every branch but the first used to collapse into the same silent nothing, and
+    /// three of the four are reached only on a machine that already has loafcat on it —
+    /// which no test machine does and every user's does. So they are checked here, with
+    /// the versions passed in, rather than left to be discovered by the person the
+    /// answer was wrong for.
+    private static void CheckInstallPlan()
+    {
+        Log.Line("--- install plan ---");
+
+        Check("nothing installed means install it",
+            SelfInstall.Decide(null, "0.2.0") == InstallPlan.Fresh, "no target on disk");
+
+        Check("an older copy is replaced",
+            SelfInstall.Decide("0.1.0", "0.2.0") == InstallPlan.Replace,
+            "0.1.0 installed, 0.2.0 downloaded");
+
+        // The one that reads as "the installer did nothing". It genuinely has nothing
+        // to do, and the difference between that and failing is a sentence on screen.
+        Check("the same version is not reinstalled",
+            SelfInstall.Decide("0.2.0", "0.2.0") == InstallPlan.Same, "0.2.0 either way");
+
+        // FileVersionInfo reports four components where Branding reports three.
+        Check("...however many components each side spells it with",
+            SelfInstall.Decide("0.2.0.0", "0.2.0") == InstallPlan.Same, "0.2.0.0 vs 0.2.0");
+
+        Check("a downgrade is offered rather than performed",
+            SelfInstall.Decide("0.3.0", "0.2.0") == InstallPlan.Older,
+            "0.3.0 installed, 0.2.0 downloaded");
+
+        // The self-test is a real run of the real executable, so the guard that keeps it
+        // from installing anything on the machine testing it has to hold.
+        Check("a test run never installs anything",
+            SelfInstall.Plan(["--portable"]) == InstallPlan.None
+                && SelfInstall.Plan(["--demo-drag"]) == InstallPlan.None,
+            "--portable and --demo-drag both opt out");
     }
 
     /// The two pure decisions the updater makes, which between them decide whether a

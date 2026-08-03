@@ -13,7 +13,14 @@ internal static class Program
     /// sense for a per-user desktop pet, and `Global\` would need privileges we do not
     /// ask for.
     private const string MutexName = @"Local\dev.loafcat.app";
-    private const string ReopenEventName = @"Local\dev.loafcat.reopen";
+    internal const string ReopenEventName = @"Local\dev.loafcat.reopen";
+
+    /// How a newly downloaded copy asks the installed one to let go of its own file.
+    /// Windows will not let an executable be replaced while it is running, and the cat
+    /// is always running, so without this the manual update route cannot work at all.
+    /// `Local\` like the others: same user only, and a process running as this user can
+    /// end this one anyway.
+    internal const string QuitEventName = @"Local\dev.loafcat.quit";
 
     [STAThread]
     private static int Main(string[] args)
@@ -73,13 +80,19 @@ internal static class Program
         // Runs without a window, so it works on a CI runner with no interactive desktop.
         if (args.Contains("--selftest")) return SelfTest.Run();
 
+        // Up here rather than beside Application.Run: both must be called before the
+        // process creates its first window, and the installer below is a window.
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+
         // Before anything is on screen: a staged update renames the running executable
         // out of the way, moves the new one in, and relaunches into it. See Updater.
         if (Updater.ApplyStagedUpdate()) return 0;
 
-        // Before the single-instance check, not after: an installed copy that is already
-        // running holds its own file open, so the copy below fails, and falling through
-        // to the mutex is exactly the right thing to do next. See SelfInstall.
+        // Before the single-instance check, not after. A downloaded copy has to be able
+        // to replace an installed one that is running — which it always is — and that
+        // means asking it to quit, so this cannot be behind a test that gives up the
+        // moment it finds another cat. See SelfInstall.
         if (SelfInstall.Promote(args)) return 0;
 
         using var mutex = new Mutex(initiallyOwned: true, MutexName, out bool isFirst);
@@ -102,9 +115,6 @@ internal static class Program
             return 0;
         }
 
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-
         var controller = new CatController();
         try
         {
@@ -122,6 +132,10 @@ internal static class Program
         using var reopenEvent = new EventWaitHandle(false, EventResetMode.AutoReset,
             ReopenEventName);
         StartReopenWatcher(reopenEvent, controller);
+
+        using var quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset,
+            QuitEventName);
+        StartQuitWatcher(quitEvent, controller);
 
         Application.Run();
         controller.Shutdown();
@@ -141,6 +155,28 @@ internal static class Program
         {
             IsBackground = true,
             Name = "loafcat.reopen",
+        };
+        t.Start();
+    }
+
+    /// A downloaded copy is about to replace this one and needs the file back.
+    ///
+    /// Once, rather than in a loop like the reopen watcher: there is nothing after
+    /// standing down. Exiting through `Application.Exit` rather than dying is what puts
+    /// the tray icon away — a killed process leaves its icon in the notification area
+    /// until something makes the shell notice, so the reward for installing an update
+    /// would be a ghost cat that does nothing when clicked.
+    private static void StartQuitWatcher(EventWaitHandle handle, CatController controller)
+    {
+        var t = new Thread(() =>
+        {
+            handle.WaitOne();
+            Log.Line("install  a downloaded copy is replacing us — standing down");
+            controller.PostToUi(Application.Exit);
+        })
+        {
+            IsBackground = true,
+            Name = "loafcat.quit",
         };
         t.Start();
     }
@@ -259,17 +295,6 @@ public sealed class CatController : ISettingsHost
         {
             OpenSettings();
             if (firstRun) _tray.SayHello();
-        }
-
-        // This copy was started by the one the user double-clicked, which has already
-        // exited. Without a word, the only visible outcome of that is that the file in
-        // Downloads still has the release's name on it and appears to be the app — which
-        // is exactly the report this exists to answer.
-        if (argv.Contains(SelfInstall.JustInstalledFlag))
-        {
-            _tray.Notify("loafcat is installed",
-                "It is in the Start menu now — press Start and type loafcat. "
-                + "The file you downloaded has done its job and can be deleted.");
         }
 
         var (w, h) = CatView.PanelSize(_atlas, _renderScale);

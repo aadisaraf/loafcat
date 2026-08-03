@@ -12,13 +12,19 @@ Or download **`loafcat.exe`** from
 file, nothing to extract: the art and the hook script are embedded and unpack
 themselves on first run.
 
-On that first run it also installs itself — to `%LOCALAPPDATA%\Programs\loafcat`, with a
-Start menu entry, which is exactly where and what `install.ps1` would have put it — and
-hands over to the installed copy, which says so once in the notification area.
+On that first run it installs itself, in a window that tells you it is doing it — to
+`%LOCALAPPDATA%\Programs\loafcat`, with a Start menu entry, which is exactly where and
+what `install.ps1` would have put it — and then offers to open what it installed.
 Otherwise the app you end up with is a file sitting in Downloads, and a second copy of
 it called `loafcat (1).exe` the next time you update by hand. Both download routes
 converge on the same layout, and `install.ps1 -Uninstall` removes either. Pass
 `--portable` to skip it.
+
+Running a **newer** `loafcat.exe` while loafcat is on is the manual update route, and it
+works: the download asks the running copy to stand down, replaces it, and starts it
+again. Running the **same** version tells you so and changes nothing. Running an
+**older** one offers the downgrade rather than performing it, which is what you want on
+the day an update turns out to be bad.
 
 The published executable is named `loafcat.exe`, with no version and no architecture in
 it: the *container* carries those, and a bare executable is not a container. The `.dmg`
@@ -222,6 +228,20 @@ your choice in Settings is authoritative after that.
   something. `AssemblyTitle` sets `FileDescription`, which is the string Task Manager,
   the startup apps list and the tray icon settings all read, and `SelfInstall.cs` deals
   with the file itself.
+- **An install that a running copy can veto is an install that never happens.** Windows
+  will not let a running executable be replaced, and the cat is *always* running — that
+  is the entire proposition of a desktop pet. So the one moment installing matters, the
+  copy on disk is locked. Treating that as "somebody else is here, stand down" reads as
+  correct single-instance behaviour and is in fact the bug: a downloaded newer build
+  hits the locked file, gives up, installs nothing, says nothing, and brings the *old*
+  cat to the front, which is indistinguishable from the download being broken. The
+  running copy has to be asked to quit (`Local\dev.loafcat.quit`, so it exits through
+  `Application.Exit` and takes its tray icon with it) and ended if it will not.
+- **A tray balloon is not a confirmation.** `ShowBalloonTip` is the one piece of Windows
+  UI the system may silently discard — Focus Assist, Do Not Disturb and notifications-off
+  each drop it with no error and no fallback. It was the whole of what said an install
+  had happened, so success and silent refusal looked identical from the outside. Anything
+  a user needs to have seen goes in a window.
 - **The tray icon is not a template.** macOS takes an alpha mask and tints it to match
   the menu bar. Windows draws the icon as-is on a taskbar that may be light, dark, or
   showing the wallpaper, so the generator emits a real two-tone icon whose mid-grey coat
@@ -279,6 +299,14 @@ been checking are asserted mechanically instead.
 **`loafcat.exe --demo-drag`** runs the scripted grab-hold-shake-release through the same
 entry points real mouse events use, and fails the build if the cat has not come
 completely to rest three seconds after release.
+
+**`loafcat.exe --install-unattended`** does what a double-click does, with no window in
+front of it. CI drives it to prove the three outcomes a download can have — installing
+on a clean machine, replacing a copy that is *running*, and correctly doing nothing when
+the same version is already there — by building a second loafcat at `0.0.9` to update
+from. The window is the only part that differs, because a runner cannot press a button;
+the plan, the replacement and the Start menu entry underneath are the code a person's
+double-click runs.
 
 Both builds print their peak values at the end, which is what makes the physics
 comparable across the port. The line also carries `quietMs` — how long after release the

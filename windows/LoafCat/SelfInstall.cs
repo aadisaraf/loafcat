@@ -1,9 +1,37 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace LoafCat;
+
+/// What a downloaded executable should do about itself.
+///
+/// A pure decision, kept apart from the doing of it so `--selftest` can check every
+/// branch on a machine with nothing installed. Getting this wrong is expensive in a way
+/// that is hard to notice: every outcome except `Fresh` used to be the same silent
+/// nothing.
+public enum InstallPlan
+{
+    /// Not a bare download. The .zip, a source build, the installed copy itself, or
+    /// installing was turned off.
+    None,
+
+    /// Nothing is installed yet.
+    Fresh,
+
+    /// An older copy is installed. This is the manual update route, and it is the one
+    /// that has to work while the old copy is running, because it always is.
+    Replace,
+
+    /// The same version is already installed. Open it rather than reinstalling it.
+    Same,
+
+    /// A NEWER copy is installed, so this download is a downgrade. Offered, never
+    /// silent — rolling back is the thing you want most on the day an update is bad.
+    Older,
+}
 
 /// Turns a downloaded executable into an installed app.
 ///
@@ -34,75 +62,241 @@ public static class SelfInstall
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Programs", "loafcat");
 
-    private static string Target => Path.Combine(Root, "loafcat.exe");
+    internal static string Target => Path.Combine(Root, "loafcat.exe");
 
-    /// Passed to the copy it starts, so that copy — which owns the tray icon, and is
-    /// therefore the only one able to say anything — can tell the user where it went.
-    public const string JustInstalledFlag = "--installed";
+    /// Does the whole install with no window and opens the installed copy, for CI.
+    ///
+    /// The window is what a person gets and it waits for them, which a runner cannot
+    /// do. This drives the same `Install` underneath, so what CI proves is the work
+    /// itself: the copy, the replacement of a running copy, and the Start menu entry.
+    public const string UnattendedFlag = "--install-unattended";
 
     private static string Shortcut => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Microsoft", "Windows", "Start Menu", "Programs", "loafcat.lnk");
 
-    /// Returns true when it installed and started the installed copy, meaning this
-    /// process has nothing left to do.
+    /// One step of the install, for the progress bar. A negative percentage means
+    /// there is no way to know how long this part takes.
+    internal readonly record struct Step(int Percent, string Status);
+
+    /// Returns true when this process has nothing left to do — it either handed over to
+    /// the installed copy or the user closed the installer. False means run in place.
     public static bool Promote(string[] args)
     {
-        if (args.Contains("--portable")) return false;
+        var plan = Plan(args);
+        if (plan == InstallPlan.None) return false;
+        return InstallWindow.Run(plan);
+    }
+
+    /// Everything that decides whether there is an install to offer, and which one.
+    internal static InstallPlan Plan(string[] args)
+    {
+        // The test entry points all start the app for real, and none of them should
+        // leave anything behind on the machine that ran them.
+        if (args.Contains("--portable") || args.Contains("--demo-drag")) return InstallPlan.None;
         if (Environment.GetEnvironmentVariable("LOAFCAT_NO_INSTALL") is { Length: > 0 })
-            return false;
+            return InstallPlan.None;
 
         string? self = Environment.ProcessPath;
-        if (self is null) return false;
+        if (self is null) return InstallPlan.None;
 
         // The art was found on disk, so this is the unpacked .zip or a source build.
-        if (!Assets.UsingEmbeddedPayload) return false;
+        if (!Assets.UsingEmbeddedPayload) return InstallPlan.None;
 
+        // This IS the installed copy, just starting normally.
         if (string.Equals(Path.GetDirectoryName(self), Root, StringComparison.OrdinalIgnoreCase))
-            return false;
+            return InstallPlan.None;
 
+        return Decide(InstalledVersion(), Branding.Version);
+    }
+
+    /// Which of the four things a download can be. Split out with no I/O in it so the
+    /// self-test can check every branch.
+    internal static InstallPlan Decide(string? installed, string ours)
+    {
+        if (installed is null) return InstallPlan.Fresh;
+        if (Updater.IsNewer(ours, installed)) return InstallPlan.Replace;
+        if (Updater.IsNewer(installed, ours)) return InstallPlan.Older;
+        return InstallPlan.Same;
+    }
+
+    /// The version of the installed copy, read off the file rather than by running it.
+    internal static string? InstalledVersion()
+    {
+        if (!File.Exists(Target)) return null;
         try
         {
-            Directory.CreateDirectory(Root);
-
-            // Deleted and rewritten rather than copied over. A file created here is a
-            // new file with no alternate data streams, which drops the mark of the web
-            // the browser attached to the download — otherwise the installed copy would
-            // raise SmartScreen again every time it started, having already been allowed
-            // to run once. And the delete is the load-bearing half: Windows will not let
-            // go of a running executable, so an installed copy that is already running
-            // throws here and sends us down the single-instance path instead.
-            if (File.Exists(Target)) File.Delete(Target);
-            using (var src = File.OpenRead(self))
-            using (var dst = File.Create(Target))
-            {
-                src.CopyTo(dst);
-            }
-
-            // The Start menu entry is what makes loafcat answer to its name in the
-            // search box, so a failure here is worth a line in the log rather than a
-            // silent one-less-feature.
-            if (!WriteShortcut(Shortcut, Target, Root, ShortcutDescription))
-                Log.Warn("installed, but without a Start menu entry");
-            Log.Line($"installed to {Root}");
-
-            Process.Start(new ProcessStartInfo(Target)
-            {
-                UseShellExecute = true,
-                WorkingDirectory = Root,
-                Arguments = JustInstalledFlag,
-            });
-            return true;
+            var info = FileVersionInfo.GetVersionInfo(Target);
+            // ProductVersion is the informational version, which is the one Branding
+            // reports, so the two are comparable. It carries the same "+<sha>" suffix.
+            string? v = info.ProductVersion ?? info.FileVersion;
+            if (string.IsNullOrWhiteSpace(v)) return null;
+            int plus = v.IndexOf('+');
+            return plus > 0 ? v[..plus] : v;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
-                                    or System.ComponentModel.Win32Exception)
+                                    or FileNotFoundException)
         {
-            // Never fatal. Running from wherever it is works perfectly well, and an app
-            // that refused to start because it could not tidy itself away would be a
-            // worse app than one with an untidy name.
-            Log.Warn($"could not install to {Root} ({e.Message}) — running in place");
+            return null;
+        }
+    }
+
+    /// Copies this executable into place and leaves a Start menu entry beside it.
+    /// Throws when it could not; the caller says so and runs in place instead.
+    internal static void Install(IProgress<Step>? progress)
+    {
+        string self = Environment.ProcessPath
+            ?? throw new IOException("this executable has no path on disk");
+
+        Directory.CreateDirectory(Root);
+        MakeWay(progress);
+
+        progress?.Report(new Step(0, "Copying loafcat…"));
+        // Written as a new file rather than copied over an existing one. A file created
+        // here has no alternate data streams, which drops the mark of the web the
+        // browser attached to the download — otherwise the installed copy would raise
+        // SmartScreen again every single time it started, having already been allowed
+        // to run once.
+        var source = new FileInfo(self);
+        long total = Math.Max(source.Length, 1);
+        using (var src = source.OpenRead())
+        using (var dst = File.Create(Target))
+        {
+            // 1MB at a time. Small enough that the bar moves on a 66MB executable,
+            // large enough that reporting is not what the copy spends its time on.
+            byte[] buffer = new byte[1 << 20];
+            long done = 0;
+            int read;
+            while ((read = src.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                dst.Write(buffer, 0, read);
+                done += read;
+                progress?.Report(new Step((int)(done * 100 / total), "Copying loafcat…"));
+            }
+        }
+
+        progress?.Report(new Step(100, "Adding it to the Start menu…"));
+        // The Start menu entry is what makes loafcat answer to its name in the search
+        // box, so a failure here is worth a line in the log rather than a silent
+        // one-less-feature. It is not worth failing the install over.
+        if (!WriteShortcut(Shortcut, Target, Root, ShortcutDescription))
+            Log.Warn("installed, but without a Start menu entry");
+        Log.Line($"installed to {Root}");
+    }
+
+    /// Gets the installed copy out of the way of its replacement.
+    ///
+    /// Windows will not let go of a running executable, so an installed copy that is
+    /// running makes its own file undeletable — and this used to be where installing
+    /// gave up. That was wrong in the one case that matters most: the cat is *always*
+    /// running, because a desktop pet you have to close first is a desktop pet you
+    /// stopped using, so hand-installing a newer build could never work. It reported
+    /// nothing, installed nothing, and quietly brought the old cat to the front.
+    private static void MakeWay(IProgress<Step>? progress)
+    {
+        if (!File.Exists(Target) || TryDelete()) return;
+
+        progress?.Report(new Step(-1, "Closing the copy that is running…"));
+        Log.Line("install  the installed copy is running — asking it to stand down");
+        AskRunningCopyToQuit();
+        if (WaitForDelete(40)) return;   // 4s, and a clean exit puts the tray icon away
+
+        // It did not go: a build old enough to predate the quit channel, or one wedged.
+        // Ending it is what install.ps1 has always done here, for the same reason.
+        Log.Warn("install  it did not stand down — closing it");
+        foreach (var p in RunningCopies())
+        {
+            using (p)
+            {
+                try { p.Kill(); }
+                catch (Exception e) when (e is InvalidOperationException or Win32Exception
+                                            or NotSupportedException) { }
+            }
+        }
+        if (WaitForDelete(20)) return;   // 2s
+
+        throw new IOException(
+            "loafcat is still running and will not let go of its own file. "
+            + "Quit it from the tray cat and try again.");
+    }
+
+    private static bool WaitForDelete(int attempts)
+    {
+        for (int i = 0; i < attempts; i++)
+        {
+            if (TryDelete()) return true;
+            Thread.Sleep(100);
+        }
+        return !File.Exists(Target);
+    }
+
+    private static bool TryDelete()
+    {
+        try
+        {
+            File.Delete(Target);
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
             return false;
         }
+    }
+
+    /// Every running process that is the installed copy, and not merely something else
+    /// called loafcat.
+    private static IEnumerable<Process> RunningCopies()
+    {
+        foreach (var p in Process.GetProcessesByName("loafcat"))
+        {
+            string? path = null;
+            try { path = p.MainModule?.FileName; }
+            catch (Exception e) when (e is InvalidOperationException or Win32Exception
+                                        or NotSupportedException) { }
+
+            if (path is not null && string.Equals(path, Target, StringComparison.OrdinalIgnoreCase))
+                yield return p;
+            else
+                p.Dispose();
+        }
+    }
+
+    /// True when a copy of the installed executable is running right now.
+    internal static bool InstalledCopyIsRunning()
+    {
+        foreach (var p in RunningCopies()) { p.Dispose(); return true; }
+        return false;
+    }
+
+    private static void AskRunningCopyToQuit() => Signal(Program.QuitEventName);
+
+    /// Brings the copy that is already running to the front, for when there is nothing
+    /// to install. Returns false when nothing answered.
+    internal static bool WakeRunningCopy() => Signal(Program.ReopenEventName);
+
+    private static bool Signal(string name)
+    {
+        try
+        {
+            using var handle = EventWaitHandle.OpenExisting(name);
+            handle.Set();
+            return true;
+        }
+        catch (Exception e) when (e is WaitHandleCannotBeOpenedException
+                                    or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// Starts the installed copy. This process is finished once it has.
+    internal static void StartInstalled()
+    {
+        Process.Start(new ProcessStartInfo(Target)
+        {
+            UseShellExecute = true,
+            WorkingDirectory = Root,
+        });
     }
 
     public const string ShortcutDescription =

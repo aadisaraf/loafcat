@@ -156,40 +156,64 @@ jobs:
           if (-not $unpacked) { throw "it never unpacked its embedded art" }
           Write-Host "unpacked $($unpacked[0].FullName)"
 
+      # An older loafcat to update FROM. Without one there is no way to reach the branch
+      # that actually broke -- replacing a copy that is running -- because a download
+      # and an install of the same version correctly do nothing to each other.
+      - name: Build an older loafcat to update from
+        shell: pwsh
+        run: |
+          dotnet publish windows/LoafCat/LoafCat.csproj -c Release -r win-x64 `
+            --self-contained true -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true -p:DebugType=none `
+            -p:Version=0.0.9 -o (Join-Path $env:RUNNER_TEMP "older") | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "could not build the older loafcat" }
+
       # Installing itself, for real, on a real Windows machine.
       #
       # This is the one thing a downloaded loafcat.exe does that no other route does,
-      # and every check above deliberately returns before it, so until now not one line
-      # of SelfInstall had ever run anywhere. It is also the step most likely to be
+      # and every check above deliberately returns before it, so for two releases not
+      # one line of SelfInstall ever ran anywhere. It is also the step most likely to be
       # reported as broken, because when it works its entire visible outcome is a file
-      # appearing somewhere the user was not looking -- and when it silently declines,
-      # that looks exactly the same.
+      # appearing somewhere the user was not looking -- and when it declined to run at
+      # all, that looked exactly the same.
       #
-      # Two scenarios, because they take different branches and only the first one is
-      # the happy path anybody thought about: a clean machine, and then the same
-      # download run a second time while the copy it installed is still running.
+      # Three scenarios, because they take three different branches and only the first
+      # was ever the one anybody pictured.
       - name: A downloaded exe installs itself
         shell: pwsh
         run: |
+          [xml]$csproj = Get-Content windows/LoafCat/LoafCat.csproj
+          $version = $csproj.Project.PropertyGroup.Version |
+                       Where-Object { $_ } | Select-Object -First 1
+
           $root      = Join-Path $env:LOCALAPPDATA "Programs\loafcat"
           $installed = Join-Path $root "loafcat.exe"
           $lnk       = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\loafcat.lnk"
           $log       = Join-Path $env:LOCALAPPDATA "loafcat\loafcat.log"
-          $downloads = Join-Path $env:RUNNER_TEMP "downloads"
-          $exe       = Join-Path $downloads "loafcat.exe"
+          $exe       = Join-Path $env:RUNNER_TEMP "downloads\loafcat.exe"
+          $older     = Join-Path $env:RUNNER_TEMP "older\loafcat.exe"
 
+          function Cats { Get-Process -Name loafcat -ErrorAction SilentlyContinue }
           function Kill-Cats {
-            Get-Process -Name loafcat -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Milliseconds 600
+            Cats | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 800
           }
-          function Running-From {
-            (Get-Process -Name loafcat -ErrorAction SilentlyContinue |
-              ForEach-Object { $_.Path }) -join ", "
+          function Where-From { (Cats | ForEach-Object { $_.Path }) -join ", " }
+          function Installed-Version {
+            if (Test-Path $installed) { (Get-Item $installed).VersionInfo.ProductVersion }
+            else { "none" }
           }
-          function Show-Log { param($why)
+          # --install-unattended is the same install with no window in front of it. The
+          # window is what a person gets and it waits for one, which a runner has not
+          # got; everything underneath -- the plan, the replacement, the shortcut -- is
+          # the code a double-click runs.
+          function Run-Download { param($from, $why)
             Write-Host "--- $why ---"
-            Get-Content $log -Tail 30 -ErrorAction SilentlyContinue
+            $p = Start-Process -FilePath $from -ArgumentList "--install-unattended" `
+                   -WorkingDirectory (Split-Path $from) -PassThru
+            if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "$why: it never handed over" }
+            Start-Sleep -Seconds 5
           }
 
           Kill-Cats
@@ -200,35 +224,46 @@ jobs:
           New-Item -ItemType Directory -Path (Split-Path $log) -Force | Out-Null
           '{ "hasLaunched": true }' | Set-Content (Join-Path (Split-Path $log) "settings.json")
 
-          Write-Host "=== 1. a clean machine ==="
-          $p = Start-Process -FilePath $exe -WorkingDirectory $downloads -PassThru
-          if (-not $p.WaitForExit(45000)) { $p.Kill(); throw "the download never handed over" }
-          Start-Sleep -Seconds 4
-          Show-Log "after the first run"
-          Write-Host "installed exe : $(Test-Path $installed)"
-          Write-Host "start menu    : $(Test-Path $lnk)"
-          Write-Host "running from  : $(Running-From)"
-
           $failures = @()
-          if (-not (Test-Path $installed)) { $failures += "it did not copy itself to $root" }
-          if (-not (Test-Path $lnk))       { $failures += "it left no Start menu entry" }
-          if ((Running-From) -notlike "*$root*") {
-            $failures += "the installed copy is not the one running"
+
+          Run-Download $older "1. a clean machine, installing 0.0.9"
+          Write-Host "installed    : $(Installed-Version)"
+          Write-Host "start menu   : $(Test-Path $lnk)"
+          Write-Host "running from : $(Where-From)"
+          if (-not (Test-Path $installed))     { $failures += "it did not copy itself to $root" }
+          if (-not (Test-Path $lnk))           { $failures += "it left no Start menu entry" }
+          if ((Where-From) -notlike "*$root*") { $failures += "the installed copy is not the one running" }
+
+          # THE bug. Windows will not let a running executable be replaced, and the cat
+          # is always running -- that is what a desktop pet is -- so hand-installing a
+          # newer build hit a locked file, gave up, said nothing, and brought the old
+          # cat to the front. Which is indistinguishable from the app being broken.
+          Write-Host ""
+          Run-Download $exe "2. a newer download, with 0.0.9 running"
+          Write-Host "installed    : $(Installed-Version)"
+          Write-Host "running from : $(Where-From)"
+          Write-Host "cats         : $((Cats | Measure-Object).Count)"
+          if ((Installed-Version) -notlike "$version*") {
+            $failures += "the newer download did not replace the running copy (still $(Installed-Version))"
           }
+          if ((Where-From) -notlike "*$root*")     { $failures += "nothing is running after the update" }
+          if ((Cats | Measure-Object).Count -ne 1) { $failures += "the update left more than one cat" }
+
+          # And having replaced it, running the same file again must not thrash: no
+          # reinstall, no second cat, and the one already running stays up.
+          Write-Host ""
+          $before = (Cats | Select-Object -First 1).Id
+          Run-Download $exe "3. the same download again"
+          $after = (Cats | Select-Object -First 1).Id
+          Write-Host "pid before   : $before"
+          Write-Host "pid after    : $after"
+          Write-Host "cats         : $((Cats | Measure-Object).Count)"
+          if ((Cats | Measure-Object).Count -ne 1) { $failures += "running the same version started a second cat" }
+          if ($before -ne $after)                  { $failures += "running the same version restarted the cat for nothing" }
 
           Write-Host ""
-          Write-Host "=== 2. the same download, run again, with loafcat already running ==="
-          # The report this step was written for. Somebody downloads a newer exe while
-          # the cat is on -- which it always is, that is the whole point of it -- and
-          # double-clicks it the way they would any other installer.
-          $before = Running-From
-          $p2 = Start-Process -FilePath $exe -WorkingDirectory $downloads -PassThru
-          if (-not $p2.WaitForExit(45000)) { $p2.Kill(); throw "the second run hung" }
-          Start-Sleep -Seconds 4
-          Show-Log "after the second run"
-          Write-Host "running before: $before"
-          Write-Host "running after : $(Running-From)"
-          if (-not (Running-From)) { $failures += "the second run left no cat running at all" }
+          Write-Host "--- log ---"
+          Get-Content $log -Tail 40 -ErrorAction SilentlyContinue
 
           Kill-Cats
           if ($failures) { throw ($failures -join "; ") }
