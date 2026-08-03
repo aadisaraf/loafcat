@@ -220,6 +220,36 @@ The cost is that the cat does not automatically get bigger on a high-DPI display
 first run picks a starting scale from the monitor's DPI (2× at 100%, 3× at 150%) and
 your choice in Settings is authoritative after that.
 
+### Getting out of the way is cheaper here, and inverts one rule
+
+macOS has to enumerate every window on screen — eighty-odd dictionaries — to ask whether
+one covers the display, so it does that on a background queue at 4Hz. Here the
+foreground window answers the same question in three calls, so `PeekModule` polls it
+inline and there is nothing to get off the tick. The identical `FullscreenWatch` shape
+is kept on both sides anyway, so the two files still read as translations.
+
+- **Compare a candidate full-screen window against `rcMonitor`, not `rcWork`.** This is
+  the one place the usual advice inverts, and it is worth stating loudly next to all the
+  entries above that say the opposite. Real full screen covers the taskbar; a merely
+  maximised window does not. That single difference is the entire reason a maximised
+  terminal is not mistaken for a film. Everywhere the cat is *placed* it is still
+  `rcWork`.
+- **`CallNtPowerInformation(SystemExecutionState)` needs no privilege; `powercfg
+  /requests` needs admin.** They answer the same question — is anything holding the
+  display awake — and only one of them can be asked by a desktop pet. `ES_DISPLAY_REQUIRED`
+  is the flag, and it is the counterpart of macOS's `PreventUserIdleDisplaySleep`.
+- **`ClampIntoView` can silently undo a park.** It drags a fully-off-display window back
+  on a monitor change, which is exactly right for a cat stranded on an unplugged second
+  screen and exactly wrong for one deliberately parked half off the side. It only fires
+  when the intersection is *zero*, so a park that leaves any cat on screen is safe — and
+  `--demo-peek` asserts that rather than trusting it, because the failure would only
+  ever show up on a machine with two monitors.
+- **The indicator uses `Form.Opacity`, not `UpdateLayeredWindow`.** The cat needs
+  per-pixel alpha because it is a silhouette; the snap capsule is one flat shape at one
+  uniform alpha, and `SetLayeredWindowAttributes` — which is all `Opacity` is — is the
+  whole of what that requires. `WS_EX_TRANSPARENT` makes it click-through outright, so
+  it never goes near the hit-testing question at all.
+
 ### Smaller things
 
 - **The app has to name itself.** A `.app` bundle carries its own name and gets dragged
@@ -348,6 +378,13 @@ same drag feel before believing a difference.
   underneath gets it. "Nothing happens" is the correct outcome and looks identical to a
   bug.
 - The tray icon against a light taskbar, a dark taskbar, and a wallpapered one.
+- **How the snap indicator looks.** `--demo-peek` proves the gesture arms only on a
+  dwell and that the cat parks where it claims, but a capsule three logical pixels wide
+  with hard-edged rounded ends has never been seen by anyone. Check it reads as an
+  affordance against a bright video and a dark one, and that it does not shimmer as the
+  cat's Y moves under it.
+- **That a parked cat is still grabbable.** Only `reveal_px` of it is on screen by
+  design; confirm that is enough to get hold of at 2× and at 4×.
 - That the hook does not slow a real Claude Code session — kill the app, run a long
   task, confirm normal speed.
 - Behaviour on a mixed-DPI multi-monitor setup, and after unplugging a monitor the cat
