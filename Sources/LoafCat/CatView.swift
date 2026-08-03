@@ -59,6 +59,9 @@ final class CatView: NSView {
     /// flat array lookup and never an image sample. Still in CAT-canvas coordinates,
     /// unchanged by the padding — `isOnCat` does the conversion.
     private(set) var hitMask: [Bool]
+
+    /// The same thing for the peek pose, where only the head and two paws are drawn.
+    private(set) var peekMask: [Bool] = []
     private let maskDilation = 6
 
     private var padX: CGFloat { CGFloat(atlas.layout.padX) }
@@ -272,12 +275,38 @@ final class CatView: NSView {
     /// Deliberately still in cat-canvas space and unaffected by the panel padding —
     /// the padding is empty, so a mask that covered it would only make transparent
     /// pixels clickable.
+    /// Builds both masks: the whole cat, and the head-and-two-paws the peek pose
+    /// actually puts on screen.
+    ///
+    /// Two are needed because the peek pose does not CLIP the cat, it leaves most of
+    /// it out — so the silhouette is genuinely a different shape. Testing a click
+    /// against the whole-cat mask while the body is not being drawn would leave a
+    /// body-sized patch of dead screen under the chin: the pointer would report "on
+    /// the cat", the window would stop ignoring mouse events, and clicks would
+    /// disappear into nothing. That is the click-through bug this project already
+    /// went to some trouble to get right.
     private func buildHitMask() {
+        hitMask = mask(parts: atlas.order.filter { $0 != "shadow" }, pawRise: 0)
+        // The paws ride up to the chin in the peek pose, so the mask has to know
+        // where they went. The amount is the atlas's, read here rather than passed
+        // in, because the view already reads the atlas for every other measurement.
+        let rise = atlas.tune("peek", "paw_rise_px", 10)
+        peekMask = mask(parts: Self.peekParts, pawRise: rise)
+    }
+
+    /// The parts the peek pose draws. Everything else is behind the screen edge.
+    static let peekParts = [
+        "head", "ear_l", "ear_r", "eye_l", "eye_r", "lid_l", "lid_r",
+        "pupil_l", "pupil_r", "face", "paw_l", "paw_r",
+    ]
+
+    private func mask(parts names: [String], pawRise: CGFloat) -> [Bool] {
         let side = Int(atlas.canvas)
         var raw = [Bool](repeating: false, count: side * side)
 
-        for name in atlas.order where !name.hasPrefix("lid_") && name != "shadow" {
+        for name in names where !name.hasPrefix("lid_") && name != "shadow" {
             guard let part = atlas.parts[name] else { continue }
+            let lift = (name == "paw_l" || name == "paw_r") ? Int(pawRise.rounded()) : 0
             let w = Int(part.size.width), h = Int(part.size.height)
             guard w > 0, h > 0 else { continue }
 
@@ -300,7 +329,7 @@ final class CatView: NSView {
                     let alpha = buf[(py * w + pxi) * 4 + 3]
                     guard alpha > 40 else { continue }
                     let gx = Int(part.origin.x) + pxi
-                    let gy = Int(part.origin.y) + py
+                    let gy = Int(part.origin.y) + py - lift
                     if gx >= 0, gx < side, gy >= 0, gy < side { raw[gy * side + gx] = true }
                 }
             }
@@ -326,7 +355,7 @@ final class CatView: NSView {
                 if near { out[y * side + x] = true }
             }
         }
-        hitMask = out
+        return out
     }
 
     /// True when a point in view coordinates lands on (or near) the cat.
@@ -369,7 +398,9 @@ final class CatView: NSView {
         let lyUp = ((viewPoint.y - bounds.midY) / sc) + half
         let ly = side - 1 - Int(lyUp.rounded(.down))
         guard lx >= 0, lx < side, ly >= 0, ly < side else { return nil }
-        guard hitMask[ly * side + lx] else { return nil }
+        // Whichever silhouette is actually on screen this frame.
+        let live = (CatStage.shared.peekPose && !peekMask.isEmpty) ? peekMask : hitMask
+        guard live[ly * side + lx] else { return nil }
         return CGPoint(x: CGFloat(lx), y: CGFloat(ly))
     }
 
@@ -428,7 +459,7 @@ final class CatView: NSView {
         for (name, l) in layers {
             guard let part = atlas.parts[name] else { continue }
             let t = rig.transforms[name] ?? Rig.Transform()
-            l.isHidden = t.hidden
+            l.isHidden = t.hidden || CatStage.shared.hiddenParts.contains(name)
 
             l.position = containerPosition(for: part, offset: t.offset)
 
@@ -448,7 +479,11 @@ final class CatView: NSView {
             // The hot coat is the same art on the same grid, so it copies the base
             // layer's geometry outright rather than recomputing it.
             if let h = hotLayers[name] {
+                // Keyed by the BASE part's name, so one membership test covers the
+                // coat and its overheated twin — a hidden body with a visible red
+                // body floating where it was would be quite a bug.
                 h.isHidden = t.hidden || heat < 0.004
+                    || CatStage.shared.hiddenParts.contains(name)
                 if !h.isHidden {
                     h.position = l.position
                     h.transform = l.transform

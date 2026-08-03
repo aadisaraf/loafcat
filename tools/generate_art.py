@@ -300,41 +300,6 @@ OVERLAY_G = {
     # glyph in the set -- it is the one the user has to act on.
     "alert": (43, 2),
 
-    # --- the paw that hooks over a screen edge while the cat peeks ---------
-    # Placed against the cut, not against the canvas. When the cat parks on the
-    # right, `reveal_px` of ink stays on screen and the screen edge therefore
-    # falls at canvas x = ink_min + reveal = 9 + 15 = 24; on the left it falls at
-    # ink_max - reveal = 46 - 15 = 31. Each paw is drawn so its wrist is well
-    # inside the visible band and its TOES cross the cut -- so the toes are half
-    # clipped by the edge itself, which is exactly what a paw hooked round a
-    # corner looks like from the near side. A paw drawn entirely inside the band
-    # would just be a paw; the clipping is the whole illusion.
-    #
-    # Mirrored about the ink's centre (27.5), not the canvas's (24), because the
-    # cat's ink is not centred in its canvas -- mirroring about 24 puts the left
-    # paw almost entirely outside the left band.
-    # Small, round, and high -- beside the face rather than across the chest. A
-    # big pad low down reads as a slatted box the cat is holding, not as a paw
-    # it is holding ON with; up at chin height next to one wide eye it reads the
-    # way a hand curled round a doorframe does. n=2.2 is the roundness the real
-    # paws use, and it is what stops it looking like a crate.
-    "grip_r": dict(cx=20.5, cy=30, w=10, h=8, n=2.2),
-    "grip_l": dict(cx=34.5, cy=30, w=10, h=8, n=2.2),
-    # Toe separations, as two grooves cut in from the outer edge of the pad.
-    #
-    # Two earlier attempts failed for opposite reasons and both are worth not
-    # repeating. Bumps along the rim were invisible: they sat past the cut, and
-    # where they showed at all they were the colour of the pad they sat on, so
-    # the paw read as one more lump of body. Dark beans then merged with the
-    # pad's own outline into a single thick edge, because at fifteen pixels
-    # across there is no room between a bean and the rim it sits against.
-    # A groove has no such problem -- it is a line, it starts at the rim, and it
-    # divides rather than decorates.
-    # Short, and only across the outer half: a groove that runs the full width of
-    # the pad divides it into slats, where one that starts at the rim and stops
-    # halfway divides it into toes.
-    "grip_grooves_r": [(21, 28, 26), (21, 32, 26)],   # (x0, y, x1)
-    "grip_grooves_l": [(29, 28, 34), (29, 32, 34)],
 }
 
 
@@ -443,26 +408,6 @@ def build_overlays():
     outline(img)
     add("heart", img, slots=3)
 
-    # --- peeking: a forepaw hooked over the screen edge -------------------
-    # The one piece of art that exists to be half off screen. See OVERLAY_G for
-    # why each is placed against its own cut rather than symmetrically.
-    #
-    # Coloured like the real paws, white-socked cats included, because it IS a
-    # paw -- a theme that gives the cat white socks and then a grey gripping paw
-    # would look like two different animals.
-    for side in ("l", "r"):
-        img = new_layer()
-        spans = superellipse_spans(**OVERLAY_G[f"grip_{side}"])
-        white = f"paw_{side}" in WHITE_PARTS
-        fill_spans(img, spans, "muzzle" if white else "coat_hi")
-        shade_spans(img, spans, "coat_sh" if white else "coat", depth=1)
-        # Outline the pad FIRST, then cut the grooves, so they read as divisions
-        # in one paw rather than as three separate shapes each given their own
-        # outline -- which at this size is three blobs in a row, not a paw.
-        outline(img)
-        for x0, y, x1 in OVERLAY_G[f"grip_grooves_{side}"]:
-            block(img, x0, y, x1, y, "outline")
-        add(f"grip_{side}", img)
 
     return ov
 
@@ -1214,33 +1159,36 @@ BEHAVIOUR = {
         # Grace before disarming again. Without it, one pixel of hand wobble at
         # the boundary strobes the line on and off.
         "disarm_ms": 80,
-        # How much of the cat's INK stays on screen once parked. Measured off the
-        # ink rather than the canvas, so the transparent bubble margin does not
-        # eat the reveal and leave the cat entirely off screen.
+        # How much of the peeking HEAD stays on screen. The head spans x 9..39, so
+        # 26 leaves four pixels of the far ear and cheek behind the screen edge.
         #
-        # The ink spans x 9..46, so this is a slice of 37 and not of 48. At 15 the
-        # visible band is 9..24, which lands on exactly one ear (10..25), one whole
-        # eye (11..23), half a head (9..39) and one paw (13..23) — the far eye,
-        # the far paw and the tail are all behind the edge. That specific cut is
-        # what makes it read as a cat looking round a corner. Anything past about
-        # 18 shows both eyes and stops being a peek at all: at 20 it was 54% of the
-        # cat, which reads as a window clipping a cat rather than a cat hiding.
-        "reveal_px": 15,
+        # Note what this is measured against, because it was measured against the
+        # wrong thing twice. The peek pose does not clip the cat -- it leaves the
+        # body out entirely and puts the head and two paws over the edge, the way
+        # an animal looks out from under a blanket. So the only thing with a
+        # meaningful width here is the head. Slicing the whole cat vertically was
+        # the earlier design and it could not be made to work at any width: below
+        # about 18 it was a sliver a third as wide as it was tall, and above it the
+        # second eye came back and it stopped reading as hiding at all. There was
+        # no number in between, because the problem was never the number.
+        "reveal_px": 28,
+        # How far the paws come up to sit under the chin, and how far they pull
+        # toward each other doing it. This is the pose: two paws over the edge with
+        # a face above them.
+        "paw_rise_px": 10,
+        "paw_gather_px": 1.5,
+        # How far into the slide the body ducks out of sight. Late enough that it
+        # happens while the cat is mostly off screen already, so it reads as the
+        # cat getting behind the edge rather than as the body being deleted.
+        "hide_at": 0.55,
         # Exponential approach to the parked position, and back out of it.
         "slide_rate": 11.0,
         # Close enough, in screen points, to stop easing and sit exactly.
         "settle_pt": 0.35,
-        # The peeking pose. The whole trick is the DIFFERENCE between these first
-        # two: the body settles a little further behind the edge while the head
-        # cranes the other way, out past it. Moving the whole cat inward instead
-        # just puts more cat on screen, which is the opposite of peeking — and was
-        # the first version's mistake.
-        "body_tuck_px": 1.5,
-        "head_lean_px": 3.0,
-        # And cranes up a touch, the way anything looking round a corner does.
+        # The head cranes out past the edge and up a touch, the way anything
+        # looking round a corner does.
+        "head_lean_px": 2.0,
         "head_rise_px": 1.0,
-        # The paw on the visible side lifts to the edge, as if holding on.
-        "grip_px": 1.5,
         "bob_px": 1.5,
         "bob_hz": 0.42,
         # The armed indicator. System chrome rather than cat art -- the same

@@ -75,6 +75,20 @@ final class CatStage {
     var pawOffsetR = CGPoint.zero
     var tailOffset = CGPoint.zero
 
+    /// Parts the winning module does not want drawn this frame.
+    ///
+    /// Added for the peek pose, where the cat hides behind the screen edge and puts
+    /// only its head and two paws over it — the body is not clipped, it is *absent*,
+    /// which is the difference between a cat hiding and a cat someone has cut in half.
+    /// Every other pose leaves this empty and draws the whole animal.
+    var hiddenParts: Set<String> = []
+
+    /// True while the cat is in that pose. The view keeps a second hit mask for it:
+    /// the silhouette really is a different shape, and testing clicks against the
+    /// whole-cat mask would leave a body-sized patch of dead screen under the chin
+    /// where there is nothing to click on.
+    var peekPose = false
+
     /// 0 = normal coat, 1 = fully overheated. The view cross-fades the `_hot`
     /// palette-remapped variant of each coat part by this much.
     var heat: CGFloat = 0
@@ -109,6 +123,8 @@ final class CatStage {
         tailOffset = .zero
         heat = 0
         overlays.removeAll(keepingCapacity: true)
+        hiddenParts.removeAll(keepingCapacity: true)
+        peekPose = false
     }
 
     func endFrame(state: CatState, bodyOffset: CGPoint) {

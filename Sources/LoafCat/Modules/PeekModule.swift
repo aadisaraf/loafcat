@@ -109,10 +109,11 @@ final class PeekModule: CatModule, AtlasTuned {
     private var revealPx: CGFloat = 20
     private var slideRate: CGFloat = 11
     private var settlePt: CGFloat = 0.35
-    private var bodyTuckPx: CGFloat = 1.5
-    private var headLeanPx: CGFloat = 3
+    private var pawRisePx: CGFloat = 10
+    private var pawGatherPx: CGFloat = 1.5
+    private var hideAt: CGFloat = 0.55
+    private var headLeanPx: CGFloat = 2
     private var headRisePx: CGFloat = 1
-    private var gripPx: CGFloat = 1.5
     private var bobPx: CGFloat = 1.5
     private var bobHz: CGFloat = 0.42
     private var indicatorWPx: CGFloat = 3
@@ -124,18 +125,16 @@ final class PeekModule: CatModule, AtlasTuned {
     private var inkMaxX: CGFloat = 48
     private var inkHeight: CGFloat = 48
 
-    /// Parts that are drawn but do not count as "cat" when deciding how much of it to
-    /// leave on screen.
+    /// Everything the peek pose does NOT draw. Published to the stage while parked.
     ///
-    /// The shadow for the obvious reason. The tail because it is an APPENDAGE that
-    /// reaches far past the body — 30..46 against a body that stops at 36 — so
-    /// measuring the reveal against it spends a left-edge park's whole budget on tail
-    /// and on the empty notch between tail and flank, and cuts the face in half.
-    /// Excluding it is also what makes the two edges symmetric: 9..24 on the right,
-    /// 24..39 on the left, one whole eye and one whole ear either way. The tail still
-    /// gets drawn, and on a left park it is now the part hanging off the screen, which
-    /// is exactly where a tail should be.
-    private static let notCat: Set<String> = ["shadow", "tail", "tail_hot"]
+    /// The body is not clipped, it is absent — and that distinction is the entire
+    /// reason this pose works where slicing the cat vertically never could. A cat cut
+    /// in half by the screen edge reads as a rendering bug at every width that was
+    /// tried; a head and two paws over the edge reads as a cat immediately, because
+    /// it is a whole face rather than part of one.
+    private static let behindTheEdge: Set<String> = [
+        "body", "body_hot", "tail", "tail_hot", "shadow",
+    ]
 
     func retune(_ atlas: Atlas) {
         func v(_ k: String, _ d: CGFloat) -> CGFloat { atlas.tune("peek", k, d) }
@@ -145,10 +144,11 @@ final class PeekModule: CatModule, AtlasTuned {
         revealPx = v("reveal_px", revealPx)
         slideRate = v("slide_rate", slideRate)
         settlePt = v("settle_pt", settlePt)
-        bodyTuckPx = v("body_tuck_px", bodyTuckPx)
+        pawRisePx = v("paw_rise_px", pawRisePx)
+        pawGatherPx = v("paw_gather_px", pawGatherPx)
+        hideAt = v("hide_at", hideAt)
         headLeanPx = v("head_lean_px", headLeanPx)
         headRisePx = v("head_rise_px", headRisePx)
-        gripPx = v("grip_px", gripPx)
         bobPx = v("bob_px", bobPx)
         bobHz = v("bob_hz", bobHz)
         indicatorWPx = v("indicator_w_px", indicatorWPx)
@@ -158,7 +158,8 @@ final class PeekModule: CatModule, AtlasTuned {
         var maxX = -CGFloat.greatestFiniteMagnitude
         var minY = CGFloat.greatestFiniteMagnitude
         var maxY = -CGFloat.greatestFiniteMagnitude
-        for (name, p) in atlas.parts where !Self.notCat.contains(name) {
+        for name in CatView.peekParts {
+            guard let p = atlas.parts[name] else { continue }
             minX = min(minX, p.origin.x)
             maxX = max(maxX, p.origin.x + p.size.width)
             minY = min(minY, p.origin.y)
@@ -368,42 +369,33 @@ final class PeekModule: CatModule, AtlasTuned {
         var out = ModuleOutput()
         let toEdge: CGFloat = edge == .right ? 1 : -1
         let bobY = sin(bobPhase * 2 * .pi) * bobPx * settled
-        out.offset.x = toEdge * bodyTuckPx * settled
         out.offset.y = bobY
         stage.headOffset.x -= toEdge * headLeanPx * settled
         stage.headOffset.y -= headRisePx * settled
+
+        // The pose: two paws up under the chin, and no body at all.
+        //
+        // The paws are the cat's own — no new sprite was needed, which is the tell
+        // that this is the right shape rather than a clever one. They ride up to the
+        // jaw and gather slightly toward each other, the way an animal's do when it
+        // is holding an edge and looking over it.
+        stage.pawOffsetL.y -= pawRisePx * settled
+        stage.pawOffsetR.y -= pawRisePx * settled
+        stage.pawOffsetL.x += pawGatherPx * settled
+        stage.pawOffsetR.x -= pawGatherPx * settled
+
+        // The body ducks away late, while the cat is already mostly off screen, so it
+        // reads as getting behind the edge rather than as the body being deleted.
+        if settled >= hideAt {
+            stage.hiddenParts.formUnion(Self.behindTheEdge)
+            stage.peekPose = true
+        }
         // The paw hooked over the edge. An overlay rather than a body part, which
         // gets it three things for free: it is not in the draw order or the hit mask,
         // it can be faded in with the park, and — because overlays do not take
         // `bodyOffset` — it stays pinned to the screen edge while the body tucks away
         // behind it. That last one is the whole gag: the cat slides back, the paw
         // does not let go.
-        //
-        // Two things it must NOT do, both of which looked fine in a still and wrong
-        // the moment anything moved:
-        //
-        //   It rides the BOB but not the TUCK. The bob is the cat breathing and the
-        //   paw is attached to the cat, so a paw pinned in y while the body rises and
-        //   falls behind it reads as the cat sliding up and down behind a nail. The
-        //   tuck is the opposite case — that one it must ignore, because the whole
-        //   point is that the body retreats and the grip does not.
-        //
-        //   It appears only once the cat has ARRIVED. Fading it in with `settled`
-        //   tracks the slide, so the paw materialised over the cat's chest out in the
-        //   middle of the screen and travelled to the edge with it — a paw gripping
-        //   nothing at all. It now ramps over the last quarter, by which point the
-        //   edge it is holding is actually there.
-        let grip = edge == .right ? "grip_r" : "grip_l"
-        let gripAlpha = max(0, (settled - 0.75) * 4)
-        if gripAlpha > 0.001, atlas.overlays[grip] != nil {
-            stage.overlays.append(OverlayInstance(
-                part: grip, offset: CGPoint(x: 0, y: bobY), alpha: gripAlpha))
-        }
-        // The paw on the side still showing lifts to the edge, as if holding on to
-        // it. The other one is behind the screen edge and would be lifting in
-        // private.
-        if edge == .right { stage.pawOffsetL.y -= gripPx * settled }
-        else { stage.pawOffsetR.y -= gripPx * settled }
         if park.isParked { out.state = .peeking }
         return out
     }
@@ -599,19 +591,30 @@ extension PeekModule {
         func showsL(_ n: String) -> Bool { box(n).map { $0.lo >= seenFrom - 1 } ?? false }
         func hidesL(_ n: String) -> Bool { box(n).map { $0.hi <= seenFrom } ?? true }
 
-        check("right park: the near eye and ear are on screen",
-              showsR("eye_l") && showsR("paw_l"))
-        check("right park: the far eye, far paw and tail are not",
-              hidesR("eye_r") && hidesR("paw_r") && hidesR("tail"))
-        check("left park: the near eye and paw are on screen",
-              showsL("eye_r") && showsL("paw_r"))
-        check("left park: the far eye and far paw are not",
-              hidesL("eye_l") && hidesL("paw_l"))
+        // A WHOLE FACE is the point of this pose, so both eyes have to clear the
+        // edge — that is the line between a cat hiding behind something and a cat
+        // someone has cut in half, and every earlier version failed it.
+        check("right park: both eyes clear the edge",
+              showsR("eye_l") && showsR("eye_r"))
+        check("left park: both eyes clear the edge",
+              showsL("eye_l") && showsL("eye_r"))
+        // Stated directly rather than as "not fully shown": the shows/hides pair
+        // carry a one-pixel tolerance for the eyes, and reusing them here made a
+        // genuine one-pixel tuck read as a failure. Partly behind the edge is the
+        // claim, so partly behind the edge is what gets asserted.
+        let tuckedR = (box("ear_r")?.hi ?? 0) > seenTo
+        let tuckedL = (box("ear_l")?.lo ?? 0) < seenFrom
+        check("right park: the far ear tucks behind the edge", tuckedR,
+              "so the head reads as coming from behind it, not floating in front")
+        check("left park: the far ear tucks behind the edge", tuckedL)
         check("the two edges show the same amount of cat",
               abs((seenTo - inkMinX) - (inkMaxX - seenFrom)) < 0.001,
-              "which is only true because the tail is excluded from the ink")
-        check("a gripping paw exists for each edge",
-              atlas.overlays["grip_l"] != nil && atlas.overlays["grip_r"] != nil)
+              "measured on the head, which is the only thing this pose draws wide")
+        check("the body, tail and shadow are the parts left behind",
+              !CatView.peekParts.contains("body") && !CatView.peekParts.contains("tail")
+              && !CatView.peekParts.contains("shadow"))
+        check("both paws are part of the pose",
+              CatView.peekParts.contains("paw_l") && CatView.peekParts.contains("paw_r"))
 
         // 7. Live, and the only check here that needs a screen.
         let y = panel.frame.origin.y
