@@ -160,11 +160,35 @@ down separately rather than assuming the Mac answer transfers.
   "was that the mouse?" verdict has to be held long enough for the hook to catch up —
   50ms — or the race alone reproduces the bug above.
 
+- **"Not the mouse" is not "a key", and assuming it is has now caused the same bug
+  twice in opposite directions.** `GetLastInputInfo` is reset by *any* raw input the
+  session receives, and plenty of it never becomes a mouse message: a finger resting on
+  a precision touchpad reports at ~125Hz without moving the cursor, so does a hand on a
+  high-polling-rate mouse, so does a controller left plugged in. The hook cannot see any
+  of it. Shipped, that read as a cat overheating **while the cursor sat still** and
+  cooling down the moment the mouse moved — the inverse of the phantom-typing bug, from
+  the same false dichotomy. A keystroke has to be positively *shaped* like one: isolated
+  by at least 25ms on both sides (which is why the 50ms deferral above is load-bearing
+  twice — it is what makes the successor knowable), and part of a stream no faster than
+  22/s. Every device that reports while idle runs at 60Hz or more, and anything above
+  64Hz collapses onto the `GetTickCount` grid, so the gap test closes all of them.
+
+- **Do not add an evenness test to that, however obvious it looks.** A clock repeats its
+  interval exactly and hands never do — but the stream has already been through an 8.3ms
+  poll, and that quantisation destroys the jitter the test needs. Measured: at 18 keys a
+  second with a generous ±15% wander it discarded 45 of 159 genuine keystrokes. Tried at
+  two window lengths, same answer both times.
+
 - **One loose `.exe` has no name of its own.** macOS gets this free: a `.app` is a
-  bundle you drag to Applications. On Windows, set `AssemblyTitle` (it becomes
-  `FileDescription`, which is what Task Manager and the startup list read) and have the
-  bare executable install itself to `%LOCALAPPDATA%\Programs\loafcat` on first run.
-  Otherwise the app is forever called `loafcat-0.2.0-win-x64.exe`.
+  bundle you drag to Applications. On Windows it takes three things, and all three are
+  load-bearing. Set `AssemblyTitle` (it becomes `FileDescription`, which Task Manager and
+  the startup list read) and `AssemblyName` (the file name, which is what everything
+  *else* falls back to — spell it `loafcat`, the way the project spells it). Publish the
+  bare executable as `loafcat.exe`: the version and the architecture belong to the
+  container, so the `.zip` and the `.dmg` carry them and the loose binary does not. And
+  have it install itself to `%LOCALAPPDATA%\Programs\loafcat` on first run, then *say
+  so* — an install nobody was told about looks identical to no install, and the user goes
+  on launching the download forever.
 ## Privacy — a design constraint, not a feature
 
 The app asks for **zero permissions** and must stay that way. Typing reactions come
@@ -275,7 +299,7 @@ why `generate_dmg_background.py` fails the build if content lands below `SAFE_H`
 
 - `./build.sh` succeeds AND the app was launched and looked at. A build that
   compiles is not a feature that works.
-- **Windows: `dotnet build` succeeds, `LoafCat.exe --selftest` passes, and
+- **Windows: `dotnet build` succeeds, `loafcat.exe --selftest` passes, and
   `--demo-drag` reports PASS.** The self-test asserts the things a human would
   otherwise be checking by eye — the composed frame is opaque on the cat and alpha-0
   in the margin, 3x is byte-for-byte the 1x frame with every pixel tripled, the hit

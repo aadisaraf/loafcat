@@ -242,7 +242,8 @@ public sealed class ModuleRegistry
 
         string line = $"[state] t={N(now - _launched)}"
             + $" {Pad(State.Name(), 11)} by={Pad(StateOwner, 8)}"
-            + $" kps={N(ctx.KeysPerSecond)} heat={N(stage.Heat)} {metrics}";
+            + $" kps={N(ctx.KeysPerSecond)} heat={N(stage.Heat)}"
+            + $" ignored={Interop.InputTelemetry.IgnoredInput} {metrics}";
         if (Overlays.Count > 0) line += " fx=" + string.Join(",", Overlays);
         if (changed) line += "  <-";
         Log.Warn(line);

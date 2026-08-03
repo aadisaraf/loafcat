@@ -19,7 +19,7 @@ public static class Assets
 
     /// True when the art came out of the executable rather than off the disk beside it.
     ///
-    /// Which is the same question as "is this a bare downloaded LoafCat.exe" — the .zip
+    /// Which is the same question as "is this a bare downloaded loafcat.exe" — the .zip
     /// and a source tree both put `assets\` somewhere findable, and neither should be
     /// picked up and moved. See SelfInstall.
     public static bool UsingEmbeddedPayload
@@ -36,7 +36,7 @@ public static class Assets
     ///     of an installed copy.
     ///  2. The repo, for `dotnet run` out of a source tree.
     ///  3. Extracted from inside the executable, once. This is what makes a bare
-    ///     `LoafCat.exe` a complete app rather than half of one.
+    ///     `loafcat.exe` a complete app rather than half of one.
     public static string Root()
     {
         if (_root is not null) return _root;

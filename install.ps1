@@ -49,7 +49,7 @@ if (-not $Version -and $env:LOAFCAT_VERSION) { $Version = $env:LOAFCAT_VERSION }
 if (-not $LocalZip -and $env:LOAFCAT_ZIP) { $LocalZip = $env:LOAFCAT_ZIP }
 
 $repo = "aadisaraf/loafcat"
-$appName = "LoafCat.exe"
+$appName = "loafcat.exe"
 $installRoot = Join-Path $env:LOCALAPPDATA "Programs\loafcat"
 $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\loafcat.lnk"
 

@@ -17,8 +17,8 @@ enum DragFeel: String, CaseIterable {
     /// `normal` is 1.0 by definition — the shipped tuning IS the normal preset.
     var hangScale: CGFloat {
         switch self {
-        case .subtle: return 1.0      // the old Normal
-        case .normal: return 1.35     // the old Springy, now the default
+        case .subtle: return 1.0      // the atlas baseline, untouched
+        case .normal: return 1.35
         case .springy: return 1.75
         }
     }
@@ -30,9 +30,12 @@ enum DragFeel: String, CaseIterable {
         }
     }
 
+    /// `subtle` is the default, which is the same thing as saying the atlas is: it is the
+    /// only one of the three that multiplies by 1.0, so an untouched install gets the
+    /// tuning the theme actually shipped. The louder two are there to be chosen.
     static var current: DragFeel {
-        DragFeel(rawValue: UserDefaults.standard.string(forKey: "dragFeel") ?? "normal")
-            ?? .normal
+        DragFeel(rawValue: UserDefaults.standard.string(forKey: "dragFeel") ?? "subtle")
+            ?? .subtle
     }
 }
 

@@ -146,7 +146,7 @@ jobs:
             irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
             ```
 
-            Or just download **`loafcat-<version>-win-x64.exe`** and double-click
+            Or just download **`loafcat.exe`** and double-click
             it. One file, nothing to install and nothing to extract — the art and
             the hook script are inside it and unpack themselves on first run.
             Windows 10 1809 or later, x64.
@@ -214,7 +214,7 @@ jobs:
       - name: Self-test
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
           # Start-Process -Wait, not `& $exe`. PowerShell does not WAIT for a GUI
           # subsystem executable invoked with the call operator, so $LASTEXITCODE
           # there belongs to whatever ran before it. That is how this step failed a
@@ -228,7 +228,7 @@ jobs:
       - name: Drag physics
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
           $log = Join-Path $env:RUNNER_TEMP "drag.log"
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
                  -PassThru -RedirectStandardOutput $log -NoNewWindow
@@ -295,9 +295,9 @@ jobs:
           # executable and the macOS zip. The .dmg is for humans and is not signed
           # here -- nothing downloads it unattended.
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-             --pattern '*-win-x64.exe' --pattern '*-macos.zip'
+             --pattern 'loafcat.exe' --pattern '*-macos.zip'
 
-          for f in *-win-x64.exe *-macos.zip; do
+          for f in loafcat.exe *-macos.zip; do
             [ -f "$f" ] || continue
             openssl dgst -sha256 -sign ../signing-key.pem -out "$f.sig" "$f"
             # Verified here as well as in the app. A signature that does not check out

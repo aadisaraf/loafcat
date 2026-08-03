@@ -7,7 +7,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>12</LangVersion>
-    <AssemblyName>LoafCat</AssemblyName>
+    <!-- Lower case, because that is how the project spells its own name everywhere
+         else. This is the file name in the zip, the file name the release publishes,
+         the file name it installs itself under, and — with extensions hidden, which is
+         the Windows default — the whole of what Explorer shows. Spelling it two ways
+         is how an app ends up being called something different in every list that
+         names it. -->
+    <AssemblyName>loafcat</AssemblyName>
     <RootNamespace>LoafCat</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
 

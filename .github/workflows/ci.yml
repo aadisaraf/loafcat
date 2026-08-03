@@ -101,7 +101,7 @@ jobs:
       - name: Self-test
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
           Write-Host "running $($exe.FullName) --selftest"
 
           # Start-Process with redirection rather than `& $exe`: a GUI subsystem
@@ -131,7 +131,7 @@ jobs:
       - name: Drag physics
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
           $log = Join-Path $env:RUNNER_TEMP "drag.log"
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-drag" `
                  -PassThru -RedirectStandardOutput $log -NoNewWindow
@@ -150,7 +150,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          $exe = Get-ChildItem dist -Recurse -Filter LoafCat.exe | Select-Object -First 1
+          $exe = Get-ChildItem dist -Recurse -Filter loafcat.exe | Select-Object -First 1
           # About the app starting, not about the first-run settings window.
           $prefs = Join-Path $env:LOCALAPPDATA "loafcat"
           New-Item -ItemType Directory -Path $prefs -Force | Out-Null

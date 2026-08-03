@@ -25,10 +25,10 @@ public static class DragFeelExtensions
     /// retunes the feel keeps these three meaningful instead of silently drifting.
     public static double HangScale(this DragFeel f) => f switch
     {
-        DragFeel.Subtle => 1.0,      // the old Normal
-        DragFeel.Normal => 1.35,     // the old Springy, now the default
+        DragFeel.Subtle => 1.0,      // the atlas baseline, untouched
+        DragFeel.Normal => 1.35,
         DragFeel.Springy => 1.75,
-        _ => 1.35,
+        _ => 1.0,
     };
 
     public static double MaxScale(this DragFeel f) => f switch
@@ -36,16 +36,19 @@ public static class DragFeelExtensions
         DragFeel.Subtle => 1.0,
         DragFeel.Normal => 1.38,
         DragFeel.Springy => 1.80,
-        _ => 1.38,
+        _ => 1.0,
     };
 
     public static readonly DragFeel[] All =
         [DragFeel.Subtle, DragFeel.Normal, DragFeel.Springy];
 
+    /// `Subtle` is the default, which is the same thing as saying the atlas is: it is the
+    /// only one of the three that multiplies by 1.0, so an untouched install gets the
+    /// tuning the theme actually shipped. The louder two are there to be chosen.
     public static DragFeel Current =>
-        Enum.TryParse(Prefs.GetString("dragFeel", "normal"), ignoreCase: true, out DragFeel f)
+        Enum.TryParse(Prefs.GetString("dragFeel", "subtle"), ignoreCase: true, out DragFeel f)
             ? f
-            : DragFeel.Normal;
+            : DragFeel.Subtle;
 
     /// Lower-case, matching the Swift enum's raw values, so the two builds write the
     /// same string into their settings.

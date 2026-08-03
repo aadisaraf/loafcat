@@ -35,7 +35,7 @@ namespace LoafCat;
 /// The apply dance, and why the update lands on the NEXT launch
 /// =============================================================================
 /// Windows will not delete a running executable, but it will rename one. So a verified
-/// download is staged beside the installed app as `LoafCat.exe.new` and nothing else
+/// download is staged beside the installed app as `loafcat.exe.new` and nothing else
 /// happens until the next start, where the running executable renames itself out of the
 /// way, the new one moves into place, and the process relaunches into it. That happens
 /// before any window exists, so it is invisible.
@@ -238,7 +238,11 @@ public sealed class Updater : IDisposable
         {
             string name = a.GetProperty("name").GetString() ?? "";
             string url = a.GetProperty("browser_download_url").GetString() ?? "";
-            if (!name.Contains("win-x64", StringComparison.Ordinal)) continue;
+            // Matched on the extension alone, not on the file name. A release carries
+            // exactly one Windows executable, and pinning the match to the name it
+            // happened to have when this was written is how an updater quietly stops
+            // finding anything the day the packaging changes — with no error, because
+            // "no asset" and "no update" look identical from here.
             if (name.EndsWith(".exe.sha256", StringComparison.Ordinal)) sum = url;
             else if (name.EndsWith(".exe.sig", StringComparison.Ordinal)) sig = url;
             else if (name.EndsWith(".exe", StringComparison.Ordinal)) asset = url;

@@ -7,13 +7,13 @@ namespace LoafCat;
 
 /// Turns a downloaded executable into an installed app.
 ///
-/// A single-file `LoafCat.exe` is a complete app in the sense that it runs, but it is
-/// not one in the sense that matters to the person running it. It sits in Downloads
-/// under the name the release gave it — `loafcat-0.2.0-win-x64.exe`, version and CPU
-/// architecture and all — it is absent from the Start menu, and every shell surface
-/// that has to call it something calls it that file. macOS has no equivalent problem
-/// because a `.app` is a folder you drag to Applications and the bundle carries its own
-/// name; Windows has no such convention for one loose binary, so the app has to do it.
+/// A single-file `loafcat.exe` is a complete app in the sense that it runs, but it is
+/// not one in the sense that matters to the person running it. It sits in Downloads,
+/// beside everything else they have ever downloaded, absent from the Start menu, and a
+/// second copy of it appears there as `loafcat (1).exe` the next time they update by
+/// hand. macOS has no equivalent problem because a `.app` is a folder you drag to
+/// Applications and the bundle carries its own name; Windows has no such convention for
+/// one loose binary, so the app has to do it.
 ///
 /// So on first run it copies itself to exactly where `install.ps1` would have put it and
 /// leaves the same Start menu entry, then hands over to the installed copy. The two
@@ -34,7 +34,11 @@ public static class SelfInstall
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Programs", "loafcat");
 
-    private static string Target => Path.Combine(Root, "LoafCat.exe");
+    private static string Target => Path.Combine(Root, "loafcat.exe");
+
+    /// Passed to the copy it starts, so that copy — which owns the tray icon, and is
+    /// therefore the only one able to say anything — can tell the user where it went.
+    public const string JustInstalledFlag = "--installed";
 
     private static string Shortcut => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -86,6 +90,7 @@ public static class SelfInstall
             {
                 UseShellExecute = true,
                 WorkingDirectory = Root,
+                Arguments = JustInstalledFlag,
             });
             return true;
         }

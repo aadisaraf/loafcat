@@ -7,17 +7,25 @@ port of the Mac binary.
 irm https://raw.githubusercontent.com/aadisaraf/loafcat/main/install.ps1 | iex
 ```
 
-Or download **`loafcat-<version>-win-x64.exe`** from
+Or download **`loafcat.exe`** from
 [Releases](https://github.com/aadisaraf/loafcat/releases) and double-click it. One
 file, nothing to extract: the art and the hook script are embedded and unpack
 themselves on first run.
 
 On that first run it also installs itself — to `%LOCALAPPDATA%\Programs\loafcat`, with a
 Start menu entry, which is exactly where and what `install.ps1` would have put it — and
-hands over to the installed copy. Otherwise the app you end up with is a file in
-Downloads called `loafcat-0.2.0-win-x64.exe`, and that is the name Windows shows you
-every time it has to name it. Both download routes converge on the same layout, and
-`install.ps1 -Uninstall` removes either. Pass `--portable` to skip it.
+hands over to the installed copy, which says so once in the notification area.
+Otherwise the app you end up with is a file sitting in Downloads, and a second copy of
+it called `loafcat (1).exe` the next time you update by hand. Both download routes
+converge on the same layout, and `install.ps1 -Uninstall` removes either. Pass
+`--portable` to skip it.
+
+The published executable is named `loafcat.exe`, with no version and no architecture in
+it: the *container* carries those, and a bare executable is not a container. The `.dmg`
+is `loafcat-<version>.dmg` and holds `LoafCat.app`; the `.zip` is
+`loafcat-<version>-win-x64.zip` and holds `loafcat.exe`. Naming the loose binary after
+the release is how it ends up introducing itself as `loafcat-0.2.0-win-x64` in every
+list that has nothing better to call it.
 
 The `.zip` is the same executable with `assets\` on disk beside it. Anything found
 there wins over the embedded copy, which is what makes dropping a community theme into
@@ -125,6 +133,61 @@ The cost is that typing *while actively moving the mouse* is not seen. That is a
 thing to be unable to distinguish rather than an approximation of one, and the honest
 answer to it is the same as everywhere else here: the fix would be a keyboard hook.
 
+**Then it went wrong a second time, in the opposite direction, from the same mistake.**
+Clearing the mouse of a tick had become accurate; what had not been questioned was the
+step after it. "Not the mouse, therefore a key" assumes the machine has two input
+devices. It does not. `GetLastInputInfo` is reset by *any* raw input the session
+receives, and a great deal of that never becomes a mouse message at all — a finger
+resting on a precision touchpad reports at ~125Hz whether or not it moves the cursor, a
+hand resting on a high-polling-rate mouse reports with nothing to say, a controller left
+plugged in reports forever, a pen reports while it hovers. The hook sees none of them.
+Reported from a real machine as a cat that **heated up while the cursor was held still
+and cooled down as soon as the mouse moved** — because moving it filled the ring with
+events that explained the ticks away.
+
+So the inference is no longer "not the mouse, therefore a key" but "not the mouse, *and*
+shaped like something a person did". Two shape tests, both about timing, which is all
+this code is ever told:
+
+3. **Isolation.** A keystroke has nothing else within 25ms either side of it. A device
+   reporting on its own schedule always has a neighbour one `GetTickCount` step away —
+   15.6ms, or 8.3ms on a machine where something has raised the timer resolution to 1ms,
+   which Chrome and most games do. Checked in *both* directions, which is only possible
+   because the 50ms deferral above already holds the verdict longer than the gap: by the
+   time anything is ruled on, its successor has arrived and can be looked at. That
+   deferral is load-bearing twice over.
+4. **A sustained-rate backstop**, for a stream slow enough to pass the gap test: nothing
+   above 22 keys a second across a full second is a person. `overheat.kps_max` is 14, so
+   the whole of real typing — including the part that is meant to redden the cat — is
+   below it.
+
+Measured, five seconds each:
+
+| an idle device reporting every | unfiltered | now |
+|---|---|---|
+| 8.4ms (a 1ms system timer) | 594 | **0** |
+| 15.6ms (the `GetTickCount` grid) | 319 | **0** |
+| 20ms | 249 | **0** |
+| 33ms | 151 | 22, then written off |
+
+…against jittered typing from 3 to 18 keys a second at ±15% and ±30% wander, 40 seeds
+each: worst case **one keystroke lost in a hundred**.
+
+A third test was written and thrown away. Between roughly 3 and 22 reports a second an
+idle device is inside human range *and* spaced too far apart to trip the gap test, so
+neither test above reaches it. Evenness looks like the answer — a clock repeats its
+interval exactly and hands never do — but the stream has already been through an 8.3ms
+poll, and that quantisation destroys the jitter the test depends on: at 18 keys a second
+with a generous ±15% wander, real typing lands in one or two poll bins and reads as
+perfectly even. It discarded **45 of 159 genuine keystrokes**. Two window lengths, same
+answer. That band is therefore left open on purpose, and nothing is known to sit in it:
+every device that reports while idle runs at 60Hz or faster, and anything above 64Hz
+collapses onto the `GetTickCount` grid, which the gap test closes outright.
+
+When a stream is being written off, the log says so, once per episode. A cat that
+overheats while nobody types is now two different bug reports, and that line is what
+tells them apart.
+
 Without the mouse hook there is nothing to tell a keystroke apart *from*, so the app
 infers nothing at all rather than treating every mouse move as typing.
 
@@ -190,7 +253,7 @@ port was written on a Mac, by someone with no Windows machine, so the second hal
 not be done — and rather than quietly dropping it, the properties a human would have
 been checking are asserted mechanically instead.
 
-**`LoafCat.exe --selftest`** runs on every CI build and checks, for all three themes:
+**`loafcat.exe --selftest`** runs on every CI build and checks, for all three themes:
 
 - the atlas loads from the same files the macOS build reads
 - every part named in the draw order exists
@@ -213,7 +276,7 @@ been checking are asserted mechanically instead.
   measured at **97%** (581 of 600 frames), but that depends on where the breathing sine
   sits relative to the pixel grid and is not a number worth failing a build over.
 
-**`LoafCat.exe --demo-drag`** runs the scripted grab-hold-shake-release through the same
+**`loafcat.exe --demo-drag`** runs the scripted grab-hold-shake-release through the same
 entry points real mouse events use, and fails the build if the cat has not come
 completely to rest three seconds after release.
 
@@ -221,7 +284,8 @@ Both builds print their peak values at the end, which is what makes the physics
 comparable across the port. The line also carries `quietMs` — how long after release the
 stretch is still visibly moving. That one exists because the stretch tempo presets scale
 *rates* while every other number on the line is an *amplitude*, so without it all four
-presets produce an identical peaks line and the comparison could not fail. Measured, same drag feel (`normal`), macOS run three times
+presets produce an identical peaks line and the comparison could not fail. Measured, same drag feel (`normal`, which was the default when this was taken; it is now
+`subtle`, so a fresh run of either build reads `+1.7500` and `22.75` instead), macOS run three times
 against one Windows CI run:
 
 | | peak stretch | landing | swing | hang px | squash | lean px |
