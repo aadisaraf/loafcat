@@ -609,9 +609,7 @@ internal static class PeekDemo
             return false;
         }
         bool ShowsR(string n) => Hi(n, out double hi) && hi <= seenTo + 1;
-        bool HidesR(string n) => !Lo(n, out double lo) || lo >= seenTo;
         bool ShowsL(string n) => Lo(n, out double lo) && lo >= seenFrom - 1;
-        bool HidesL(string n) => !Hi(n, out double hi) || hi <= seenFrom;
 
         // A WHOLE FACE is the point of this pose, so both eyes have to clear the edge
         // — that is the line between a cat hiding behind something and a cat someone

@@ -587,9 +587,7 @@ extension PeekModule {
             return (p.origin.x, p.origin.x + p.size.width)
         }
         func showsR(_ n: String) -> Bool { box(n).map { $0.hi <= seenTo + 1 } ?? false }
-        func hidesR(_ n: String) -> Bool { box(n).map { $0.lo >= seenTo } ?? true }
         func showsL(_ n: String) -> Bool { box(n).map { $0.lo >= seenFrom - 1 } ?? false }
-        func hidesL(_ n: String) -> Bool { box(n).map { $0.hi <= seenFrom } ?? true }
 
         // A WHOLE FACE is the point of this pose, so both eyes have to clear the
         // edge — that is the line between a cat hiding behind something and a cat
