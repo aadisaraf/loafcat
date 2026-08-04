@@ -320,12 +320,13 @@ public static class SelfTest
         Hold(ref b, 10, 0, 0.40);
         Check("the left edge arms too", b.Armed == PeekEdge.Left, "");
 
-        // Parked geometry. A 48px canvas with a 4px margin at 2x: the ink's left edge
-        // must land exactly `reveal` inside the right screen edge.
+        // Parked geometry, measured on the HEAD -- the only thing the peek pose draws
+        // wide. A head spanning 9..39 inside a 4px-margin canvas at 2x, revealing 28:
+        // its left edge must land exactly 28 logical px inside the right screen edge.
         double x = PeekModule.ParkedX(PeekEdge.Right, 0, 1000, padX: 4,
-                                      inkMinX: 0, inkMaxX: 48, revealPx: 20, scale: 2);
+                                      inkMinX: 9, inkMaxX: 39, revealPx: 28, scale: 2);
         Check("a right park leaves exactly the reveal on screen",
-            Math.Abs(1000 - (x + (4 + 0) * 2) - 40) < 1e-9, $"x={x}");
+            Math.Abs(1000 - (x + (4 + 9) * 2) - 56) < 1e-9, $"x={x}");
 
         // And it must not send the cat somewhere a monitor change would drag it back
         // from, which is the one thing that can silently undo a park on Windows.

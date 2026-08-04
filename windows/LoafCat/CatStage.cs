@@ -79,6 +79,20 @@ public sealed class CatStage
     public Pt PawOffsetR = Pt.Zero;
     public Pt TailOffset = Pt.Zero;
 
+    /// Parts the winning module does not want drawn this frame.
+    ///
+    /// Added for the peek pose, where the cat hides behind the screen edge and puts
+    /// only its head and two paws over it — the body is not clipped, it is *absent*,
+    /// which is the difference between a cat hiding and a cat someone has cut in half.
+    /// Every other pose leaves this empty and draws the whole animal.
+    public readonly HashSet<string> HiddenParts = [];
+
+    /// True while the cat is in that pose. The view keeps a second hit mask for it:
+    /// the silhouette really is a different shape, and testing clicks against the
+    /// whole-cat mask would leave a body-sized patch of dead screen under the chin
+    /// where there is nothing to click on.
+    public bool PeekPose;
+
     /// 0 = normal coat, 1 = fully overheated. The view cross-fades the `_hot`
     /// palette-remapped variant of each coat part by this much.
     public double Heat;
@@ -113,6 +127,8 @@ public sealed class CatStage
         PawOffsetL = Pt.Zero;
         PawOffsetR = Pt.Zero;
         TailOffset = Pt.Zero;
+        HiddenParts.Clear();
+        PeekPose = false;
         Heat = 0;
         Overlays.Clear();
     }

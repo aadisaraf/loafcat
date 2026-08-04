@@ -55,6 +55,9 @@ public sealed class CatView : IDisposable
     /// array lookup and never an image sample. Still in CAT-canvas coordinates,
     /// unchanged by the padding — `AtlasPoint` does the conversion.
     private bool[] _hitMask;
+
+    /// The same thing for the peek pose, where only the head and two paws are drawn.
+    private bool[] _peekMask = [];
     private const int MaskDilation = 6;
 
     private double PadX => Atlas.Layout.PadX;
@@ -203,17 +206,43 @@ public sealed class CatView : IDisposable
     /// mask does NOT decide clicks. It survives as the definition of `CursorOnCat`,
     /// which is a proximity question ("is the cursor near enough to count as petting,
     /// or as having noticed an alert") and wants to stay generous on both platforms.
+    /// Builds both masks: the whole cat, and the head-and-two-paws the peek pose
+    /// actually puts on screen.
+    ///
+    /// Two are needed because the peek pose does not CLIP the cat, it leaves most of
+    /// it out — so the silhouette is genuinely a different shape. Testing a click
+    /// against the whole-cat mask while the body is not being drawn would leave a
+    /// body-sized patch of dead screen under the chin: the pointer would report "on
+    /// the cat", the window would stop ignoring mouse events, and clicks would
+    /// disappear into nothing.
     private void BuildHitMask()
+    {
+        _hitMask = Mask(Atlas.Order, 0);
+        // The paws ride up to the chin in the peek pose, so the mask has to know
+        // where they went. The amount is the atlas's, read here rather than passed in,
+        // because the view already reads the atlas for every other measurement.
+        _peekMask = Mask(PeekParts, Atlas.Tune("peek", "paw_rise_px", 10));
+    }
+
+    /// The parts the peek pose draws. Everything else is behind the screen edge.
+    public static readonly string[] PeekParts =
+    [
+        "head", "ear_l", "ear_r", "eye_l", "eye_r", "lid_l", "lid_r",
+        "pupil_l", "pupil_r", "face", "paw_l", "paw_r",
+    ];
+
+    private bool[] Mask(IEnumerable<string> names, double pawRise)
     {
         int side = (int)Atlas.Canvas;
         var raw = new bool[side * side];
 
-        foreach (string name in Atlas.Order)
+        foreach (string name in names)
         {
             if (name.StartsWith("lid_", StringComparison.Ordinal) || name == "shadow") continue;
             if (!Atlas.Parts.TryGetValue(name, out var part)) continue;
             int w = (int)part.Size.W, h = (int)part.Size.H;
             if (w <= 0 || h <= 0) continue;
+            int lift = name is "paw_l" or "paw_r" ? (int)MathX.Round(pawRise) : 0;
 
             var img = part.Image;
             for (int py = 0; py < h; py++)
@@ -222,7 +251,7 @@ public sealed class CatView : IDisposable
                 {
                     if (img[px, py].A <= 40) continue;
                     int gx = (int)part.Origin.X + px;
-                    int gy = (int)part.Origin.Y + py;
+                    int gy = (int)part.Origin.Y + py - lift;
                     if (gx >= 0 && gx < side && gy >= 0 && gy < side) raw[gy * side + gx] = true;
                 }
             }
@@ -250,7 +279,7 @@ public sealed class CatView : IDisposable
                 if (near) outMask[y * side + x] = true;
             }
         }
-        _hitMask = outMask;
+        return outMask;
     }
 
     /// True when a point in client coordinates lands on (or near) the cat.
@@ -282,7 +311,9 @@ public sealed class CatView : IDisposable
         int ly = side - 1 - (int)Math.Floor(lyUp);
 
         if (lx < 0 || lx >= side || ly < 0 || ly >= side) return null;
-        if (!_hitMask[ly * side + lx]) return null;
+        // Whichever silhouette is actually on screen this frame.
+        var live = CatStage.Shared.PeekPose && _peekMask.Length > 0 ? _peekMask : _hitMask;
+        if (!live[ly * side + lx]) return null;
         return new Pt(lx, ly);
     }
 
@@ -313,7 +344,10 @@ public sealed class CatView : IDisposable
         {
             if (!Atlas.Parts.TryGetValue(name, out var part)) continue;
             var t = Rig.TransformFor(name);
-            if (t.Hidden) continue;
+            // One test covers the coat and its overheated twin, because the hot
+            // variant is blitted from inside this same iteration — a hidden body with
+            // a visible red body floating where it was would be quite a bug.
+            if (t.Hidden || CatStage.Shared.HiddenParts.Contains(name)) continue;
 
             var pivot = Atlas.Pivot(name);
             var placement = Place(part, t, pivot, originX, originY, sc);

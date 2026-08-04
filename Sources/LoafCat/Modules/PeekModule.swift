@@ -106,7 +106,7 @@ final class PeekModule: CatModule, AtlasTuned {
     private var edgeZonePx: CGFloat = 12
     private var armMs: Double = 320
     private var disarmMs: Double = 80
-    private var revealPx: CGFloat = 20
+    private var revealPx: CGFloat = 28
     private var slideRate: CGFloat = 11
     private var settlePt: CGFloat = 0.35
     private var pawRisePx: CGFloat = 10
