@@ -697,6 +697,12 @@ extension PeekModule {
         drive(at: home, dragging: true, frames: 30)
         drive(at: pr, dragging: true, frames: Int(armMs / 1000 * 120) + 20)
         check("a drag that rests the cat against the edge arms it", armedEdge == .right)
+        check("...and the line is actually on screen", indicator?.onScreen == true,
+              String(format: "alpha %.2f", Double(indicatorAlpha)))
+        check("...hugging the edge it will snap to",
+              indicator.map { abs($0.frame.maxX - vf.maxX) < 1 } ?? false,
+              String(format: "line at x %.0f, screen edge %.0f",
+                     Double(indicator?.frame.maxX ?? -1), Double(vf.maxX)))
         drive(at: nil, dragging: false, frames: 300)
         check("...and letting go there parks the cat",
               abs(panel.frame.origin.x - pr) < 1.5,
@@ -707,6 +713,7 @@ extension PeekModule {
         reset(to: home)
         drive(at: home, dragging: true, frames: 30)
         drive(at: pr, dragging: true, frames: Int(armMs / 1000 * 120) / 3)
+        check("a brush past the edge shows no line", indicator?.onScreen != true)
         drive(at: home, dragging: true, frames: 30)
         drive(at: nil, dragging: false, frames: 200)
         check("a drag that only brushes the edge and moves on does not park",
@@ -791,6 +798,12 @@ private final class SnapIndicator {
     func hide() {
         if panel.isVisible { panel.orderOut(nil) }
     }
+
+    /// For `--demo-peek`. Whether the line is actually on screen, and where — the
+    /// symptom this covers is "I can't see the line", which no amount of testing the
+    /// code path that computes it would have caught.
+    var onScreen: Bool { panel.isVisible && panel.alphaValue > 0.5 }
+    var frame: NSRect { panel.frame }
 }
 
 // MARK: - The detector

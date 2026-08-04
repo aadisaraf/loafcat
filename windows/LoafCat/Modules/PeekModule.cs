@@ -534,6 +534,9 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     internal (double EdgeZonePx, double ArmMs, double DisarmMs, double RevealPx,
               double InkMinX, double InkMaxX) DemoTuning =>
         (_edgeZonePx, _armMs, _disarmMs, _revealPx, _inkMinX, _inkMaxX);
+
+    /// Which edge the snap is armed for, for the scripted drag above.
+    internal PeekEdge? DemoArmed => ArmedEdge;
 }
 
 // MARK: - Scripted verification
@@ -580,6 +583,9 @@ internal static class PeekDemo
             }
         }
         PeekEdge? inBandR = PeekEdge.Right, inBandL = PeekEdge.Left, middle = null;
+        double prX = PeekModule.ParkedX(PeekEdge.Right, work.MinX, work.MaxX,
+                                        atlas.Layout.PadX, t.InkMinX, t.InkMaxX,
+                                        t.RevealPx, scale);
 
         Console.WriteLine($"# demo: peek — screen {(int)work.W}x{(int)work.H} at "
                           + $"({(int)work.MinX},{(int)work.MinY}), scale {(int)scale}x, "
@@ -614,8 +620,7 @@ internal static class PeekDemo
         //    canvas, most of which is the transparent bubble margin.
         double padX = atlas.Layout.PadX;
         double want = t.RevealPx * scale;
-        double pr = PeekModule.ParkedX(PeekEdge.Right, work.MinX, work.MaxX, padX,
-                                       t.InkMinX, t.InkMaxX, t.RevealPx, scale);
+        double pr = prX;
         double pl = PeekModule.ParkedX(PeekEdge.Left, work.MinX, work.MaxX, padX,
                                        t.InkMinX, t.InkMaxX, t.RevealPx, scale);
         double shownR = work.MaxX - (pr + (padX + t.InkMinX) * scale);
@@ -624,6 +629,62 @@ internal static class PeekDemo
               $"{shownR:F2}pt vs {want:F2}pt");
         Check($"parked left shows {(int)t.RevealPx}px of cat", Math.Abs(shownL - want) < 0.01,
               $"{shownL:F2}pt vs {want:F2}pt");
+
+        // 6b. THE WHOLE MODULE, driven through a synthetic drag.
+        //
+        // Everything else here tests a piece in isolation — the arm decision, the
+        // parked arithmetic — and on macOS every piece passed while the gesture could
+        // not be performed at all. What was never tested was the wiring between them.
+        // That is where a broken snap lives, so that is what this drives, through the
+        // same Update the tick calls.
+        void Drive(double? x, bool dragging, int frames)
+        {
+            for (int i = 0; i < frames; i++)
+            {
+                // A drag moves the WINDOW, so the test does too — anything else would
+                // be testing a gesture nobody performs.
+                if (x is { } px && dragging) window.SetOrigin(px, window.Frame.Y);
+                var ctx = new TickContext
+                {
+                    Dt = 1.0 / 120, Cursor = Pt.Zero, CursorVelocity = Pt.Zero,
+                    CursorOnCat = true, KeysPerSecond = 0, ScrollDelta = 0,
+                    SecondsSinceKey = 0, Frame = window.Frame, Scale = scale,
+                };
+                CatStage.Shared.BeginFrame();
+                m.Update(in ctx);
+                // Published AFTER the module runs, exactly as the registry does it —
+                // which is what gives Stage.State its one-frame lag.
+                CatStage.Shared.EndFrame(dragging ? CatState.Dragging : CatState.Idle,
+                                         Pt.Zero);
+            }
+        }
+        double home = work.MidX - window.Frame.W / 2;
+        void Reset()
+        {
+            m.ReleasePark();
+            window.SetOrigin(home, window.Frame.Y);
+            Drive(null, false, 400);          // let the settle unwind
+        }
+
+        Reset();
+        Drive(home, true, 30);
+        Drive(prX, true, (int)(t.ArmMs / 1000 * 120) + 20);
+        Check("a drag that rests the cat against the edge arms it", m.DemoArmed is not null,
+              $"armed={m.DemoArmed}");
+        Drive(null, false, 300);
+        Check("...and letting go there parks the cat",
+              Math.Abs(window.Frame.X - prX) < 1.5,
+              $"landed at {window.Frame.X:F0}, expected {prX:F0}");
+
+        Reset();
+        Drive(home, true, 30);
+        Drive(prX, true, (int)(t.ArmMs / 1000 * 120) / 3);
+        Drive(home, true, 30);
+        Drive(null, false, 200);
+        Check("a drag that only brushes the edge and moves on does not park",
+              Math.Abs(window.Frame.X - home) < 1.5,
+              $"landed at {window.Frame.X:F0}, expected to stay at {home:F0}");
+        Reset();
 
         // 6. WHICH parts the cut lands between, which is the whole difference between a
         //    peek and a cat with a slice taken off it. One eye showing and one hidden
