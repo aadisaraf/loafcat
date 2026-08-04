@@ -34,12 +34,11 @@ public struct Arming()
     /// snap" a fact rather than a hope.
     public PeekEdge? Armed { get; private set; } = null;
 
-    public void Step(double cursorX, double minX, double maxX, double band, double now)
+    /// `edge` is which screen edge the CAT is currently against, or null. Resolving
+    /// that is geometry and lives in the module; this is only the dwell and the
+    /// hysteresis, which is the part with state in it.
+    public void Step(PeekEdge? edge, double now)
     {
-        PeekEdge? edge =
-            cursorX <= minX + band ? PeekEdge.Left :
-            cursorX >= maxX - band ? PeekEdge.Right : null;
-
         if (edge is not { } e)
         {
             // A little hysteresis before disarming. Without it one pixel of hand
@@ -136,6 +135,13 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private double _inkMaxX = 48;
     private double _inkHeight = 48;
 
+    /// The WHOLE drawn cat, which is a different box from the head above and is used
+    /// for a different question. The head decides where the cat parks; this decides
+    /// when the gesture arms, because while you are dragging it the whole cat is what
+    /// you can see and what you are aiming at.
+    private double _dragInkMinX;
+    private double _dragInkMaxX = 48;
+
     /// Everything the peek pose does NOT draw. Published to the stage while parked.
     ///
     /// The body is not clipped, it is absent — and that distinction is the entire
@@ -175,6 +181,19 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
             minY = Math.Min(minY, p.Origin.Y);
             maxY = Math.Max(maxY, p.Origin.Y + p.Size.H);
         }
+        double dMinX = double.MaxValue, dMaxX = double.MinValue;
+        foreach (var (name, p) in atlas.Parts)
+        {
+            if (name == "shadow") continue;
+            dMinX = Math.Min(dMinX, p.Origin.X);
+            dMaxX = Math.Max(dMaxX, p.Origin.X + p.Size.W);
+        }
+        if (dMinX <= dMaxX)
+        {
+            _dragInkMinX = dMinX;
+            _dragInkMaxX = dMaxX;
+        }
+
         if (minX <= maxX)
         {
             _inkMinX = minX;
@@ -224,6 +243,9 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private PeekEdge? _lastEdge;
     private PeekEdge? _lastArmed;
 
+    /// Seconds since this module's first tick. See `Update`.
+    private double _elapsed;
+
     private readonly bool _demoRequested =
         Environment.GetCommandLineArgs().Contains("--demo-peek");
     private bool _demoRan;
@@ -251,7 +273,13 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     {
         if (this.TunedAtlas() is not { } atlas) return ModuleOutput.None;
         var stage = CatStage.Shared;
-        double now = Clock.Now;
+        // The module's own clock, accumulated from the tick rather than read off the
+        // wall. Everything else here is already dt-driven, so a second time source was
+        // an inconsistency waiting to bite — and it bit the moment anything tried to
+        // drive the module faster than real time, which is exactly what a scripted
+        // test does. One clock also means the two ports cannot drift apart on timing.
+        _elapsed += ctx.Dt;
+        double now = _elapsed;
         var display = Screens.Holding(ctx.Frame);
         var work = display.Work;
 
@@ -424,12 +452,30 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
             _arming.Clear();
             return;
         }
-        // The cursor, recovered from the frame and the cat-relative reading the tick
-        // already computed. No second cursor call, and no new plumbing.
         _arming.ArmMs = _armMs;
         _arming.DisarmMs = _disarmMs;
-        _arming.Step(ctx.Frame.MidX + ctx.Cursor.X * ctx.Scale,
-                     work.MinX, work.MaxX, _edgeZonePx * ctx.Scale, now);
+        _arming.Step(Zone(in ctx, work), now);
+    }
+
+    /// Which screen edge the CAT is against, or null.
+    ///
+    /// Measured on the cat and not on the pointer, and that is the whole difference
+    /// between a gesture that works and one that does not. Both OSes put their snap
+    /// zone under the cursor, because there the cursor is on a window far larger than
+    /// the zone. Here the cat is 96pt across and you drag it by the middle — so its
+    /// leading edge reaches the screen edge while the pointer is still half the cat
+    /// away, which is exactly where a hand naturally stops. Keying off the pointer
+    /// meant shoving the cat half off the display before anything armed, and it read
+    /// as the snap simply not working.
+    private PeekEdge? Zone(in TickContext ctx, Rect work)
+    {
+        double pad = this.TunedAtlas()?.Layout.PadX ?? 0;
+        double band = _edgeZonePx * ctx.Scale;
+        double right = ctx.Frame.MinX + (pad + _dragInkMaxX) * ctx.Scale;
+        double left = ctx.Frame.MinX + (pad + _dragInkMinX) * ctx.Scale;
+        if (right >= work.MaxX - band) return PeekEdge.Right;
+        if (left <= work.MinX + band) return PeekEdge.Left;
+        return null;
     }
 
     // MARK: - Geometry
@@ -524,16 +570,16 @@ internal static class PeekDemo
         double dwell = t.ArmMs / 1000, grace = t.DisarmMs / 1000;
         double now = 0;
         var a = new Arming { ArmMs = t.ArmMs, DisarmMs = t.DisarmMs };
-        void Hold(double x, double seconds)
+        void Hold(PeekEdge? e, double seconds)
         {
             double end = now + seconds;
             while (now < end)
             {
-                a.Step(x, work.MinX, work.MaxX, band, now);
+                a.Step(e, now);
                 now += 1.0 / 120;
             }
         }
-        double inBandR = work.MaxX - 2, inBandL = work.MinX + 2, middle = work.MidX;
+        PeekEdge? inBandR = PeekEdge.Right, inBandL = PeekEdge.Left, middle = null;
 
         Console.WriteLine($"# demo: peek — screen {(int)work.W}x{(int)work.H} at "
                           + $"({(int)work.MinX},{(int)work.MinY}), scale {(int)scale}x, "

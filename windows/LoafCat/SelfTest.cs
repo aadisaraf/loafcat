@@ -298,26 +298,26 @@ public static class SelfTest
 
         // 1000pt wide screen, a 40pt band, 320ms to arm.
         var a = new Arming { ArmMs = 320, DisarmMs = 80 };
-        void Hold(ref Arming arm, double x, double from, double to)
+        void Hold(ref Arming arm, PeekEdge? e, double from, double to)
         {
-            for (double t = from; t < to; t += 1.0 / 120) arm.Step(x, 0, 1000, 40, t);
+            for (double t = from; t < to; t += 1.0 / 120) arm.Step(e, t);
         }
 
-        Hold(ref a, 990, 0, 0.15);
+        Hold(ref a, PeekEdge.Right, 0, 0.15);
         Check("brushing the edge does not arm", a.Armed is null, "150ms < 320ms");
 
-        Hold(ref a, 990, 0.15, 0.40);
+        Hold(ref a, PeekEdge.Right, 0.15, 0.40);
         Check("dwelling on it does", a.Armed == PeekEdge.Right, "400ms > 320ms");
 
-        Hold(ref a, 500, 0.40, 0.44);
+        Hold(ref a, null, 0.40, 0.44);
         Check("a 40ms wobble out of the band is forgiven",
             a.Armed == PeekEdge.Right, "40ms < 80ms");
 
-        Hold(ref a, 500, 0.44, 0.60);
+        Hold(ref a, null, 0.44, 0.60);
         Check("leaving it properly disarms", a.Armed is null, "160ms > 80ms");
 
         var b = new Arming { ArmMs = 320, DisarmMs = 80 };
-        Hold(ref b, 10, 0, 0.40);
+        Hold(ref b, PeekEdge.Left, 0, 0.40);
         Check("the left edge arms too", b.Armed == PeekEdge.Left, "");
 
         // Parked geometry, measured on the HEAD -- the only thing the peek pose draws

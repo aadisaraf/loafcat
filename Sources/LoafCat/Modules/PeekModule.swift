@@ -26,12 +26,10 @@ struct Arming {
     /// snap" a fact rather than a hope.
     private(set) var armed: PeekEdge?
 
-    mutating func step(cursorX: CGFloat, minX: CGFloat, maxX: CGFloat,
-                       band: CGFloat, now: Double) {
-        let edge: PeekEdge? =
-            cursorX <= minX + band ? .left :
-            cursorX >= maxX - band ? .right : nil
-
+    /// `edge` is which screen edge the CAT is currently against, or nil. Resolving
+    /// that is geometry and lives in the module; this is only the dwell and the
+    /// hysteresis, which is the part with state in it.
+    mutating func step(_ edge: PeekEdge?, now: Double) {
         guard let edge else {
             // A little hysteresis before disarming. Without it one pixel of hand
             // wobble at the boundary strobes the capsule on and off.
@@ -125,6 +123,13 @@ final class PeekModule: CatModule, AtlasTuned {
     private var inkMaxX: CGFloat = 48
     private var inkHeight: CGFloat = 48
 
+    /// The WHOLE drawn cat, which is a different box from the head above and is used
+    /// for a different question. The head decides where the cat parks; this decides
+    /// when the gesture arms, because while you are dragging it the whole cat is what
+    /// you can see and what you are aiming at.
+    private var dragInkMinX: CGFloat = 0
+    private var dragInkMaxX: CGFloat = 48
+
     /// Everything the peek pose does NOT draw. Published to the stage while parked.
     ///
     /// The body is not clipped, it is absent — and that distinction is the entire
@@ -165,6 +170,17 @@ final class PeekModule: CatModule, AtlasTuned {
             minY = min(minY, p.origin.y)
             maxY = max(maxY, p.origin.y + p.size.height)
         }
+        var dMinX = CGFloat.greatestFiniteMagnitude
+        var dMaxX = -CGFloat.greatestFiniteMagnitude
+        for (name, p) in atlas.parts where name != "shadow" {
+            dMinX = min(dMinX, p.origin.x)
+            dMaxX = max(dMaxX, p.origin.x + p.size.width)
+        }
+        if dMinX <= dMaxX {
+            dragInkMinX = dMinX
+            dragInkMaxX = dMaxX
+        }
+
         if minX <= maxX {
             inkMinX = minX
             inkMaxX = maxX
@@ -250,7 +266,13 @@ final class PeekModule: CatModule, AtlasTuned {
     func update(_ ctx: TickContext) -> ModuleOutput {
         guard let atlas = tunedAtlas(), let panel else { return .none }
         let stage = CatStage.shared
-        let now = CFAbsoluteTimeGetCurrent()
+        // The module's own clock, accumulated from the tick rather than read off the
+        // wall. Everything else here is already dt-driven, so a second time source was
+        // an inconsistency waiting to bite — and it bit the moment anything tried to
+        // drive the module faster than real time, which is exactly what a scripted
+        // test does. One clock also means the two ports cannot drift apart on timing.
+        elapsed += Double(ctx.dt)
+        let now = elapsed
         let screen = Self.screen(holding: ctx.frame)
         let vf = screen.visibleFrame
 
@@ -259,7 +281,7 @@ final class PeekModule: CatModule, AtlasTuned {
             runDemo(atlas: atlas, panel: panel, vf: vf, scale: ctx.scale)
         }
 
-        watch.poll(screenFrame: screen.frame)
+        watch.poll(screenFrame: screen.frame, now: now)
         let busy = watch.fullscreenBusy
         stage.fullscreenBusy = busy
         stage.metric("peek.fs", watch.covering ? 1 : 0)
@@ -404,17 +426,36 @@ final class PeekModule: CatModule, AtlasTuned {
     /// is released.
     private var lastEdge: PeekEdge?
 
+    /// Seconds since this module's first tick. See `update`.
+    private var elapsed: Double = 0
+
     // MARK: - Arming
 
-    private func stepArming(ctx: TickContext, vf: NSRect, now: CFAbsoluteTime) {
+    private func stepArming(ctx: TickContext, vf: NSRect, now: Double) {
         guard Self.snapOnDragEnabled else { return clearArming() }
-        // The cursor, recovered from the frame and the cat-relative reading the tick
-        // already computed. No second NSEvent call, and no new plumbing.
         arming.armMs = armMs
         arming.disarmMs = disarmMs
-        arming.step(cursorX: ctx.frame.midX + ctx.cursor.x * ctx.scale,
-                    minX: vf.minX, maxX: vf.maxX,
-                    band: edgeZonePx * ctx.scale, now: now)
+        arming.step(zone(ctx: ctx, vf: vf), now: now)
+    }
+
+    /// Which screen edge the CAT is against, or nil.
+    ///
+    /// Measured on the cat and not on the pointer, and that is the whole difference
+    /// between a gesture that works and one that does not. Both OSes put their snap
+    /// zone under the cursor, because there the cursor is on a window far larger than
+    /// the zone. Here the cat is 96pt across and you drag it by the middle — so its
+    /// leading edge reaches the screen edge while the pointer is still half the cat
+    /// away, which is exactly where a hand naturally stops. Keying off the pointer
+    /// meant shoving the cat half off the display before anything armed, and it read
+    /// as the snap simply not working.
+    private func zone(ctx: TickContext, vf: NSRect) -> PeekEdge? {
+        let pad = CGFloat(tunedAtlas()?.layout.padX ?? 0)
+        let band = edgeZonePx * ctx.scale
+        let right = ctx.frame.minX + (pad + dragInkMaxX) * ctx.scale
+        let left = ctx.frame.minX + (pad + dragInkMinX) * ctx.scale
+        if right >= vf.maxX - band { return .right }
+        if left <= vf.minX + band { return .left }
+        return nil
     }
 
     private func clearArming() { arming.clear() }
@@ -516,14 +557,15 @@ extension PeekModule {
         var a = Arming()
         a.armMs = armMs
         a.disarmMs = disarmMs
-        func hold(_ x: CGFloat, _ seconds: Double) {
+        func hold(_ e: PeekEdge?, _ seconds: Double) {
             let end = t + seconds
             while t < end {
-                a.step(cursorX: x, minX: vf.minX, maxX: vf.maxX, band: band, now: t)
+                a.step(e, now: t)
                 t += 1.0 / 120
             }
         }
-        let inBandR = vf.maxX - 2, inBandL = vf.minX + 2, middle = vf.midX
+        let inBandR: PeekEdge? = .right, inBandL: PeekEdge? = .left
+        let middle: PeekEdge? = nil
 
         print("# demo: peek — screen \(Int(vf.width))x\(Int(vf.height)) at "
               + "(\(Int(vf.minX)),\(Int(vf.minY))), scale \(Int(scale))x, "
@@ -614,7 +656,66 @@ extension PeekModule {
         check("both paws are part of the pose",
               CatView.peekParts.contains("paw_l") && CatView.peekParts.contains("paw_r"))
 
-        // 7. Live, and the only check here that needs a screen.
+        // 7. THE WHOLE MODULE, driven through a synthetic drag.
+        //
+        // Everything above tests a piece in isolation — the arm decision, the parked
+        // arithmetic — and every piece passed while the gesture did not work. What
+        // was never tested was the wiring between them: that a drag reaches the arm
+        // machine at all, that releasing while armed becomes a park, and that the
+        // park actually moves the window. That is where a broken snap lives, so that
+        // is what this drives, through the same `update` the tick calls.
+        func drive(at x: CGFloat?, dragging: Bool, frames: Int) {
+            for _ in 0..<frames {
+                // A drag moves the WINDOW, so the test does too — anything else would
+                // be testing a gesture nobody performs.
+                if let x, dragging {
+                    panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.origin.y))
+                }
+                let f = panel.frame
+                let ctx = TickContext(
+                    dt: 1.0 / 120, cursor: .zero,
+                    cursorVelocity: .zero, cursorOnCat: true, keysPerSecond: 0,
+                    scrollDelta: 0, secondsSinceKey: 0, frame: f, scale: scale)
+                CatStage.shared.beginFrame()
+                _ = update(ctx)
+                // Published AFTER the module runs, exactly as the registry does it —
+                // which is what gives `stage.state` its one-frame lag.
+                CatStage.shared.endFrame(state: dragging ? .dragging : .idle,
+                                         bodyOffset: .zero)
+            }
+        }
+        func reset(to x: CGFloat) {
+            releasePark()
+            settled = 0
+            wasDragging = false
+            panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.origin.y))
+        }
+        let home = vf.midX - panel.frame.width / 2
+
+        // A drag that rests at the edge, then lets go.
+        reset(to: home)
+        drive(at: home, dragging: true, frames: 30)
+        drive(at: pr, dragging: true, frames: Int(armMs / 1000 * 120) + 20)
+        check("a drag that rests the cat against the edge arms it", armedEdge == .right)
+        drive(at: nil, dragging: false, frames: 300)
+        check("...and letting go there parks the cat",
+              abs(panel.frame.origin.x - pr) < 1.5,
+              String(format: "landed at %.0f, expected %.0f",
+                     Double(panel.frame.origin.x), Double(pr)))
+
+        // A drag that passes the edge without stopping, and lets go.
+        reset(to: home)
+        drive(at: home, dragging: true, frames: 30)
+        drive(at: pr, dragging: true, frames: Int(armMs / 1000 * 120) / 3)
+        drive(at: home, dragging: true, frames: 30)
+        drive(at: nil, dragging: false, frames: 200)
+        check("a drag that only brushes the edge and moves on does not park",
+              abs(panel.frame.origin.x - home) < 1.5,
+              String(format: "landed at %.0f, expected to stay at %.0f",
+                     Double(panel.frame.origin.x), Double(home)))
+        reset(to: home)
+
+        // 8. Live, and the only check here that needs a screen.
         let y = panel.frame.origin.y
         panel.setFrameOrigin(NSPoint(x: pr, y: y))
         let got = panel.frame.origin
@@ -713,7 +814,7 @@ private final class FullscreenWatch {
     private(set) var awake = false
     private var latched = false
 
-    private var lastPoll: CFAbsoluteTime = 0
+    private var lastPoll: Double = -1
     private var inFlight = false
     private let queue = DispatchQueue(label: "dev.loafcat.fullscreen", qos: .utility)
     private let interval: CFTimeInterval = 0.25
@@ -721,9 +822,8 @@ private final class FullscreenWatch {
     /// True while the cat should stay out of the way.
     var fullscreenBusy: Bool { latched }
 
-    func poll(screenFrame: NSRect) {
-        let now = CFAbsoluteTimeGetCurrent()
-        guard !inFlight, now - lastPoll >= interval else { return }
+    func poll(screenFrame: NSRect, now: Double) {
+        guard !inFlight, lastPoll < 0 || now - lastPoll >= interval else { return }
         lastPoll = now
         inFlight = true
         queue.async { [weak self] in
