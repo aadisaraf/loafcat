@@ -219,3 +219,25 @@ A synthetic film — `caffeinate -d` plus a layer-0 window at exactly the displa
 **One real bug, found only because the last column was measured.** The cat first walked home to x=**728** and stopped there for good, one point short. The slide eases exponentially toward its target and read its own position back off the window each frame — but the window server quantises that position, so the last sub-point steps were rounded away faster than they could accumulate. Keep the slide in a float of your own and round only on the way out. It is the same lesson as the pixel grid in S5, arriving from the opposite direction: there the danger was a fractional value reaching the screen, here it was the screen's integer value being read back as truth.
 
 **Reproduce:** `./build/LoafCat.app/Contents/MacOS/LoafCat --demo-peek`, and on Windows `loafcat.exe --demo-peek`. Both print the same summary line.
+
+### The test that locked in the wrong pose
+
+Shipped, the parked cat looked like a whole face hanging beside the screen edge with two grey nubs under it. Nothing was behind the edge, so nothing read as hiding.
+
+The number was `reveal_px: 28` against a head whose ink is **30px wide** — 93% of the head on screen. But the number was not the mistake. The mistake was the assertion that produced it: *"A WHOLE FACE is the point of this pose, so both eyes have to clear the edge."* Twenty-eight is the smallest reveal that satisfies it, so the check did its job perfectly and its job was wrong.
+
+That assertion was written for the **previous** pose, where the whole cat was clipped vertically and a second eye on screen genuinely did mean the window had sliced through the animal. When the pose changed to head-and-paws with the body absent rather than clipped, the check came along unexamined — and a passing test is a much stickier way to be wrong than a magic number, because it argues back.
+
+The correct claim is the near eye out and the far eye **wholly** behind the edge, which is 15 — exactly half the head:
+
+| reveal | head hidden | reads as |
+|---:|---:|---|
+| 28 | 7% | a floating head |
+| 20 | 33% | a head with a bite out of it |
+| **15** | **50%** | one ear, one eye, one paw — a peek |
+
+Stated as *where the far eye's near rim falls*, not as `!shows(eye_r)`: the shows/hides helpers carry a one-pixel tolerance, and a far eye with a single column poking out would satisfy the negation while still looking like two eyes.
+
+The second half was the paws. `paw_rise_px: 10` stopped them 9px short of the head's box, and since paws are drawn *before* the head, clearing it means they float in the gap under the jaw instead of the chin resting on them. Thirteen puts the paw 4px inside the box. Asserted directly — paw top against head bottom — because "looks attached" is not a thing a demo can see.
+
+**A design decision encoded as a passing check needs the reasoning stored beside it, or the next pose inherits it.** Both flipped checks now carry why the old one existed and why it no longer applies.

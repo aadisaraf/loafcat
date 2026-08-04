@@ -631,13 +631,29 @@ extension PeekModule {
         func showsR(_ n: String) -> Bool { box(n).map { $0.hi <= seenTo + 1 } ?? false }
         func showsL(_ n: String) -> Bool { box(n).map { $0.lo >= seenFrom - 1 } ?? false }
 
-        // A WHOLE FACE is the point of this pose, so both eyes have to clear the
-        // edge — that is the line between a cat hiding behind something and a cat
-        // someone has cut in half, and every earlier version failed it.
-        check("right park: both eyes clear the edge",
-              showsR("eye_l") && showsR("eye_r"))
-        check("left park: both eyes clear the edge",
-              showsL("eye_l") && showsL("eye_r"))
+        // ONE eye out and one eye behind the edge. This check used to demand that
+        // BOTH eyes cleared it, on the reasoning that a whole face is what stops the
+        // pose reading as a cat someone has sliced — and satisfying it is what drove
+        // `reveal_px` to 28, which is 93% of a 30px head. Shipped, that was a
+        // complete face hanging beside the screen with two paws under it: nothing
+        // was behind the edge, so nothing read as hiding.
+        //
+        // The earlier check was not wrong about slicing, it was aimed at the wrong
+        // pose. Back when the whole cat was clipped vertically, a second eye meant
+        // the window had cut through the animal. Now the body is absent rather than
+        // clipped, so the far eye going behind the edge is the cat turning its head
+        // out from cover — the one thing a peek actually looks like.
+        // Stated as where the far eye's NEAR rim falls rather than as "not fully
+        // shown", for the same reason the ear check below is: `showsR`/`showsL`
+        // carry a one-pixel tolerance, and a far eye with a single column poking
+        // out would satisfy the negation while looking like two eyes.
+        check("right park: the near eye clears the edge", showsR("eye_l"))
+        check("left park: the near eye clears the edge", showsL("eye_r"))
+        check("right park: the far eye stays wholly behind it",
+              (box("eye_r")?.lo ?? 0) >= seenTo,
+              "both eyes on screen is a floating head, not a cat looking round a corner")
+        check("left park: the far eye stays wholly behind it",
+              (box("eye_l")?.hi ?? 0) <= seenFrom)
         // Stated directly rather than as "not fully shown": the shows/hides pair
         // carry a one-pixel tolerance for the eyes, and reusing them here made a
         // genuine one-pixel tuck read as a failure. Partly behind the edge is the
@@ -655,6 +671,17 @@ extension PeekModule {
               && !CatView.peekParts.contains("shadow"))
         check("both paws are part of the pose",
               CatView.peekParts.contains("paw_l") && CatView.peekParts.contains("paw_r"))
+        // The raised paw has to end up INSIDE the head's box. Paws are drawn before
+        // the head, so overlapping it is the chin resting on the paw; stopping short
+        // leaves a gap of empty screen and two grey nubs hanging under the jaw, which
+        // is what a rise of 10 gave and what the screenshot showed.
+        if let paw = atlas.parts["paw_l"], let head = atlas.parts["head"] {
+            let top = paw.origin.y - pawRisePx
+            check("the raised paw reaches the chin",
+                  top < head.origin.y + head.size.height,
+                  String(format: "paw top %.0f, head bottom %.0f",
+                         Double(top), Double(head.origin.y + head.size.height)))
+        }
 
         // 7. THE WHOLE MODULE, driven through a synthetic drag.
         //

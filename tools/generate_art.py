@@ -1171,11 +1171,24 @@ BEHAVIOUR = {
         # about 18 it was a sliver a third as wide as it was tall, and above it the
         # second eye came back and it stopped reading as hiding at all. There was
         # no number in between, because the problem was never the number.
-        "reveal_px": 28,
+        #
+        # Given that head, HALF of it is the answer, and the head is 30px of ink --
+        # so 15. The first attempt at this pose said 28, which is 93% of the head,
+        # and it shipped looking like a whole face floating beside the screen edge
+        # with two paws under it. Nothing was behind the edge, so nothing read as
+        # hiding. The near eye out and the far eye tucked away is the difference,
+        # and it is asserted directly in `--demo-peek` now rather than implied by a
+        # width.
+        "reveal_px": 15,
         # How far the paws come up to sit under the chin, and how far they pull
         # toward each other doing it. This is the pose: two paws over the edge with
         # a face above them.
-        "paw_rise_px": 10,
+        #
+        # The rise has to put the paw INSIDE the head's box, not below it. Paws are
+        # drawn before the head, so an overlap is the head resting on them -- which
+        # is a chin on a paw. Clear of the box entirely and they are two grey nubs
+        # floating in the gap under the jaw, which is what 10 gave.
+        "paw_rise_px": 13,
         "paw_gather_px": 1.5,
         # How far into the slide the body ducks out of sight. Late enough that it
         # happens while the cat is mostly off screen already, so it reads as the

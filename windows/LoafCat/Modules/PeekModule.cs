@@ -532,8 +532,8 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
 
     // Read by the scripted demo, which needs the tuning it is asserting against.
     internal (double EdgeZonePx, double ArmMs, double DisarmMs, double RevealPx,
-              double InkMinX, double InkMaxX) DemoTuning =>
-        (_edgeZonePx, _armMs, _disarmMs, _revealPx, _inkMinX, _inkMaxX);
+              double InkMinX, double InkMaxX, double PawRisePx) DemoTuning =>
+        (_edgeZonePx, _armMs, _disarmMs, _revealPx, _inkMinX, _inkMaxX, _pawRisePx);
 
     /// Which edge the snap is armed for, for the scripted drag above.
     internal PeekEdge? DemoArmed => ArmedEdge;
@@ -718,11 +718,30 @@ internal static class PeekDemo
         bool ShowsR(string n) => Hi(n, out double hi) && hi <= seenTo + 1;
         bool ShowsL(string n) => Lo(n, out double lo) && lo >= seenFrom - 1;
 
-        // A WHOLE FACE is the point of this pose, so both eyes have to clear the edge
-        // — that is the line between a cat hiding behind something and a cat someone
-        // has cut in half, and every earlier version failed it.
-        Check("right park: both eyes clear the edge", ShowsR("eye_l") && ShowsR("eye_r"), "");
-        Check("left park: both eyes clear the edge", ShowsL("eye_l") && ShowsL("eye_r"), "");
+        // ONE eye out and one eye behind the edge. This check used to demand that BOTH
+        // eyes cleared it, on the reasoning that a whole face is what stops the pose
+        // reading as a cat someone has sliced — and satisfying it is what drove
+        // `reveal_px` to 28, which is 93% of a 30px head. Shipped, that was a complete
+        // face hanging beside the screen with two paws under it: nothing was behind
+        // the edge, so nothing read as hiding.
+        //
+        // The earlier check was not wrong about slicing, it was aimed at the wrong
+        // pose. Back when the whole cat was clipped vertically, a second eye meant the
+        // window had cut through the animal. Now the body is absent rather than
+        // clipped, so the far eye going behind the edge is the cat turning its head
+        // out from cover — the one thing a peek actually looks like.
+        //
+        // Stated as where the far eye's NEAR rim falls rather than as "not fully
+        // shown", for the same reason the ear check below is: ShowsR/ShowsL carry a
+        // one-pixel tolerance, and a far eye with a single column poking out would
+        // satisfy the negation while looking like two eyes.
+        Check("right park: the near eye clears the edge", ShowsR("eye_l"), "");
+        Check("left park: the near eye clears the edge", ShowsL("eye_r"), "");
+        Check("right park: the far eye stays wholly behind it",
+              Lo("eye_r", out double farR) && farR >= seenTo,
+              "both eyes on screen is a floating head, not a cat looking round a corner");
+        Check("left park: the far eye stays wholly behind it",
+              Hi("eye_l", out double farL) && farL <= seenFrom, "");
 
         // Stated directly rather than as "not fully shown": the Shows/Hides pair carry
         // a one-pixel tolerance for the eyes, and reusing them here made a genuine
@@ -741,6 +760,18 @@ internal static class PeekDemo
               && !CatView.PeekParts.Contains("shadow"), "");
         Check("both paws are part of the pose",
               CatView.PeekParts.Contains("paw_l") && CatView.PeekParts.Contains("paw_r"), "");
+        // The raised paw has to end up INSIDE the head's box. Paws are drawn before
+        // the head, so overlapping it is the chin resting on the paw; stopping short
+        // leaves a gap of empty screen and two grey nubs hanging under the jaw, which
+        // is what a rise of 10 gave and what the screenshot showed.
+        if (atlas.Parts.TryGetValue("paw_l", out var pawL) &&
+            atlas.Parts.TryGetValue("head", out var headBox))
+        {
+            double top = pawL.Origin.Y - t.PawRisePx;
+            Check("the raised paw reaches the chin",
+                  top < headBox.Origin.Y + headBox.Size.H,
+                  $"paw top {top:F0}, head bottom {headBox.Origin.Y + headBox.Size.H:F0}");
+        }
 
         // 7. A parked cat must still overlap the work area, or ClampIntoView will
         //    haul it back the next time a monitor is plugged in and the park will

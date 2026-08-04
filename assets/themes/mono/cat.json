@@ -767,8 +767,8 @@
       "indicator_fade_ms": 120,
       "indicator_w_px": 3.0,
       "paw_gather_px": 1.5,
-      "paw_rise_px": 10,
-      "reveal_px": 28,
+      "paw_rise_px": 13,
+      "reveal_px": 15,
       "settle_pt": 0.35,
       "slide_rate": 11.0
     },
