@@ -209,6 +209,7 @@ public sealed class CatController : ISettingsHost
     /// Features live here, one file each. See CatModule.cs.
     public ModuleRegistry Modules { get; } = new();
     private WellnessSuite? _wellness;
+    private PeekModule? _peek;
     private Updater? _updater;
 
     /// Smoothed cursor velocity, in logical px/sec. Raw frame-to-frame deltas are far
@@ -336,6 +337,8 @@ public sealed class CatController : ISettingsHost
         Modules.Register(new HuntModule());
         Modules.Register(new PettingModule());
         Modules.Register(new ScrollModule());
+        _peek = new PeekModule(_window);
+        Modules.Register(_peek);
         Modules.Register(AgentModule.Shared);
         _wellness = new WellnessSuite(_atlas, _window.View!, _window, Modules);
     }
@@ -632,7 +635,14 @@ public sealed class CatController : ISettingsHost
         Reload();
     }
 
-    public void CentreCat() => _window.Centre();
+    public void CentreCat()
+    {
+        // Before the move, or the park would ease the cat straight back to the edge
+        // and the menu item would look broken. This is the escape hatch for a cat
+        // parked somewhere you cannot conveniently grab it.
+        _peek?.ReleasePark();
+        _window.Centre();
+    }
 
     public void SetCatVisible(bool visible)
     {

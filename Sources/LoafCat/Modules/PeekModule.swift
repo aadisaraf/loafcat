@@ -1,0 +1,910 @@
+import AppKit
+import IOKit.pwr_mgt
+
+/// Which side of the display the cat parks against.
+enum PeekEdge {
+    case left, right
+}
+
+/// The dwell-to-arm gesture, as a pure state machine over time and one number.
+///
+/// Pulled out of the module deliberately. Nobody can drag a cat on a CI runner, so the
+/// only way this gets checked on every commit is if the decision is separable from the
+/// window, the cursor and the clock — the same reason `SelfInstall.Decide` is its own
+/// function. `--demo-peek` drives it with a scripted time base on both platforms, and
+/// the two ports are expected to agree exactly.
+struct Arming {
+    var armMs: Double = 320
+    var disarmMs: Double = 80
+
+    private var dwellEdge: PeekEdge?
+    private var dwellSince: Double = 0
+    private var leftZoneAt: Double?
+
+    /// The edge the snap is armed for, or nil. This is also precisely the condition
+    /// under which the indicator is visible, which is what makes "no line means no
+    /// snap" a fact rather than a hope.
+    private(set) var armed: PeekEdge?
+
+    /// `edge` is which screen edge the CAT is currently against, or nil. Resolving
+    /// that is geometry and lives in the module; this is only the dwell and the
+    /// hysteresis, which is the part with state in it.
+    mutating func step(_ edge: PeekEdge?, now: Double) {
+        guard let edge else {
+            // A little hysteresis before disarming. Without it one pixel of hand
+            // wobble at the boundary strobes the capsule on and off.
+            if armed != nil || dwellEdge != nil {
+                if leftZoneAt == nil { leftZoneAt = now }
+                if now - (leftZoneAt ?? now) >= disarmMs / 1000 { clear() }
+            }
+            return
+        }
+
+        leftZoneAt = nil
+        if dwellEdge != edge {
+            dwellEdge = edge
+            dwellSince = now
+            armed = nil
+        }
+        // Strictly greater: arming exactly ON the threshold would make the result
+        // depend on whether a tick happened to land there, and the two ports do not
+        // tick at the same instants.
+        if now - dwellSince > armMs / 1000 { armed = edge }
+    }
+
+    mutating func clear() {
+        dwellEdge = nil
+        armed = nil
+        leftZoneAt = nil
+    }
+}
+
+/// Parking the cat against a screen edge, so it peers in from the side instead of
+/// sitting on top of what you are looking at.
+///
+/// Two ways in, and they are deliberately different in how sticky they are:
+///
+/// 1. **You snap it there.** Drag the cat until the cursor rests in the band at the
+///    screen edge; after `arm_ms` the snap arms and a short white capsule fades in
+///    where the cat will land. Let go and it parks. Let go anywhere else and it just
+///    falls where you dropped it, exactly as before. A manual park stays until you
+///    drag it out — you asked for it, so nothing takes it away.
+/// 2. **A full-screen video parks it for you.** Temporary: the cat remembers where it
+///    stood and walks back when the video ends.
+///
+/// **The dwell is the whole gesture**, and it is what makes "come in a certain way and
+/// it won't snap" work. Brushing the edge on the way past never arms, because arming
+/// takes time standing still. It is also honest in both directions: the capsule only
+/// appears once the snap is armed, so *no line means no snap* and you can always tell
+/// before you let go.
+///
+/// It is not a modifier key, and that is forced rather than chosen. `GetAsyncKeyState`
+/// and `GetKeyState` are banned outright by `scripts/check-privacy.sh`, so there is no
+/// way to read Option/Alt that both ports could share — and this is the case where the
+/// constraint gives the better answer anyway, since dwell-to-tile is what macOS itself
+/// switched to.
+///
+/// Nothing here reads a window title. `kCGWindowName` is the one field gated behind
+/// Screen Recording and is banned; owner, pid, layer and bounds are not, which is
+/// exactly what this needs. Measured from a bundle with both Screen Recording and
+/// Accessibility denied: 80 of 80 windows still reported bounds, owner, layer and pid,
+/// and 1 of 80 reported a name. See spikes/RESULTS.md.
+final class PeekModule: CatModule, AtlasTuned {
+    let id = "peek"
+    var tunedGeneration = -1
+
+    private weak var panel: NSPanel?
+    private let watch = FullscreenWatch()
+    private var indicator: SnapIndicator?
+
+    // --- tuning, all of it from cat.json ------------------------------------
+    // Lengths are LOGICAL pixels of the 48px canvas and are multiplied by the render
+    // scale at the point of use, so the edge band and the parked reveal grow with the
+    // cat. A bigger cat is a bigger target and deserves a wider band.
+    private var edgeZonePx: CGFloat = 12
+    private var armMs: Double = 320
+    private var disarmMs: Double = 80
+    private var revealPx: CGFloat = 23
+    private var slideRate: CGFloat = 11
+    private var settlePt: CGFloat = 0.35
+    private var hideAt: CGFloat = 0.55
+    private var bobPx: CGFloat = 1.5
+    private var bobHz: CGFloat = 0.42
+    private var indicatorWPx: CGFloat = 3
+    private var indicatorFadeMs: Double = 120
+
+    /// The pose's ink inside the 48px canvas, per facing, so `reveal_px` means "this
+    /// much cat" and not "this much canvas, most of which is transparent".
+    struct Ink {
+        var minX: CGFloat
+        var maxX: CGFloat
+        var height: CGFloat
+    }
+    private var ink: [PeekEdge: Ink] = [:]
+    private func ink(_ edge: PeekEdge) -> Ink {
+        ink[edge] ?? Ink(minX: 0, maxX: 48, height: 48)
+    }
+
+    /// The WHOLE drawn cat, which is a different box from the head above and is used
+    /// for a different question. The head decides where the cat parks; this decides
+    /// when the gesture arms, because while you are dragging it the whole cat is what
+    /// you can see and what you are aiming at.
+    private var dragInkMinX: CGFloat = 0
+    private var dragInkMaxX: CGFloat = 48
+
+    func retune(_ atlas: Atlas) {
+        func v(_ k: String, _ d: CGFloat) -> CGFloat { atlas.tune("peek", k, d) }
+        edgeZonePx = v("edge_zone_px", edgeZonePx)
+        armMs = Double(v("arm_ms", CGFloat(armMs)))
+        disarmMs = Double(v("disarm_ms", CGFloat(disarmMs)))
+        revealPx = v("reveal_px", revealPx)
+        slideRate = v("slide_rate", slideRate)
+        settlePt = v("settle_pt", settlePt)
+        hideAt = v("hide_at", hideAt)
+        bobPx = v("bob_px", bobPx)
+        bobHz = v("bob_hz", bobHz)
+        indicatorWPx = v("indicator_w_px", indicatorWPx)
+        indicatorFadeMs = Double(v("indicator_fade_ms", CGFloat(indicatorFadeMs)))
+
+        // Each facing is measured on its OWN parts. The two are mirror images, so a
+        // single box would be right for one edge and wrong for the other by however
+        // far the pose sits off the canvas centre — which is the width of a muzzle,
+        // and would show up as the cat parking deeper on one side than the other.
+        for edge in [PeekEdge.right, .left] {
+            var minX = CGFloat.greatestFiniteMagnitude
+            var maxX = -CGFloat.greatestFiniteMagnitude
+            var minY = CGFloat.greatestFiniteMagnitude
+            var maxY = -CGFloat.greatestFiniteMagnitude
+            for name in atlas.poses[Self.poseName(edge)] ?? [] {
+                guard let p = atlas.parts[name] else { continue }
+                minX = min(minX, p.origin.x)
+                maxX = max(maxX, p.origin.x + p.size.width)
+                minY = min(minY, p.origin.y)
+                maxY = max(maxY, p.origin.y + p.size.height)
+            }
+            guard minX <= maxX else { continue }
+            ink[edge] = Ink(minX: minX, maxX: maxX, height: max(maxY - minY, 1))
+        }
+
+        // The whole STANDING cat, which is a different box used for a different
+        // question: the pose decides where the cat parks, this decides when the
+        // gesture arms, because while you are dragging it the standing cat is what
+        // you can see and what you are aiming at. The pose parts are excluded for
+        // exactly that reason — they are not on screen while you are dragging.
+        var dMinX = CGFloat.greatestFiniteMagnitude
+        var dMaxX = -CGFloat.greatestFiniteMagnitude
+        for (name, p) in atlas.parts
+        where name != "shadow" && !atlas.posedParts.contains(name) {
+            dMinX = min(dMinX, p.origin.x)
+            dMaxX = max(dMaxX, p.origin.x + p.size.width)
+        }
+        if dMinX <= dMaxX {
+            dragInkMinX = dMinX
+            dragInkMaxX = dMaxX
+        }
+    }
+
+    /// The atlas pose each edge wears. `peek_r` faces left, which is the drawing for
+    /// a cat whose body is behind the RIGHT edge.
+    static func poseName(_ edge: PeekEdge) -> String {
+        edge == .right ? "peek_r" : "peek_l"
+    }
+
+    // --- how the cat came to be parked --------------------------------------
+    // Worth distinguishing, because it decides what takes it back out again.
+    private enum Park {
+        case none
+        case manual(PeekEdge)   // you put it there; only you take it away
+        case auto(PeekEdge)     // a video put it there; the video takes it away
+
+        var isParked: Bool {
+            if case .none = self { return false }
+            return true
+        }
+    }
+    private var park = Park.none
+    private var parkedEdge: PeekEdge? {
+        switch park {
+        case .none: return nil
+        case .manual(let e), .auto(let e): return e
+        }
+    }
+
+    /// Where the cat stood before a video moved it, so it can be put back. Cleared
+    /// the moment the user drags, because then they have chosen a new home and
+    /// putting it back would be overruling them.
+    private var preParkX: CGFloat?
+
+    /// The slide's authoritative position, in points, kept apart from the window's
+    /// own because the window's is quantised. Nil whenever the window is not ours to
+    /// move — while it is being dragged, and while there is nowhere to go.
+    private var slideX: CGFloat?
+
+    /// Set when the user drags out of an automatic park. Suppresses re-parking until
+    /// the full-screen window goes away, or the cat would spring straight back to the
+    /// edge and there would be no way to keep it out.
+    private var autoOverridden = false
+
+    // --- the arm state machine ----------------------------------------------
+    private var wasDragging = false
+    private var arming = Arming()
+    private var armedEdge: PeekEdge? { arming.armed }
+
+    // --- presentation --------------------------------------------------------
+    private var indicatorAlpha: CGFloat = 0
+    private var bobPhase: CGFloat = 0
+    /// 0 while free, 1 when fully parked. Drives the lean, so the cat does not snap
+    /// into its peeking pose before it has arrived at the edge.
+    private var settled: CGFloat = 0
+
+    private let demoRequested = CommandLine.arguments.contains("--demo-peek")
+    private var demoRan = false
+
+    init(panel: NSPanel) {
+        self.panel = panel
+    }
+
+    // MARK: - Settings
+
+    /// Both default ON. Someone who finds either annoying must be able to switch it
+    /// off without switching the other off with it.
+    static var autoPeekEnabled: Bool {
+        UserDefaults.standard.object(forKey: "peekFullscreen") as? Bool ?? true
+    }
+    static var snapOnDragEnabled: Bool {
+        UserDefaults.standard.object(forKey: "peekSnapDrag") as? Bool ?? true
+    }
+
+    /// "Centre on screen" has to mean it, so the menu item clears any park through
+    /// here rather than fighting the easing for the rest of the session.
+    func releasePark() {
+        park = .none
+        preParkX = nil
+        arming.clear()
+    }
+
+    // MARK: - Tick
+
+    func update(_ ctx: TickContext) -> ModuleOutput {
+        guard let atlas = tunedAtlas(), let panel else { return .none }
+        let stage = CatStage.shared
+        // The module's own clock, accumulated from the tick rather than read off the
+        // wall. Everything else here is already dt-driven, so a second time source was
+        // an inconsistency waiting to bite — and it bit the moment anything tried to
+        // drive the module faster than real time, which is exactly what a scripted
+        // test does. One clock also means the two ports cannot drift apart on timing.
+        elapsed += Double(ctx.dt)
+        let now = elapsed
+        let screen = Self.screen(holding: ctx.frame)
+        let vf = screen.visibleFrame
+
+        if demoRequested, !demoRan {
+            demoRan = true
+            runDemo(atlas: atlas, panel: panel, vf: vf, scale: ctx.scale)
+        }
+
+        watch.poll(screenFrame: screen.frame, now: now)
+        let busy = watch.fullscreenBusy
+        stage.fullscreenBusy = busy
+        stage.metric("peek.fs", watch.covering ? 1 : 0)
+        stage.metric("peek.awake", watch.awake ? 1 : 0)
+
+        // The one-frame lag on `stage.state` is exactly what this wants: it lets the
+        // module notice a drag without knowing which module owns dragging.
+        let dragging = stage.state == .dragging
+        let dragEnded = wasDragging && !dragging
+        wasDragging = dragging
+
+        // --- being carried overrides everything ------------------------------
+        if dragging {
+            if case .auto = park { autoOverridden = true }
+            if park.isParked {
+                park = .none
+                preParkX = nil
+            }
+            stepArming(ctx: ctx, vf: vf, now: now)
+        } else if dragEnded {
+            if let edge = armedEdge, Self.snapOnDragEnabled {
+                park = .manual(edge)
+                preParkX = nil          // a manual park has nowhere to go back to
+            }
+            clearArming()
+        } else {
+            clearArming()
+        }
+
+        // --- the automatic half ----------------------------------------------
+        if !busy { autoOverridden = false }
+        if !dragging {
+            if busy, Self.autoPeekEnabled, !autoOverridden, case .none = park {
+                preParkX = panel.frame.origin.x
+                park = .auto(Self.nearerEdge(frame: ctx.frame, vf: vf))
+            } else if case .auto = park, !busy || !Self.autoPeekEnabled {
+                // Either the video ended or the setting was just turned off. Both
+                // mean the same thing to the cat: walk back. The target below falls
+                // back to `preParkX`.
+                park = .none
+            }
+        }
+
+        // --- move the window --------------------------------------------------
+        var target: CGFloat?
+        if let edge = parkedEdge {
+            target = parkedX(edge: edge, vf: vf, atlas: atlas, scale: ctx.scale)
+        } else if let back = preParkX {
+            target = back
+        }
+        if dragging || target == nil {
+            slideX = nil                // the hand owns the window, or nobody does
+        } else if let target {
+            // Accumulated in a float of our own and rounded only on the way out.
+            //
+            // Reading the position back off the panel each frame instead loses every
+            // sub-point step to the window server's quantisation — and because an
+            // exponential approach makes the steps smaller the closer it gets, the
+            // last fraction of a point is never travelled. Measured before the fix:
+            // walking home to x=727 it stopped at 728 and sat there for the rest of
+            // the run, one point short and permanently `peeking`-adjacent.
+            var x = slideX ?? panel.frame.origin.x
+            let d = target - x
+            if abs(d) < settlePt {
+                x = target
+                if !park.isParked { preParkX = nil }
+            } else {
+                x += d * min(1, slideRate * ctx.dt)
+            }
+            slideX = x
+            // Whole points, so the cat is composited on the device pixel grid at every
+            // integer scale rather than resampled across it.
+            let put = x.rounded()
+            if panel.frame.origin.x != put {
+                panel.setFrameOrigin(NSPoint(x: put, y: panel.frame.origin.y))
+            }
+        }
+
+        // --- how parked does it look ------------------------------------------
+        let want: CGFloat = park.isParked ? 1 : 0
+        settled += (want - settled) * min(1, slideRate * ctx.dt)
+        stage.metric("peek.settled", settled)
+        stage.metric("peek.armed", armedEdge == nil ? 0 : 1)
+        stage.metric("peek.x", panel.frame.origin.x)
+
+        drawIndicator(ctx: ctx, vf: vf, now: now)
+
+        guard settled > 0.002, let edge = parkedEdge ?? lastEdge else { return .none }
+        lastEdge = edge
+
+        // The pose is a DIFFERENT DRAWING, and that is the whole lesson of this
+        // feature. Everything here used to be per-part offsets on the standing cat —
+        // crane the head out, bring the paws up, hide the body — and it never once
+        // looked like a cat peeking, because a front-facing face cut by a vertical
+        // line is a bisected cat at every width and every offset. Two full rounds of
+        // tuning went into the numbers before the numbers turned out not to be the
+        // problem. A cat looking round a corner is side-on: one eye, one near ear, a
+        // muzzle leading the way. So the module asks for that drawing instead, and
+        // the only motion left here is a breath applied to the whole of it.
+        bobPhase += ctx.dt * bobHz
+        while bobPhase >= 1 { bobPhase -= 1 }
+
+        var out = ModuleOutput()
+        out.offset.y = sin(bobPhase * 2 * .pi) * bobPx * settled
+
+        // Late in the slide, while the cat is already mostly off screen, so the swap
+        // is covered by the edge rather than happening in full view.
+        if settled >= hideAt { stage.pose = Self.poseName(edge) }
+        if park.isParked { out.state = .peeking }
+        return out
+    }
+
+    /// Remembered so the pose eases OUT rather than vanishing on the frame the park
+    /// is released.
+    private var lastEdge: PeekEdge?
+
+    /// Seconds since this module's first tick. See `update`.
+    private var elapsed: Double = 0
+
+    // MARK: - Arming
+
+    private func stepArming(ctx: TickContext, vf: NSRect, now: Double) {
+        guard Self.snapOnDragEnabled else { return clearArming() }
+        arming.armMs = armMs
+        arming.disarmMs = disarmMs
+        arming.step(zone(ctx: ctx, vf: vf), now: now)
+    }
+
+    /// Which screen edge the CAT is against, or nil.
+    ///
+    /// Measured on the cat and not on the pointer, and that is the whole difference
+    /// between a gesture that works and one that does not. Both OSes put their snap
+    /// zone under the cursor, because there the cursor is on a window far larger than
+    /// the zone. Here the cat is 96pt across and you drag it by the middle — so its
+    /// leading edge reaches the screen edge while the pointer is still half the cat
+    /// away, which is exactly where a hand naturally stops. Keying off the pointer
+    /// meant shoving the cat half off the display before anything armed, and it read
+    /// as the snap simply not working.
+    private func zone(ctx: TickContext, vf: NSRect) -> PeekEdge? {
+        let pad = CGFloat(tunedAtlas()?.layout.padX ?? 0)
+        let band = edgeZonePx * ctx.scale
+        let right = ctx.frame.minX + (pad + dragInkMaxX) * ctx.scale
+        let left = ctx.frame.minX + (pad + dragInkMinX) * ctx.scale
+        if right >= vf.maxX - band { return .right }
+        if left <= vf.minX + band { return .left }
+        return nil
+    }
+
+    private func clearArming() { arming.clear() }
+
+    // MARK: - Geometry
+
+    /// The display the cat is standing on. Its centre rather than its frame, so a cat
+    /// straddling two monitors picks the one most of it is on.
+    private static func screen(holding frame: NSRect) -> NSScreen {
+        let c = CGPoint(x: frame.midX, y: frame.midY)
+        return NSScreen.screens.first { $0.frame.contains(c) }
+            ?? NSScreen.main
+            ?? NSScreen.screens[0]
+    }
+
+    /// Auto-peek goes to whichever edge the cat is already nearest, right on a tie —
+    /// so a cat that lives on the left does not get flung across the display the
+    /// moment a video starts.
+    private static func nearerEdge(frame: NSRect, vf: NSRect) -> PeekEdge {
+        (frame.midX - vf.minX) < (vf.maxX - frame.midX) ? .left : .right
+    }
+
+    /// Window origin that leaves exactly `reveal_px` of the cat's INK on screen.
+    ///
+    /// Measured off the ink and not the panel, because the panel carries a
+    /// transparent margin for the speech bubble — parking by the panel edge would
+    /// leave the margin on screen and the cat entirely off it.
+    private func parkedX(edge: PeekEdge, vf: NSRect, atlas: Atlas, scale: CGFloat) -> CGFloat {
+        let i = ink(edge)
+        return Self.parkedX(edge: edge, minX: vf.minX, maxX: vf.maxX,
+                     padX: CGFloat(atlas.layout.padX),
+                     inkMinX: i.minX, inkMaxX: i.maxX,
+                     revealPx: revealPx, scale: scale)
+    }
+
+    /// Pure, and for the same reason `Arming` is: it is the other half of what
+    /// `--demo-peek` has to be able to assert without a screen.
+    static func parkedX(edge: PeekEdge, minX: CGFloat, maxX: CGFloat, padX: CGFloat,
+                        inkMinX: CGFloat, inkMaxX: CGFloat,
+                        revealPx: CGFloat, scale: CGFloat) -> CGFloat {
+        switch edge {
+        case .right: return maxX - (revealPx + padX + inkMinX) * scale
+        case .left:  return minX + (revealPx - padX - inkMaxX) * scale
+        }
+    }
+
+    // MARK: - The indicator
+
+    private func drawIndicator(ctx: TickContext, vf: NSRect, now: CFAbsoluteTime) {
+        let want: CGFloat = armedEdge == nil ? 0 : 1
+        let step = ctx.dt / max(indicatorFadeMs / 1000, 0.001)
+        indicatorAlpha += max(-step, min(step, want - indicatorAlpha))
+
+        guard indicatorAlpha > 0.001 else {
+            indicator?.hide()
+            return
+        }
+        guard let edge = armedEdge ?? lastArmed else { return }
+        lastArmed = edge
+
+        let w = (indicatorWPx * ctx.scale).rounded()
+        let h = (ink(edge).height * ctx.scale).rounded()
+        let x = edge == .right ? vf.maxX - w : vf.minX
+        let rect = NSRect(x: x, y: (ctx.frame.midY - h / 2).rounded(), width: w, height: h)
+
+        let ind = indicator ?? {
+            let i = SnapIndicator()
+            indicator = i
+            return i
+        }()
+        ind.show(frame: rect, alpha: indicatorAlpha, radius: w / 2)
+    }
+
+    private var lastArmed: PeekEdge?
+}
+
+// MARK: - Scripted verification
+
+extension PeekModule {
+    /// `--demo-peek`. Asserts the gesture and the parked geometry without a hand.
+    ///
+    /// Everything except the last check runs on a synthetic clock against the pure
+    /// `Arming` and `parkedX`, so the identical script runs on a Windows CI runner
+    /// where there is nobody to drag a cat. The last check needs a real window and is
+    /// the one thing no unit test can answer: whether AppKit will actually let a
+    /// borderless panel sit half off the side of the display, or quietly clamps it
+    /// back on — which would make the whole feature a no-op that still reported
+    /// success.
+    fileprivate func runDemo(atlas: Atlas, panel: NSPanel, vf: NSRect, scale: CGFloat) -> Never {
+        var failures = 0
+        func check(_ name: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { failures += 1 }
+            print("  \(ok ? "ok  " : "FAIL") \(name)\(detail.isEmpty ? "" : "  — \(detail)")")
+        }
+
+        let band = edgeZonePx * scale
+        let dwell = armMs / 1000
+        let grace = disarmMs / 1000
+        var t = 0.0
+        var a = Arming()
+        a.armMs = armMs
+        a.disarmMs = disarmMs
+        func hold(_ e: PeekEdge?, _ seconds: Double) {
+            let end = t + seconds
+            while t < end {
+                a.step(e, now: t)
+                t += 1.0 / 120
+            }
+        }
+        let inBandR: PeekEdge? = .right, inBandL: PeekEdge? = .left
+        let middle: PeekEdge? = nil
+
+        print("# demo: peek — screen \(Int(vf.width))x\(Int(vf.height)) at "
+              + "(\(Int(vf.minX)),\(Int(vf.minY))), scale \(Int(scale))x, "
+              + "band \(Int(band))pt, arm \(Int(armMs))ms")
+
+        // 1. Brushing the edge on the way past must NOT arm. This is the gesture the
+        //    user asked for by name: come in a certain way and it will not snap.
+        hold(middle, 0.20)
+        hold(inBandR, dwell * 0.5)
+        hold(middle, 0.20)
+        check("a flick through the band never arms", a.armed == nil)
+
+        // 2. Resting there does.
+        hold(inBandR, dwell + 0.05)
+        check("dwelling at the right edge arms right", a.armed == .right)
+
+        // 3. A wobble out of the band is forgiven; leaving properly is not.
+        hold(middle, grace * 0.4)
+        check("a brief wobble keeps it armed", a.armed == .right)
+        hold(middle, grace + 0.05)
+        check("leaving the band disarms", a.armed == nil)
+
+        // 4. The other edge works and the dwell restarts when you switch.
+        hold(inBandL, dwell + 0.05)
+        check("dwelling at the left edge arms left", a.armed == .left)
+        hold(inBandR, dwell * 0.5)
+        check("switching edges restarts the dwell", a.armed == nil)
+        hold(inBandR, dwell)
+        check("and arms once the new dwell completes", a.armed == .right)
+
+        // 5. The parked position leaves exactly `reveal_px` of INK on screen — not
+        //    of canvas, most of which is the transparent bubble margin.
+        let padX = CGFloat(atlas.layout.padX)
+        let want = revealPx * scale
+        let iR = ink(.right), iL = ink(.left)
+        let pr = Self.parkedX(edge: .right, minX: vf.minX, maxX: vf.maxX, padX: padX,
+                              inkMinX: iR.minX, inkMaxX: iR.maxX,
+                              revealPx: revealPx, scale: scale)
+        let pl = Self.parkedX(edge: .left, minX: vf.minX, maxX: vf.maxX, padX: padX,
+                              inkMinX: iL.minX, inkMaxX: iL.maxX,
+                              revealPx: revealPx, scale: scale)
+        let shownR = vf.maxX - (pr + (padX + iR.minX) * scale)
+        let shownL = (pl + (padX + iL.maxX) * scale) - vf.minX
+        check("parked right shows \(Int(revealPx))px of cat", abs(shownR - want) < 0.01,
+              String(format: "%.2fpt vs %.2fpt", Double(shownR), Double(want)))
+        check("parked left shows \(Int(revealPx))px of cat", abs(shownL - want) < 0.01,
+              String(format: "%.2fpt vs %.2fpt", Double(shownL), Double(want)))
+
+        // 6. THE POSE IS A DIFFERENT DRAWING, not the standing cat rearranged.
+        //
+        // This is the check the feature was missing for three attempts. Every earlier
+        // version tried to make the front-facing cat peek — slide it behind the edge,
+        // crane the head, hide the body, rotate it 90° — and each one was tuned,
+        // shipped and reported back as "that is not a cat peeking". A face drawn
+        // front-on and cut by a vertical line is a bisected cat at every width, and
+        // no number fixes that. So the shape itself is what gets asserted here.
+        let poseR = atlas.poses[Self.poseName(.right)] ?? []
+        let poseL = atlas.poses[Self.poseName(.left)] ?? []
+        check("the pose is side-on: exactly one eye", poseR.filter {
+            $0.hasSuffix("_eye")
+        }.count == 1, "two eyes is a front-facing face, which cannot peek round a corner")
+        check("the pose brings its own head, ears and paws",
+              poseR.contains("peek_r_head") && poseR.contains("peek_r_ear")
+              && poseR.contains("peek_r_paw_a") && poseR.contains("peek_r_paw_b"))
+        check("the pose leaves out the body, the tail and the shadow",
+              poseR.allSatisfy { !["body", "tail", "shadow"].contains($0) })
+        check("neither edge's pose borrows a part of the standing cat",
+              (poseR + poseL).allSatisfy { $0.hasPrefix("peek_") })
+        check("the two facings are mirror images",
+              abs((iR.minX - 0) - (CGFloat(atlas.canvas) - iL.maxX)) < 0.001
+              && abs(iR.height - iL.height) < 0.001,
+              String(format: "R %.0f..%.0f, L %.0f..%.0f on a %.0f canvas",
+                     Double(iR.minX), Double(iR.maxX),
+                     Double(iL.minX), Double(iL.maxX), Double(atlas.canvas)))
+        check("the two edges show the same amount of cat",
+              abs(shownR - shownL) < 0.01)
+
+        // WHICH parts the cut lands between. With a side-on drawing the cut is no
+        // longer what does the hiding — the art is — so the claim is narrower and
+        // more honest than it used to be: the face comes out, the back of the skull
+        // does not, and that difference is what makes the head read as emerging from
+        // behind the edge rather than floating beside it.
+        let seenTo = iR.minX + revealPx        // right-edge park: 0..seenTo is on screen
+        let seenFrom = iL.maxX - revealPx      // left-edge park: seenFrom.. is on screen
+        func box(_ name: String) -> (lo: CGFloat, hi: CGFloat)? {
+            guard let p = atlas.parts[name] else { return nil }
+            return (p.origin.x, p.origin.x + p.size.width)
+        }
+        check("right park: the whole eye clears the edge",
+              (box("peek_r_eye")?.hi ?? .infinity) <= seenTo)
+        check("left park: the whole eye clears the edge",
+              (box("peek_l_eye")?.lo ?? -.infinity) >= seenFrom)
+        check("right park: both paws clear the edge",
+              (box("peek_r_paw_a")?.hi ?? .infinity) <= seenTo
+              && (box("peek_r_paw_b")?.hi ?? .infinity) <= seenTo,
+              "the paws over the edge are half the pose; cutting one is a cat with a stump")
+        check("left park: both paws clear the edge",
+              (box("peek_l_paw_a")?.lo ?? -.infinity) >= seenFrom
+              && (box("peek_l_paw_b")?.lo ?? -.infinity) >= seenFrom)
+        check("right park: the back of the skull stays behind the edge",
+              (box("peek_r_head")?.hi ?? 0) > seenTo,
+              "with the whole head on screen it floats beside the edge instead of coming from behind it")
+        check("left park: the back of the skull stays behind the edge",
+              (box("peek_l_head")?.lo ?? 0) < seenFrom)
+
+        // What the view will actually DRAW, which is a separate question from where
+        // the window goes and is where a pose can fail invisibly: leave the standing
+        // cat on and you get a body behind a peeking head, hide one part too many and
+        // you get nothing at all. Asked of the same pure rule `sync()` uses.
+        func drawn(_ pose: String?) -> Set<String> {
+            let showing = pose.flatMap { atlas.poses[$0] }.map(Set.init) ?? []
+            return Set(atlas.order.filter {
+                !CatView.outOfPose($0, showing: showing, pose: pose,
+                                   posed: atlas.posedParts)
+            })
+        }
+        let standing = drawn(nil)
+        let peeking = drawn(Self.poseName(.right))
+        check("with no pose the standing cat is drawn and no pose part is",
+              standing.contains("head") && standing.contains("body")
+              && standing.isDisjoint(with: atlas.posedParts))
+        check("while peeking the pose is drawn and the standing cat is not",
+              peeking == Set(poseR),
+              "\(peeking.count) parts drawn, \(poseR.count) in the pose")
+        check("the two facings are never drawn together",
+              drawn(Self.poseName(.left)).isDisjoint(with: peeking))
+
+        // 7. THE WHOLE MODULE, driven through a synthetic drag.
+        //
+        // Everything above tests a piece in isolation — the arm decision, the parked
+        // arithmetic — and every piece passed while the gesture did not work. What
+        // was never tested was the wiring between them: that a drag reaches the arm
+        // machine at all, that releasing while armed becomes a park, and that the
+        // park actually moves the window. That is where a broken snap lives, so that
+        // is what this drives, through the same `update` the tick calls.
+        func drive(at x: CGFloat?, dragging: Bool, frames: Int) {
+            for _ in 0..<frames {
+                // A drag moves the WINDOW, so the test does too — anything else would
+                // be testing a gesture nobody performs.
+                if let x, dragging {
+                    panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.origin.y))
+                }
+                let f = panel.frame
+                let ctx = TickContext(
+                    dt: 1.0 / 120, cursor: .zero,
+                    cursorVelocity: .zero, cursorOnCat: true, keysPerSecond: 0,
+                    scrollDelta: 0, secondsSinceKey: 0, frame: f, scale: scale)
+                CatStage.shared.beginFrame()
+                _ = update(ctx)
+                // Published AFTER the module runs, exactly as the registry does it —
+                // which is what gives `stage.state` its one-frame lag.
+                CatStage.shared.endFrame(state: dragging ? .dragging : .idle,
+                                         bodyOffset: .zero)
+            }
+        }
+        func reset(to x: CGFloat) {
+            releasePark()
+            settled = 0
+            wasDragging = false
+            panel.setFrameOrigin(NSPoint(x: x, y: panel.frame.origin.y))
+        }
+        let home = vf.midX - panel.frame.width / 2
+
+        // A drag that rests at the edge, then lets go.
+        reset(to: home)
+        drive(at: home, dragging: true, frames: 30)
+        drive(at: pr, dragging: true, frames: Int(armMs / 1000 * 120) + 20)
+        check("a drag that rests the cat against the edge arms it", armedEdge == .right)
+        check("...and the line is actually on screen", indicator?.onScreen == true,
+              String(format: "alpha %.2f", Double(indicatorAlpha)))
+        check("...hugging the edge it will snap to",
+              indicator.map { abs($0.frame.maxX - vf.maxX) < 1 } ?? false,
+              String(format: "line at x %.0f, screen edge %.0f",
+                     Double(indicator?.frame.maxX ?? -1), Double(vf.maxX)))
+        drive(at: nil, dragging: false, frames: 300)
+        check("...and letting go there parks the cat",
+              abs(panel.frame.origin.x - pr) < 1.5,
+              String(format: "landed at %.0f, expected %.0f",
+                     Double(panel.frame.origin.x), Double(pr)))
+
+        // A drag that passes the edge without stopping, and lets go.
+        reset(to: home)
+        drive(at: home, dragging: true, frames: 30)
+        drive(at: pr, dragging: true, frames: Int(armMs / 1000 * 120) / 3)
+        check("a brush past the edge shows no line", indicator?.onScreen != true)
+        drive(at: home, dragging: true, frames: 30)
+        drive(at: nil, dragging: false, frames: 200)
+        check("a drag that only brushes the edge and moves on does not park",
+              abs(panel.frame.origin.x - home) < 1.5,
+              String(format: "landed at %.0f, expected to stay at %.0f",
+                     Double(panel.frame.origin.x), Double(home)))
+        reset(to: home)
+
+        // 8. Live, and the only check here that needs a screen.
+        let y = panel.frame.origin.y
+        panel.setFrameOrigin(NSPoint(x: pr, y: y))
+        let got = panel.frame.origin
+        check("the window may hang off the right edge", abs(got.x - pr) < 0.5,
+              String(format: "asked %.1f, got %.1f", Double(pr), Double(got.x)))
+        check("parking does not move it vertically", abs(got.y - y) < 0.5)
+
+        print(String(format: "# demo: peek band=%.0fpt arm=%.0fms disarm=%.0fms "
+                           + "reveal=%.0fpt parkedR=%.1f parkedL=%.1f",
+                     Double(band), armMs, disarmMs, Double(want), Double(pr), Double(pl)))
+        print(failures == 0
+              ? "# demo: PASS — the gesture arms only on a dwell, and the cat parks where claimed"
+              : "# demo: FAIL — \(failures) check(s) failed")
+        fflush(stdout)
+        exit(failures == 0 ? 0 : 1)
+    }
+}
+
+// MARK: - The edge capsule
+
+/// The line that says a snap is armed.
+///
+/// A separate window rather than something drawn into the cat's, because it has to be
+/// at the screen edge and the cat is not — and because it must never take a click,
+/// which a panel that ignores mouse events unconditionally guarantees without going
+/// anywhere near the 120Hz click-through poll.
+///
+/// Deliberately system chrome and not cat art: a rounded capsule, antialiased, the
+/// same shape macOS and Windows use to say "this is where it lands". The pixel-grid
+/// rules that govern every sprite do not apply to it, and pretending otherwise would
+/// make it look like a bug rather than like the OS.
+private final class SnapIndicator {
+    private let panel: NSPanel
+    private let capsule = CALayer()
+
+    init() {
+        panel = NSPanel(contentRect: .zero,
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)))
+        panel.collectionBehavior = [
+            .canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle,
+        ]
+        let host = NSView()
+        host.wantsLayer = true
+        host.layer?.addSublayer(capsule)
+        panel.contentView = host
+
+        capsule.backgroundColor = NSColor.white.cgColor
+        // A white line on a white background is not an affordance. The hairline
+        // border is what makes it visible on a bright video as well as a dark one.
+        capsule.borderColor = NSColor.black.withAlphaComponent(0.28).cgColor
+        capsule.borderWidth = 1
+        capsule.actions = ["position": NSNull(), "bounds": NSNull(),
+                           "opacity": NSNull(), "cornerRadius": NSNull()]
+    }
+
+    func show(frame: NSRect, alpha: CGFloat, radius: CGFloat) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        panel.setFrame(frame, display: false)
+        capsule.frame = CGRect(origin: .zero, size: frame.size)
+        capsule.cornerRadius = radius
+        CATransaction.commit()
+        panel.alphaValue = alpha
+        if !panel.isVisible { panel.orderFrontRegardless() }
+    }
+
+    func hide() {
+        if panel.isVisible { panel.orderOut(nil) }
+    }
+
+    /// For `--demo-peek`. Whether the line is actually on screen, and where — the
+    /// symptom this covers is "I can't see the line", which no amount of testing the
+    /// code path that computes it would have caught.
+    var onScreen: Bool { panel.isVisible && panel.alphaValue > 0.5 }
+    var frame: NSRect { panel.frame }
+}
+
+// MARK: - The detector
+
+/// "Is a full-screen window covering the cat's display, and is something holding the
+/// display awake?"
+///
+/// The second question is what separates a film from a full-screen text editor, and it
+/// is the closest a permission-free app can honestly get to "a video is playing":
+/// every video player takes a display-sleep assertion so the screen does not dim
+/// mid-scene, and nothing that is merely being typed into does. `pmset -g assertions`
+/// reads exactly this table and needs no privilege.
+///
+/// Both are needed to ENTER. Only the full-screen window is needed to STAY, so pausing
+/// a film does not make the cat walk back out in front of it.
+///
+/// Polled at 4Hz on a background queue: the window list is 80-odd dictionaries on this
+/// machine and has no business running on a 120Hz tick.
+private final class FullscreenWatch {
+    private(set) var covering = false
+    private(set) var awake = false
+    private var latched = false
+
+    private var lastPoll: Double = -1
+    private var inFlight = false
+    private let queue = DispatchQueue(label: "dev.loafcat.fullscreen", qos: .utility)
+    private let interval: CFTimeInterval = 0.25
+
+    /// True while the cat should stay out of the way.
+    var fullscreenBusy: Bool { latched }
+
+    func poll(screenFrame: NSRect, now: Double) {
+        guard !inFlight, lastPoll < 0 || now - lastPoll >= interval else { return }
+        lastPoll = now
+        inFlight = true
+        queue.async { [weak self] in
+            let c = Self.windowCovers(screenFrame)
+            let a = Self.displayHeldAwake()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.covering = c
+                self.awake = a
+                // Enter on both, stay on one.
+                self.latched = c && (a || self.latched)
+                self.inFlight = false
+            }
+        }
+    }
+
+    /// A window from another process, at layer 0, whose bounds are the whole display.
+    ///
+    /// Compared against `frame` and not `visibleFrame` on purpose: real full screen
+    /// covers the menu bar, and a merely maximised window does not. That distinction
+    /// is the whole reason a maximised terminal is not mistaken for a film.
+    private static func windowCovers(_ screenFrame: NSRect) -> Bool {
+        let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let list = CGWindowListCopyWindowInfo(opts, kCGNullWindowID)
+                as? [[String: Any]] else { return false }
+        // CoreGraphics measures y DOWN from the top-left of the primary display;
+        // AppKit measures it up from the bottom-left of the same point.
+        let primaryH = NSScreen.screens
+            .first { $0.frame.origin == .zero }?.frame.height
+            ?? NSScreen.main?.frame.height ?? 0
+        let me = ProcessInfo.processInfo.processIdentifier
+
+        for w in list {
+            guard let layer = w[kCGWindowLayer as String] as? Int, layer == 0,
+                  let pid = w[kCGWindowOwnerPID as String] as? pid_t, pid != me,
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat]
+            else { continue }
+            let x = b["X"] ?? 0, y = b["Y"] ?? 0
+            let cw = b["Width"] ?? 0, ch = b["Height"] ?? 0
+            let flipped = NSRect(x: x, y: primaryH - (y + ch), width: cw, height: ch)
+            if abs(flipped.minX - screenFrame.minX) < 2,
+               abs(flipped.minY - screenFrame.minY) < 2,
+               abs(flipped.width - screenFrame.width) < 2,
+               abs(flipped.height - screenFrame.height) < 2 {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func displayHeldAwake() -> Bool {
+        var status: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsStatus(&status) == kIOReturnSuccess,
+              let d = status?.takeRetainedValue() as? [String: Int] else { return false }
+        // Both spellings: the modern assertion and the one older players still take.
+        return (d["PreventUserIdleDisplaySleep"] ?? 0) > 0
+            || (d["NoDisplaySleepAssertion"] ?? 0) > 0
+    }
+}

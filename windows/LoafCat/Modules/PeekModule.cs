@@ -1,0 +1,921 @@
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Runtime.Versioning;
+using System.Windows.Forms;
+using LoafCat.Interop;
+
+namespace LoafCat;
+
+/// Which side of the display the cat parks against.
+public enum PeekEdge
+{
+    Left,
+    Right,
+}
+
+/// The dwell-to-arm gesture, as a pure state machine over time and one number.
+///
+/// Pulled out of the module deliberately. Nobody can drag a cat on a CI runner, so the
+/// only way this gets checked on every commit is if the decision is separable from the
+/// window, the cursor and the clock — the same reason `SelfInstall.Decide` is its own
+/// function. `--demo-peek` drives it with a scripted time base on both platforms, and
+/// the two ports are expected to agree exactly.
+public struct Arming()
+{
+    public double ArmMs = 320;
+    public double DisarmMs = 80;
+
+    private PeekEdge? _dwellEdge = null;
+    private double _dwellSince = 0;
+    private double? _leftZoneAt = null;
+
+    /// The edge the snap is armed for, or null. This is also precisely the condition
+    /// under which the indicator is visible, which is what makes "no line means no
+    /// snap" a fact rather than a hope.
+    public PeekEdge? Armed { get; private set; } = null;
+
+    /// `edge` is which screen edge the CAT is currently against, or null. Resolving
+    /// that is geometry and lives in the module; this is only the dwell and the
+    /// hysteresis, which is the part with state in it.
+    public void Step(PeekEdge? edge, double now)
+    {
+        if (edge is not { } e)
+        {
+            // A little hysteresis before disarming. Without it one pixel of hand
+            // wobble at the boundary strobes the capsule on and off.
+            if (Armed is not null || _dwellEdge is not null)
+            {
+                _leftZoneAt ??= now;
+                if (now - _leftZoneAt.Value >= DisarmMs / 1000) Clear();
+            }
+            return;
+        }
+
+        _leftZoneAt = null;
+        if (_dwellEdge != e)
+        {
+            _dwellEdge = e;
+            _dwellSince = now;
+            Armed = null;
+        }
+        // Strictly greater: arming exactly ON the threshold would make the result
+        // depend on whether a tick happened to land there, and the two ports do not
+        // tick at the same instants.
+        if (now - _dwellSince > ArmMs / 1000) Armed = e;
+    }
+
+    public void Clear()
+    {
+        _dwellEdge = null;
+        Armed = null;
+        _leftZoneAt = null;
+    }
+}
+
+/// Parking the cat against a screen edge, so it peers in from the side instead of
+/// sitting on top of what you are looking at.
+///
+/// The direct counterpart of Modules/PeekModule.swift, in the same order, with the
+/// same comments where the reasoning is the same. Read them side by side.
+///
+/// Two ways in, and they are deliberately different in how sticky they are:
+///
+/// 1. **You snap it there.** Drag the cat until the cursor rests in the band at the
+///    screen edge; after `arm_ms` the snap arms and a short white capsule fades in
+///    where the cat will land. Let go and it parks. Let go anywhere else and it just
+///    falls where you dropped it, exactly as before. A manual park stays until you
+///    drag it out — you asked for it, so nothing takes it away.
+/// 2. **A full-screen video parks it for you.** Temporary: the cat remembers where it
+///    stood and walks back when the video ends.
+///
+/// **The dwell is the whole gesture**, and it is what makes "come in a certain way and
+/// it won't snap" work. Brushing the edge on the way past never arms, because arming
+/// takes time standing still. It is also honest in both directions: the capsule only
+/// appears once the snap is armed, so *no line means no snap* and you can always tell
+/// before you let go.
+///
+/// It is not a modifier key, and that is forced rather than chosen. `GetAsyncKeyState`
+/// and `GetKeyState` are banned outright by `scripts/check-privacy.sh`, so there is no
+/// way to read Option/Alt that both ports could share — and this is the case where the
+/// constraint gives the better answer anyway, since dwell-to-tile is what macOS itself
+/// switched to.
+[SupportedOSPlatform("windows")]
+public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
+{
+    public string Id => "peek";
+    public int TunedGeneration { get; set; } = -1;
+
+    private readonly CatWindow _window = window;
+    private readonly FullscreenWatch _watch = new();
+    private SnapIndicator? _indicator;
+
+    // --- tuning, all of it from cat.json ------------------------------------
+    // Lengths are LOGICAL pixels of the 48px canvas and are multiplied by the render
+    // scale at the point of use, so the edge band and the parked reveal grow with the
+    // cat. A bigger cat is a bigger target and deserves a wider band.
+    private double _edgeZonePx = 12;
+    private double _armMs = 320;
+    private double _disarmMs = 80;
+    private double _revealPx = 23;
+    private double _slideRate = 11;
+    private double _settlePt = 0.35;
+    private double _hideAt = 0.55;
+    private double _bobPx = 1.5;
+    private double _bobHz = 0.42;
+    private double _indicatorWPx = 3;
+    private double _indicatorFadeMs = 120;
+
+    /// The pose's ink inside the 48px canvas, per facing, so `reveal_px` means "this
+    /// much cat" and not "this much canvas, most of which is transparent".
+    internal readonly record struct Ink(double MinX, double MaxX, double Height);
+    private readonly Dictionary<PeekEdge, Ink> _ink = [];
+    private Ink InkFor(PeekEdge edge) =>
+        _ink.TryGetValue(edge, out var i) ? i : new Ink(0, 48, 48);
+
+    /// The WHOLE drawn cat, which is a different box from the head above and is used
+    /// for a different question. The head decides where the cat parks; this decides
+    /// when the gesture arms, because while you are dragging it the whole cat is what
+    /// you can see and what you are aiming at.
+    private double _dragInkMinX;
+    private double _dragInkMaxX = 48;
+
+    /// The atlas pose each edge wears. `peek_r` faces left, which is the drawing for a
+    /// cat whose body is behind the RIGHT edge.
+    public static string PoseName(PeekEdge edge) => edge == PeekEdge.Right ? "peek_r" : "peek_l";
+
+    public void Retune(Atlas atlas)
+    {
+        double V(string k, double d) => atlas.Tune("peek", k, d);
+        _edgeZonePx = V("edge_zone_px", _edgeZonePx);
+        _armMs = V("arm_ms", _armMs);
+        _disarmMs = V("disarm_ms", _disarmMs);
+        _revealPx = V("reveal_px", _revealPx);
+        _slideRate = V("slide_rate", _slideRate);
+        _settlePt = V("settle_pt", _settlePt);
+        _hideAt = V("hide_at", _hideAt);
+        _bobPx = V("bob_px", _bobPx);
+        _bobHz = V("bob_hz", _bobHz);
+        _indicatorWPx = V("indicator_w_px", _indicatorWPx);
+        _indicatorFadeMs = V("indicator_fade_ms", _indicatorFadeMs);
+
+        // Each facing is measured on its OWN parts. The two are mirror images, so a
+        // single box would be right for one edge and wrong for the other by however far
+        // the pose sits off the canvas centre — which is the width of a muzzle, and
+        // would show up as the cat parking deeper on one side than the other.
+        _ink.Clear();
+        foreach (var edge in new[] { PeekEdge.Right, PeekEdge.Left })
+        {
+            double minX = double.MaxValue, maxX = double.MinValue;
+            double minY = double.MaxValue, maxY = double.MinValue;
+            if (!atlas.Poses.TryGetValue(PoseName(edge), out var pose)) continue;
+            foreach (string name in pose)
+            {
+                if (!atlas.Parts.TryGetValue(name, out var p)) continue;
+                minX = Math.Min(minX, p.Origin.X);
+                maxX = Math.Max(maxX, p.Origin.X + p.Size.W);
+                minY = Math.Min(minY, p.Origin.Y);
+                maxY = Math.Max(maxY, p.Origin.Y + p.Size.H);
+            }
+            if (minX > maxX) continue;
+            _ink[edge] = new Ink(minX, maxX, Math.Max(maxY - minY, 1));
+        }
+
+        // The whole STANDING cat, which is a different box used for a different
+        // question: the pose decides where the cat parks, this decides when the gesture
+        // arms, because while you are dragging it the standing cat is what you can see
+        // and what you are aiming at. The pose parts are excluded for exactly that
+        // reason — they are not on screen while you are dragging.
+        double dMinX = double.MaxValue, dMaxX = double.MinValue;
+        foreach (var (name, p) in atlas.Parts)
+        {
+            if (name == "shadow" || atlas.PosedParts.Contains(name)) continue;
+            dMinX = Math.Min(dMinX, p.Origin.X);
+            dMaxX = Math.Max(dMaxX, p.Origin.X + p.Size.W);
+        }
+        if (dMinX <= dMaxX)
+        {
+            _dragInkMinX = dMinX;
+            _dragInkMaxX = dMaxX;
+        }
+    }
+
+    // --- how the cat came to be parked --------------------------------------
+    // Worth distinguishing, because it decides what takes it back out again.
+    private enum ParkKind
+    {
+        None,
+        Manual,     // you put it there; only you take it away
+        Auto,       // a video put it there; the video takes it away
+    }
+    private ParkKind _park = ParkKind.None;
+    private PeekEdge _parkEdge = PeekEdge.Right;
+    private bool IsParked => _park != ParkKind.None;
+
+    /// Where the cat stood before a video moved it, so it can be put back. Cleared the
+    /// moment the user drags, because then they have chosen a new home and putting it
+    /// back would be overruling them.
+    private double? _preParkX;
+
+    /// The slide's authoritative position, in pixels, kept apart from the window's own
+    /// because the window's is quantised. Null whenever the window is not ours to move
+    /// — while it is being dragged, and while there is nowhere to go.
+    private double? _slideX;
+
+    /// Set when the user drags out of an automatic park. Suppresses re-parking until
+    /// the full-screen window goes away, or the cat would spring straight back to the
+    /// edge and there would be no way to keep it out.
+    private bool _autoOverridden;
+
+    // --- the arm state machine ----------------------------------------------
+    private bool _wasDragging;
+    private Arming _arming = new();
+    private PeekEdge? ArmedEdge => _arming.Armed;
+
+    // --- presentation --------------------------------------------------------
+    private double _indicatorAlpha;
+    private double _bobPhase;
+    /// 0 while free, 1 when fully parked. Drives the lean, so the cat does not snap
+    /// into its peeking pose before it has arrived at the edge.
+    private double _settled;
+    private PeekEdge? _lastEdge;
+    private PeekEdge? _lastArmed;
+
+    /// Seconds since this module's first tick. See `Update`.
+    private double _elapsed;
+
+    private readonly bool _demoRequested =
+        Environment.GetCommandLineArgs().Contains("--demo-peek");
+    private bool _demoRan;
+
+    // MARK: - Settings
+
+    /// Both default ON. Someone who finds either annoying must be able to switch it
+    /// off without switching the other off with it.
+    public static bool AutoPeekEnabled => Prefs.GetBool("peekFullscreen", true);
+    public static bool SnapOnDragEnabled => Prefs.GetBool("peekSnapDrag", true);
+
+    /// "Centre on screen" has to mean it, so the menu item clears any park through
+    /// here rather than fighting the easing for the rest of the session.
+    public void ReleasePark()
+    {
+        _park = ParkKind.None;
+        _preParkX = null;
+        _slideX = null;
+        _arming.Clear();
+    }
+
+    // MARK: - Tick
+
+    public ModuleOutput Update(in TickContext ctx)
+    {
+        if (this.TunedAtlas() is not { } atlas) return ModuleOutput.None;
+        var stage = CatStage.Shared;
+        // The module's own clock, accumulated from the tick rather than read off the
+        // wall. Everything else here is already dt-driven, so a second time source was
+        // an inconsistency waiting to bite — and it bit the moment anything tried to
+        // drive the module faster than real time, which is exactly what a scripted
+        // test does. One clock also means the two ports cannot drift apart on timing.
+        _elapsed += ctx.Dt;
+        double now = _elapsed;
+        var display = Screens.Holding(ctx.Frame);
+        var work = display.Work;
+
+        if (_demoRequested && !_demoRan)
+        {
+            _demoRan = true;
+            PeekDemo.Run(this, atlas, _window, work, ctx.Scale);
+        }
+
+        _watch.Poll(display.Frame, now);
+        bool busy = _watch.FullscreenBusy;
+        stage.FullscreenBusy = busy;
+        stage.Metric("peek.fs", _watch.Covering ? 1 : 0);
+        stage.Metric("peek.awake", _watch.Awake ? 1 : 0);
+
+        // The one-frame lag on `stage.State` is exactly what this wants: it lets the
+        // module notice a drag without knowing which module owns dragging.
+        bool dragging = stage.State == CatState.Dragging;
+        bool dragEnded = _wasDragging && !dragging;
+        _wasDragging = dragging;
+
+        // --- being carried overrides everything ------------------------------
+        if (dragging)
+        {
+            if (_park == ParkKind.Auto) _autoOverridden = true;
+            if (IsParked)
+            {
+                _park = ParkKind.None;
+                _preParkX = null;
+            }
+            StepArming(in ctx, work, now);
+        }
+        else if (dragEnded)
+        {
+            if (ArmedEdge is { } edge && SnapOnDragEnabled)
+            {
+                _park = ParkKind.Manual;
+                _parkEdge = edge;
+                _preParkX = null;       // a manual park has nowhere to go back to
+            }
+            _arming.Clear();
+        }
+        else
+        {
+            _arming.Clear();
+        }
+
+        // --- the automatic half ----------------------------------------------
+        if (!busy) _autoOverridden = false;
+        if (!dragging)
+        {
+            if (busy && AutoPeekEnabled && !_autoOverridden && _park == ParkKind.None)
+            {
+                _preParkX = ctx.Frame.X;
+                _park = ParkKind.Auto;
+                _parkEdge = NearerEdge(ctx.Frame, work);
+            }
+            else if (_park == ParkKind.Auto && (!busy || !AutoPeekEnabled))
+            {
+                // Either the video ended or the setting was just turned off. Both mean
+                // the same thing to the cat: walk back. The target below falls back to
+                // `_preParkX`.
+                _park = ParkKind.None;
+            }
+        }
+
+        // --- move the window --------------------------------------------------
+        double? target = IsParked
+            ? ParkedX(_parkEdge, work, atlas, ctx.Scale)
+            : _preParkX;
+
+        if (dragging || target is null)
+        {
+            _slideX = null;             // the hand owns the window, or nobody does
+        }
+        else
+        {
+            // Accumulated in a double of our own and rounded only on the way out.
+            //
+            // Reading the position back off the window each frame instead loses every
+            // sub-pixel step to quantisation — and because an exponential approach
+            // makes the steps smaller the closer it gets, the last fraction is never
+            // travelled. Measured on the macOS build before the fix: walking home to
+            // x=727 it stopped at 728 and sat there for the rest of the run.
+            double x = _slideX ?? ctx.Frame.X;
+            double d = target.Value - x;
+            if (Math.Abs(d) < _settlePt)
+            {
+                x = target.Value;
+                if (!IsParked) _preParkX = null;
+            }
+            else
+            {
+                x += d * Math.Min(1, _slideRate * ctx.Dt);
+            }
+            _slideX = x;
+            double put = MathX.Round(x);
+            if (ctx.Frame.X != put) _window.SetOrigin(put, ctx.Frame.Y);
+        }
+
+        // --- how parked does it look ------------------------------------------
+        double want = IsParked ? 1 : 0;
+        _settled += (want - _settled) * Math.Min(1, _slideRate * ctx.Dt);
+        stage.Metric("peek.settled", _settled);
+        stage.Metric("peek.armed", ArmedEdge is null ? 0 : 1);
+        stage.Metric("peek.x", ctx.Frame.X);
+
+        DrawIndicator(in ctx, work);
+
+        if (_settled <= 0.002) return ModuleOutput.None;
+        if ((IsParked ? _parkEdge : _lastEdge) is not { } edgeNow) return ModuleOutput.None;
+        _lastEdge = edgeNow;
+
+        // The pose is a DIFFERENT DRAWING, and that is the whole lesson of this
+        // feature. Everything here used to be per-part offsets on the standing cat —
+        // crane the head out, bring the paws up, hide the body — and it never once
+        // looked like a cat peeking, because a front-facing face cut by a vertical
+        // line is a bisected cat at every width and every offset. Two full rounds of
+        // tuning went into the numbers before the numbers turned out not to be the
+        // problem. A cat looking round a corner is side-on: one eye, one near ear, a
+        // muzzle leading the way. So the module asks for that drawing instead, and the
+        // only motion left here is a breath applied to the whole of it.
+        _bobPhase += ctx.Dt * _bobHz;
+        while (_bobPhase >= 1) _bobPhase -= 1;
+
+        var outv = new ModuleOutput();
+        outv.Offset.Y = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
+
+        // Late in the slide, while the cat is already mostly off screen, so the swap is
+        // covered by the edge rather than happening in full view.
+        if (_settled >= _hideAt) stage.Pose = PoseName(edgeNow);
+        if (IsParked) outv.State = CatState.Peeking;
+        return outv;
+    }
+
+    // MARK: - Arming
+
+    private void StepArming(in TickContext ctx, Rect work, double now)
+    {
+        if (!SnapOnDragEnabled)
+        {
+            _arming.Clear();
+            return;
+        }
+        _arming.ArmMs = _armMs;
+        _arming.DisarmMs = _disarmMs;
+        _arming.Step(Zone(in ctx, work), now);
+    }
+
+    /// Which screen edge the CAT is against, or null.
+    ///
+    /// Measured on the cat and not on the pointer, and that is the whole difference
+    /// between a gesture that works and one that does not. Both OSes put their snap
+    /// zone under the cursor, because there the cursor is on a window far larger than
+    /// the zone. Here the cat is 96pt across and you drag it by the middle — so its
+    /// leading edge reaches the screen edge while the pointer is still half the cat
+    /// away, which is exactly where a hand naturally stops. Keying off the pointer
+    /// meant shoving the cat half off the display before anything armed, and it read
+    /// as the snap simply not working.
+    private PeekEdge? Zone(in TickContext ctx, Rect work)
+    {
+        double pad = this.TunedAtlas()?.Layout.PadX ?? 0;
+        double band = _edgeZonePx * ctx.Scale;
+        double right = ctx.Frame.MinX + (pad + _dragInkMaxX) * ctx.Scale;
+        double left = ctx.Frame.MinX + (pad + _dragInkMinX) * ctx.Scale;
+        if (right >= work.MaxX - band) return PeekEdge.Right;
+        if (left <= work.MinX + band) return PeekEdge.Left;
+        return null;
+    }
+
+    // MARK: - Geometry
+
+    /// Auto-peek goes to whichever edge the cat is already nearest, right on a tie —
+    /// so a cat that lives on the left does not get flung across the display the
+    /// moment a video starts.
+    public static PeekEdge NearerEdge(Rect frame, Rect work) =>
+        frame.MidX - work.MinX < work.MaxX - frame.MidX ? PeekEdge.Left : PeekEdge.Right;
+
+    private double ParkedX(PeekEdge edge, Rect work, Atlas atlas, double scale)
+    {
+        var i = InkFor(edge);
+        return ParkedX(edge, work.MinX, work.MaxX, atlas.Layout.PadX,
+                       i.MinX, i.MaxX, _revealPx, scale);
+    }
+
+    /// Window origin that leaves exactly `reveal_px` of the cat's INK on screen.
+    ///
+    /// Measured off the ink and not the window, because the window carries a
+    /// transparent margin for the speech bubble — parking by the window edge would
+    /// leave the margin on screen and the cat entirely off it.
+    ///
+    /// Pure, and for the same reason `Arming` is: it is the other half of what
+    /// `--demo-peek` has to be able to assert without a screen.
+    public static double ParkedX(PeekEdge edge, double minX, double maxX, double padX,
+                                 double inkMinX, double inkMaxX,
+                                 double revealPx, double scale) =>
+        edge == PeekEdge.Right
+            ? maxX - (revealPx + padX + inkMinX) * scale
+            : minX + (revealPx - padX - inkMaxX) * scale;
+
+    // MARK: - The indicator
+
+    private void DrawIndicator(in TickContext ctx, Rect work)
+    {
+        double want = ArmedEdge is null ? 0 : 1;
+        double step = ctx.Dt / Math.Max(_indicatorFadeMs / 1000, 0.001);
+        _indicatorAlpha += MathX.Clamp(want - _indicatorAlpha, -step, step);
+
+        if (_indicatorAlpha <= 0.001)
+        {
+            _indicator?.Hide();
+            return;
+        }
+        if ((ArmedEdge ?? _lastArmed) is not { } edge) return;
+        _lastArmed = edge;
+
+        double w = MathX.Round(_indicatorWPx * ctx.Scale);
+        double h = MathX.Round(InkFor(edge).Height * ctx.Scale);
+        double x = edge == PeekEdge.Right ? work.MaxX - w : work.MinX;
+        var rect = new Rect(x, MathX.Round(ctx.Frame.MidY - h / 2), w, h);
+
+        _indicator ??= new SnapIndicator();
+        _indicator.Present(rect, _indicatorAlpha);
+    }
+
+    // Read by the scripted demo, which needs the tuning it is asserting against.
+    internal (double EdgeZonePx, double ArmMs, double DisarmMs, double RevealPx,
+              Ink InkR, Ink InkL) DemoTuning =>
+        (_edgeZonePx, _armMs, _disarmMs, _revealPx,
+         InkFor(PeekEdge.Right), InkFor(PeekEdge.Left));
+
+    /// Which edge the snap is armed for, for the scripted drag above.
+    internal PeekEdge? DemoArmed => ArmedEdge;
+}
+
+// MARK: - Scripted verification
+
+/// `--demo-peek`. Asserts the gesture and the parked geometry without a hand.
+///
+/// The same script as the macOS build's, against the same pure `Arming` and `ParkedX`,
+/// so the two ports can be compared by reading two logs rather than by trusting that
+/// two translations of a state machine came out the same. They are expected to agree
+/// exactly — there is no spring here to disagree about, only thresholds.
+///
+/// The last check differs from the macOS one, and deliberately. There the open question
+/// was whether AppKit would let a borderless panel hang off the side of the display at
+/// all; here `UpdateLayeredWindow` is simply handed a position and no window manager
+/// argues. What CAN undo a park on this platform is `CatWindow.ClampIntoView`, which
+/// drags a fully-off-display window back on a monitor change — so what is asserted is
+/// that a parked cat still overlaps the work area and is therefore left alone.
+[SupportedOSPlatform("windows")]
+internal static class PeekDemo
+{
+    internal static void Run(PeekModule m, Atlas atlas, CatWindow window,
+                             Rect work, double scale)
+    {
+        int failures = 0;
+        void Check(string name, bool ok, string detail = "")
+        {
+            if (!ok) failures++;
+            Console.WriteLine($"  {(ok ? "ok  " : "FAIL")} {name}"
+                              + (detail.Length == 0 ? "" : $"  — {detail}"));
+        }
+
+        var t = m.DemoTuning;
+        double band = t.EdgeZonePx * scale;
+        double dwell = t.ArmMs / 1000, grace = t.DisarmMs / 1000;
+        double now = 0;
+        var a = new Arming { ArmMs = t.ArmMs, DisarmMs = t.DisarmMs };
+        void Hold(PeekEdge? e, double seconds)
+        {
+            double end = now + seconds;
+            while (now < end)
+            {
+                a.Step(e, now);
+                now += 1.0 / 120;
+            }
+        }
+        PeekEdge? inBandR = PeekEdge.Right, inBandL = PeekEdge.Left, middle = null;
+        double prX = PeekModule.ParkedX(PeekEdge.Right, work.MinX, work.MaxX,
+                                        atlas.Layout.PadX, t.InkR.MinX, t.InkR.MaxX,
+                                        t.RevealPx, scale);
+
+        Console.WriteLine($"# demo: peek — screen {(int)work.W}x{(int)work.H} at "
+                          + $"({(int)work.MinX},{(int)work.MinY}), scale {(int)scale}x, "
+                          + $"band {(int)band}pt, arm {(int)t.ArmMs}ms");
+
+        // 1. Brushing the edge on the way past must NOT arm. This is the gesture the
+        //    user asked for by name: come in a certain way and it will not snap.
+        Hold(middle, 0.20);
+        Hold(inBandR, dwell * 0.5);
+        Hold(middle, 0.20);
+        Check("a flick through the band never arms", a.Armed is null);
+
+        // 2. Resting there does.
+        Hold(inBandR, dwell + 0.05);
+        Check("dwelling at the right edge arms right", a.Armed == PeekEdge.Right);
+
+        // 3. A wobble out of the band is forgiven; leaving properly is not.
+        Hold(middle, grace * 0.4);
+        Check("a brief wobble keeps it armed", a.Armed == PeekEdge.Right);
+        Hold(middle, grace + 0.05);
+        Check("leaving the band disarms", a.Armed is null);
+
+        // 4. The other edge works and the dwell restarts when you switch.
+        Hold(inBandL, dwell + 0.05);
+        Check("dwelling at the left edge arms left", a.Armed == PeekEdge.Left);
+        Hold(inBandR, dwell * 0.5);
+        Check("switching edges restarts the dwell", a.Armed is null);
+        Hold(inBandR, dwell);
+        Check("and arms once the new dwell completes", a.Armed == PeekEdge.Right);
+
+        // 5. The parked position leaves exactly `reveal_px` of INK on screen — not of
+        //    canvas, most of which is the transparent bubble margin.
+        double padX = atlas.Layout.PadX;
+        double want = t.RevealPx * scale;
+        double pr = prX;
+        double pl = PeekModule.ParkedX(PeekEdge.Left, work.MinX, work.MaxX, padX,
+                                       t.InkL.MinX, t.InkL.MaxX, t.RevealPx, scale);
+        double shownR = work.MaxX - (pr + (padX + t.InkR.MinX) * scale);
+        double shownL = pl + (padX + t.InkL.MaxX) * scale - work.MinX;
+        Check($"parked right shows {(int)t.RevealPx}px of cat", Math.Abs(shownR - want) < 0.01,
+              $"{shownR:F2}pt vs {want:F2}pt");
+        Check($"parked left shows {(int)t.RevealPx}px of cat", Math.Abs(shownL - want) < 0.01,
+              $"{shownL:F2}pt vs {want:F2}pt");
+
+        // 6b. THE WHOLE MODULE, driven through a synthetic drag.
+        //
+        // Everything else here tests a piece in isolation — the arm decision, the
+        // parked arithmetic — and on macOS every piece passed while the gesture could
+        // not be performed at all. What was never tested was the wiring between them.
+        // That is where a broken snap lives, so that is what this drives, through the
+        // same Update the tick calls.
+        void Drive(double? x, bool dragging, int frames)
+        {
+            for (int i = 0; i < frames; i++)
+            {
+                // A drag moves the WINDOW, so the test does too — anything else would
+                // be testing a gesture nobody performs.
+                if (x is { } px && dragging) window.SetOrigin(px, window.Frame.Y);
+                var ctx = new TickContext
+                {
+                    Dt = 1.0 / 120, Cursor = Pt.Zero, CursorVelocity = Pt.Zero,
+                    CursorOnCat = true, KeysPerSecond = 0, ScrollDelta = 0,
+                    SecondsSinceKey = 0, Frame = window.Frame, Scale = scale,
+                };
+                CatStage.Shared.BeginFrame();
+                m.Update(in ctx);
+                // Published AFTER the module runs, exactly as the registry does it —
+                // which is what gives Stage.State its one-frame lag.
+                CatStage.Shared.EndFrame(dragging ? CatState.Dragging : CatState.Idle,
+                                         Pt.Zero);
+            }
+        }
+        double home = work.MidX - window.Frame.W / 2;
+        void Reset()
+        {
+            m.ReleasePark();
+            window.SetOrigin(home, window.Frame.Y);
+            Drive(null, false, 400);          // let the settle unwind
+        }
+
+        Reset();
+        Drive(home, true, 30);
+        Drive(prX, true, (int)(t.ArmMs / 1000 * 120) + 20);
+        Check("a drag that rests the cat against the edge arms it", m.DemoArmed is not null,
+              $"armed={m.DemoArmed}");
+        Drive(null, false, 300);
+        Check("...and letting go there parks the cat",
+              Math.Abs(window.Frame.X - prX) < 1.5,
+              $"landed at {window.Frame.X:F0}, expected {prX:F0}");
+
+        Reset();
+        Drive(home, true, 30);
+        Drive(prX, true, (int)(t.ArmMs / 1000 * 120) / 3);
+        Drive(home, true, 30);
+        Drive(null, false, 200);
+        Check("a drag that only brushes the edge and moves on does not park",
+              Math.Abs(window.Frame.X - home) < 1.5,
+              $"landed at {window.Frame.X:F0}, expected to stay at {home:F0}");
+        Reset();
+
+        // 6. THE POSE IS A DIFFERENT DRAWING, not the standing cat rearranged.
+        //
+        // This is the check the feature was missing for three attempts. Every earlier
+        // version tried to make the front-facing cat peek — slide it behind the edge,
+        // crane the head, hide the body, rotate it 90° — and each one was tuned,
+        // shipped and reported back as "that is not a cat peeking". A face drawn
+        // front-on and cut by a vertical line is a bisected cat at every width, and no
+        // number fixes that. So the shape itself is what gets asserted here.
+        List<string> poseR =
+            atlas.Poses.TryGetValue(PeekModule.PoseName(PeekEdge.Right), out var pR) ? pR : [];
+        List<string> poseL =
+            atlas.Poses.TryGetValue(PeekModule.PoseName(PeekEdge.Left), out var pL) ? pL : [];
+        Check("the pose is side-on: exactly one eye",
+              poseR.Count(n => n.EndsWith("_eye", StringComparison.Ordinal)) == 1,
+              "two eyes is a front-facing face, which cannot peek round a corner");
+        Check("the pose brings its own head, ears and paws",
+              poseR.Contains("peek_r_head") && poseR.Contains("peek_r_ear")
+              && poseR.Contains("peek_r_paw_a") && poseR.Contains("peek_r_paw_b"), "");
+        Check("the pose leaves out the body, the tail and the shadow",
+              poseR.All(n => n is not ("body" or "tail" or "shadow")), "");
+        Check("neither edge's pose borrows a part of the standing cat",
+              poseR.Concat(poseL).All(n => n.StartsWith("peek_", StringComparison.Ordinal)), "");
+        Check("the two facings are mirror images",
+              Math.Abs(t.InkR.MinX - (atlas.Canvas - t.InkL.MaxX)) < 0.001
+              && Math.Abs(t.InkR.Height - t.InkL.Height) < 0.001,
+              $"R {t.InkR.MinX:F0}..{t.InkR.MaxX:F0}, L {t.InkL.MinX:F0}..{t.InkL.MaxX:F0} "
+              + $"on a {atlas.Canvas:F0} canvas");
+        Check("the two edges show the same amount of cat", Math.Abs(shownR - shownL) < 0.01, "");
+
+        // WHICH parts the cut lands between. With a side-on drawing the cut is no
+        // longer what does the hiding — the art is — so the claim is narrower and more
+        // honest than it used to be: the face comes out, the back of the skull does
+        // not, and that difference is what makes the head read as emerging from behind
+        // the edge rather than floating beside it.
+        double seenTo = t.InkR.MinX + t.RevealPx;    // right park: 0..seenTo on screen
+        double seenFrom = t.InkL.MaxX - t.RevealPx;  // left park: seenFrom.. on screen
+        // Spelled out rather than as a ternary on a separate `ok`: nullable flow
+        // analysis cannot see through that and rejects the dereference.
+        bool Lo(string n, out double lo)
+        {
+            if (atlas.Parts.TryGetValue(n, out var p)) { lo = p.Origin.X; return true; }
+            lo = 0;
+            return false;
+        }
+        bool Hi(string n, out double hi)
+        {
+            if (atlas.Parts.TryGetValue(n, out var p))
+            {
+                hi = p.Origin.X + p.Size.W;
+                return true;
+            }
+            hi = 0;
+            return false;
+        }
+        Check("right park: the whole eye clears the edge",
+              Hi("peek_r_eye", out double eyeR) && eyeR <= seenTo, "");
+        Check("left park: the whole eye clears the edge",
+              Lo("peek_l_eye", out double eyeL) && eyeL >= seenFrom, "");
+        Check("right park: both paws clear the edge",
+              Hi("peek_r_paw_a", out double pawAR) && pawAR <= seenTo
+              && Hi("peek_r_paw_b", out double pawBR) && pawBR <= seenTo,
+              "the paws over the edge are half the pose; cutting one is a cat with a stump");
+        Check("left park: both paws clear the edge",
+              Lo("peek_l_paw_a", out double pawAL) && pawAL >= seenFrom
+              && Lo("peek_l_paw_b", out double pawBL) && pawBL >= seenFrom, "");
+        Check("right park: the back of the skull stays behind the edge",
+              Hi("peek_r_head", out double skullR) && skullR > seenTo,
+              "with the whole head on screen it floats beside the edge instead of "
+              + "coming from behind it");
+        Check("left park: the back of the skull stays behind the edge",
+              Lo("peek_l_head", out double skullL) && skullL < seenFrom, "");
+
+        // What the view will actually DRAW, which is a separate question from where the
+        // window goes and is where a pose can fail invisibly: leave the standing cat on
+        // and you get a body behind a peeking head, hide one part too many and you get
+        // nothing at all. Asked of the same pure rule the compositor uses.
+        HashSet<string> Drawn(string? pose)
+        {
+            HashSet<string> showing = pose is not null &&
+                atlas.Poses.TryGetValue(pose, out var pp) ? new HashSet<string>(pp) : [];
+            return new HashSet<string>(atlas.Order.Where(
+                n => !CatView.OutOfPose(n, showing, pose, atlas.PosedParts)));
+        }
+        var standing = Drawn(null);
+        var peeking = Drawn(PeekModule.PoseName(PeekEdge.Right));
+        Check("with no pose the standing cat is drawn and no pose part is",
+              standing.Contains("head") && standing.Contains("body")
+              && !standing.Overlaps(atlas.PosedParts), "");
+        Check("while peeking the pose is drawn and the standing cat is not",
+              peeking.SetEquals(poseR),
+              $"{peeking.Count} parts drawn, {poseR.Count} in the pose");
+        Check("the two facings are never drawn together",
+              !Drawn(PeekModule.PoseName(PeekEdge.Left)).Overlaps(peeking), "");
+
+        // 7. A parked cat must still overlap the work area, or ClampIntoView will
+        //    haul it back the next time a monitor is plugged in and the park will
+        //    silently stop working on exactly the machines that have two screens.
+        var f = window.Frame;
+        var atR = new Rect(pr, f.Y, f.W, f.H);
+        var atL = new Rect(pl, f.Y, f.W, f.H);
+        Check("a right-parked cat is not fully off-display", atR.IntersectionArea(work) > 0);
+        Check("a left-parked cat is not fully off-display", atL.IntersectionArea(work) > 0);
+
+        Console.WriteLine($"# demo: peek band={band:F0}pt arm={t.ArmMs:F0}ms "
+                          + $"disarm={t.DisarmMs:F0}ms reveal={want:F0}pt "
+                          + $"parkedR={pr:F1} parkedL={pl:F1}");
+        Console.WriteLine(failures == 0
+            ? "# demo: PASS — the gesture arms only on a dwell, and the cat parks where claimed"
+            : $"# demo: FAIL — {failures} check(s) failed");
+        Console.Out.Flush();
+        Environment.Exit(failures == 0 ? 0 : 1);
+    }
+}
+
+// MARK: - The edge capsule
+
+/// The line that says a snap is armed.
+///
+/// A separate window rather than something drawn into the cat's, because it has to be
+/// at the screen edge and the cat is not — and because it must never take a click,
+/// which `WS_EX_TRANSPARENT` guarantees outright.
+///
+/// Deliberately system chrome and not cat art: a capsule, the same shape Windows and
+/// macOS use to say "this is where it lands". The pixel-grid rules that govern every
+/// sprite do not apply to it, and pretending otherwise would make it look like a bug
+/// rather than like the OS.
+///
+/// Uses `Form.Opacity` — i.e. `SetLayeredWindowAttributes` — rather than the
+/// `UpdateLayeredWindow` path the cat itself needs. The cat needs per-pixel alpha
+/// because it is a silhouette; this is one flat shape at one uniform alpha, and the
+/// simpler call is the whole of what it requires.
+[SupportedOSPlatform("windows")]
+internal sealed class SnapIndicator : Form
+{
+    internal SnapIndicator()
+    {
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        TopMost = true;
+        StartPosition = FormStartPosition.Manual;
+        // Not scaled by WinForms: the bounds handed in are already in the physical
+        // pixels the cat window is placed in, and letting the framework scale them
+        // again would double-apply the display factor.
+        AutoScaleMode = AutoScaleMode.None;
+        BackColor = Color.White;
+        Opacity = 0;
+    }
+
+    protected override bool ShowWithoutActivation => true;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            // Layered (for Opacity), transparent (never takes a click, ever),
+            // no-activate (clicking near it must not steal focus from the editor),
+            // and tool-window (out of Alt-Tab and the taskbar) — the same four the cat
+            // window needs, for the same four reasons.
+            cp.ExStyle |= (int)(Win32.WsExLayered | Win32.WsExTransparent
+                              | Win32.WsExNoActivate | Win32.WsExToolWindow);
+            return cp;
+        }
+    }
+
+    /// Not called `Show` — that is `Form.Show`, and one of the two would end up
+    /// calling the other by accident.
+    internal void Present(Rect r, double alpha)
+    {
+        var bounds = new Rectangle((int)r.X, (int)r.Y, (int)r.W, (int)r.H);
+        if (Bounds != bounds)
+        {
+            Bounds = bounds;
+            // Rounded ends. A GraphicsPath region has hard edges rather than
+            // antialiased ones, which at three logical pixels wide is invisible and
+            // costs nothing next to a second layered surface.
+            using var path = new GraphicsPath();
+            float d = Math.Min(bounds.Width, bounds.Height);
+            if (d > 2)
+            {
+                path.AddArc(0, 0, d, d, 180, 180);
+                path.AddArc(0, bounds.Height - d, d, d, 0, 180);
+                path.CloseFigure();
+                Region?.Dispose();
+                Region = new Region(path);
+            }
+        }
+        Opacity = MathX.Clamp(alpha, 0, 1);
+        if (!Visible) Show();
+    }
+}
+
+// MARK: - The detector
+
+/// "Is a full-screen window covering the cat's display, and is something holding the
+/// display awake?"
+///
+/// The second question is what separates a film from a full-screen text editor, and it
+/// is the closest a permission-free app can honestly get to "a video is playing":
+/// every video player takes a display-sleep assertion so the screen does not dim
+/// mid-scene, and nothing that is merely being typed into does.
+///
+/// Both are needed to ENTER. Only the full-screen window is needed to STAY, so pausing
+/// a film does not make the cat walk back out in front of it.
+///
+/// Polled at 4Hz. Note the one place the two ports genuinely diverge: macOS has to
+/// enumerate every window on screen — eighty-odd dictionaries — so it does that on a
+/// background queue, while here the foreground window answers the same question in
+/// three cheap calls and there is nothing to get off the tick.
+[SupportedOSPlatform("windows")]
+internal sealed class FullscreenWatch
+{
+    internal bool Covering { get; private set; }
+    internal bool Awake { get; private set; }
+    private bool _latched;
+
+    private double _lastPoll = -1;
+    private const double Interval = 0.25;
+
+    /// True while the cat should stay out of the way.
+    internal bool FullscreenBusy => _latched;
+
+    internal void Poll(Rect displayFrame, double now)
+    {
+        if (_lastPoll >= 0 && now - _lastPoll < Interval) return;
+        _lastPoll = now;
+        Covering = WindowCovers(displayFrame);
+        Awake = DisplayHeldAwake();
+        // Enter on both, stay on one.
+        _latched = Covering && (Awake || _latched);
+    }
+
+    /// The foreground window, if its bounds are the whole display.
+    ///
+    /// Compared against `Frame` and not `Work` on purpose: real full screen covers the
+    /// taskbar, and a merely maximised window does not. That distinction is the whole
+    /// reason a maximised terminal is not mistaken for a film — and it is the exact
+    /// counterpart of the macOS build comparing against `frame` rather than
+    /// `visibleFrame`.
+    private static bool WindowCovers(Rect display)
+    {
+        var hwnd = Win32.GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return false;
+        if (!Win32.GetWindowRect(hwnd, out var r)) return false;
+        return Math.Abs(r.Left - display.MinX) < 2
+            && Math.Abs(r.Top - display.MinY) < 2
+            && Math.Abs(r.Right - r.Left - display.W) < 2
+            && Math.Abs(r.Bottom - r.Top - display.H) < 2;
+    }
+
+    private static bool DisplayHeldAwake()
+    {
+        if (Win32.CallNtPowerInformation(Win32.SystemExecutionState, IntPtr.Zero, 0,
+                                         out uint state, sizeof(uint)) != 0)
+        {
+            return false;
+        }
+        return (state & Win32.EsDisplayRequired) != 0;
+    }
+}

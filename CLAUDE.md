@@ -108,6 +108,42 @@ the documentation and most blog posts say.
 - **Only `CGEventSourceStateID.combinedSessionState` is safe.** `.hidSystemState`
   and `.privateState` block *indefinitely* for an unprivileged process — no error,
   no prompt, just a hang.
+- **`CGWindowListCopyWindowInfo` needs no permission; only `kCGWindowName` does.**
+  Measured from an ad-hoc bundle with Screen Recording *and* Accessibility denied:
+  bounds, owner, layer and pid came back for all 80 on-screen windows, and 1 of 80
+  had a name (46 of 80 from a terminal that *was* granted). So "is a window covering
+  this display" is free and "what is that window" is not — which is the right side of
+  the line to be on anyway. Test this from a fresh bundle launched by `open`, never
+  from your terminal: anything spawned there inherits the terminal's grants and the
+  measurement is worthless.
+- **`IOPMCopyAssertionsStatus` is the only honest way to ask "is a video playing."**
+  It needs no privilege, and `PreventUserIdleDisplaySleep` is taken by every video
+  player and by nothing that is merely being typed into. Require it to *enter* a
+  "get out of the way" state and not to *stay* in one — a paused film drops the
+  assertion, and a cat that walked back in front of the picture on every pause would
+  be worse than one that never moved.
+- **A pose that needs a different silhouette needs different ART, not different
+  offsets.** The parked "peeking" cat was attempted three times by moving the
+  front-facing parts — slide the whole cat behind the edge, hide the body and raise
+  the paws, then halve the reveal — and once by rotating the result 90°, which is
+  lossless on a pixel grid so it was worth trying. Every one failed identically: a
+  face drawn front-on and cut by a vertical line is a bisected cat at *every* width,
+  and rotating it reads as a cat that has fallen over, because two eyes stacked
+  vertically is what lying down looks like. There is no number in between. A cat
+  looking round a corner is one eye, one near ear and a muzzle leading — a **drawing**
+  the standing cat cannot be moved into. So `cat.json` carries a `poses` block, a pose
+  *replaces* the cat rather than rearranging it, and `tools/generate_art.py` draws
+  both facings (the second is the first mirrored — never flip at runtime, or the two
+  ports have one more thing to disagree about). The check that guards it is about
+  shape, not size: **the pose must contain exactly one eye.**
+- **Never read a window position back off the window as the source of truth.** The
+  window server quantises it. An exponential ease toward a target takes smaller and
+  smaller steps, so once they fall under the quantum they round away faster than they
+  accumulate and the cat stops short *for ever* — measured stalling at x=728 walking
+  home to 727. Keep the position in a float you own and round only on the way out.
+  This is the pixel-grid rule arriving from the opposite direction: there the danger
+  is a fractional value reaching the screen, here it is the screen's integer coming
+  back as truth.
 
 ## Windows — hard-won facts, same as the ones above
 
@@ -179,6 +215,23 @@ down separately rather than assuming the Mac answer transfers.
   second with a generous ±15% wander it discarded 45 of 159 genuine keystrokes. Tried at
   two window lengths, same answer both times.
 
+- **A snap gesture cannot use a modifier key, and the dwell is better anyway.**
+  `GetAsyncKeyState`, `GetKeyState` and `GetKeyboardState` are banned outright, so
+  there is no way to read Alt that both ports could share — and macOS itself moved to
+  dwell-to-tile. Make the affordance appear *only* once the snap is armed, so "no line
+  means no snap" is a fact the user can see rather than a promise. A dwell is also the
+  only design where brushing an edge on the way past is naturally distinct from
+  meaning it.
+- **`CallNtPowerInformation(SystemExecutionState)` is the `IOPMCopyAssertionsStatus`
+  counterpart** and needs no privilege. `powercfg /requests`, the obvious thing to
+  reach for, needs admin. The full-screen half is much cheaper here than on macOS —
+  the foreground window's rect answers it in three calls, against enumerating every
+  window on screen — so this port polls it inline and that one does not.
+- **Compare a candidate full-screen window against `rcMonitor`, not `rcWork`.** This
+  is the one place the usual advice inverts: real full screen covers the taskbar and a
+  merely maximised window does not, and that difference is the entire reason a
+  maximised terminal is not mistaken for a film. Everywhere the cat is *placed*, it is
+  still `rcWork`.
 - **The cat is always running, so an install that defers to a running copy never runs.**
   Windows refuses to replace a running executable, and a desktop pet is running by
   definition — so at the one moment installing matters, the file on disk is locked.

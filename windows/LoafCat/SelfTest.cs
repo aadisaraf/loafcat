@@ -44,6 +44,7 @@ public static class SelfTest
         CheckKeyInference();
         CheckStartMenuEntry();
         CheckInstallPlan();
+        CheckPeekPlan();
         CheckUpdater();
         foreach (string theme in themes) CheckTheme(theme);
 
@@ -281,8 +282,68 @@ public static class SelfTest
         // from installing anything on the machine testing it has to hold.
         Check("a test run never installs anything",
             SelfInstall.Plan(["--portable"]) == InstallPlan.None
-                && SelfInstall.Plan(["--demo-drag"]) == InstallPlan.None,
-            "--portable and --demo-drag both opt out");
+                && SelfInstall.Plan(["--demo-drag"]) == InstallPlan.None
+                && SelfInstall.Plan(["--demo-peek"]) == InstallPlan.None,
+            "--portable, --demo-drag and --demo-peek all opt out");
+    }
+
+    /// The edge-snap gesture, which nobody on a CI runner can perform by hand.
+    ///
+    /// `--demo-peek` covers the same ground in more detail against a real display; this
+    /// is the part that must hold on a headless runner too, and it is here so that a
+    /// change to the thresholds fails a build rather than being noticed by a user.
+    private static void CheckPeekPlan()
+    {
+        Log.Line("--- peek ---");
+
+        // 1000pt wide screen, a 40pt band, 320ms to arm.
+        var a = new Arming { ArmMs = 320, DisarmMs = 80 };
+        void Hold(ref Arming arm, PeekEdge? e, double from, double to)
+        {
+            for (double t = from; t < to; t += 1.0 / 120) arm.Step(e, t);
+        }
+
+        Hold(ref a, PeekEdge.Right, 0, 0.15);
+        Check("brushing the edge does not arm", a.Armed is null, "150ms < 320ms");
+
+        Hold(ref a, PeekEdge.Right, 0.15, 0.40);
+        Check("dwelling on it does", a.Armed == PeekEdge.Right, "400ms > 320ms");
+
+        Hold(ref a, null, 0.40, 0.44);
+        Check("a 40ms wobble out of the band is forgiven",
+            a.Armed == PeekEdge.Right, "40ms < 80ms");
+
+        Hold(ref a, null, 0.44, 0.60);
+        Check("leaving it properly disarms", a.Armed is null, "160ms > 80ms");
+
+        var b = new Arming { ArmMs = 320, DisarmMs = 80 };
+        Hold(ref b, PeekEdge.Left, 0, 0.40);
+        Check("the left edge arms too", b.Armed == PeekEdge.Left, "");
+
+        // Parked geometry, on invented numbers rather than this theme's, because the
+        // arithmetic is what is under test and it should not change when the art does.
+        // Ink spanning 9..39 inside a 4px-margin canvas at 2x, revealing 28: its left
+        // edge must land exactly 28 logical px inside the right screen edge.
+        double x = PeekModule.ParkedX(PeekEdge.Right, 0, 1000, padX: 4,
+                                      inkMinX: 9, inkMaxX: 39, revealPx: 28, scale: 2);
+        Check("a right park leaves exactly the reveal on screen",
+            Math.Abs(1000 - (x + (4 + 9) * 2) - 56) < 1e-9, $"x={x}");
+
+        // And it must not send the cat somewhere a monitor change would drag it back
+        // from, which is the one thing that can silently undo a park on Windows.
+        Check("a parked cat still overlaps the screen",
+            new Rect(x, 0, (48 + 8) * 2, (48 + 6) * 2)
+                .IntersectionArea(new Rect(0, 0, 1000, 1000)) > 0, "");
+
+        var screen = new Rect(0, 0, 1000, 1000);
+        Check("auto-peek picks the nearer edge",
+            PeekModule.NearerEdge(new Rect(10, 0, 100, 100), screen) == PeekEdge.Left
+            && PeekModule.NearerEdge(new Rect(880, 0, 100, 100), screen) == PeekEdge.Right,
+            "so a cat living on the left is not flung across the display");
+
+        Check("a dead-centre cat goes right",
+            PeekModule.NearerEdge(new Rect(450, 0, 100, 100), screen) == PeekEdge.Right,
+            "midX 500 of 1000 — the tie the user asked to break rightwards");
     }
 
     /// The two pure decisions the updater makes, which between them decide whether a
@@ -455,8 +516,44 @@ public static class SelfTest
         Check($"{theme}: fully transparent in the margin", corner == 0,
             $"alpha {corner} at (1, 1) — clicks there fall through to the app below");
 
+        // The pose swap, on the composed surface rather than in the plan. This is the
+        // Windows stand-in for looking at the cat, and it is aimed at the two ways a
+        // pose fails invisibly: the standing cat stays on and you get a body behind a
+        // peeking head, or one hide too many and the window goes empty. Neither shows
+        // up in a build log and neither is reachable from `CheckPeekPlan`, which only
+        // ever sees numbers.
+        int standingPx = OpaqueCount(view);
+        foreach (string pose in atlas.Poses.Keys)
+        {
+            CatStage.Shared.Pose = pose;
+            view.Compose();
+            int posePx = OpaqueCount(view);
+            Check($"{theme}: {pose} draws something", posePx > side,
+                $"{posePx} opaque px — an empty window is what hiding one part too many looks like");
+            Check($"{theme}: {pose} is less cat than the standing pose", posePx < standingPx,
+                $"{posePx} vs {standingPx} — a pose that is not SMALLER is the standing "
+                + "cat still being drawn underneath it");
+        }
+        CatStage.Shared.Pose = null;
+        view.Compose();
+
         CheckIntegerMagnification(theme, atlas);
         CheckDuplicateFrames(theme, atlas);
+    }
+
+    /// Opaque pixels on the composed surface. The cat is the only thing drawn into it,
+    /// so this is "how much cat is there" without needing to know what shape it is.
+    private static int OpaqueCount(CatView view)
+    {
+        int n = 0;
+        for (int y = 0; y < view.HeightPx; y++)
+        {
+            for (int x = 0; x < view.WidthPx; x++)
+            {
+                if (view.AlphaAt(x, y) > 40) n++;
+            }
+        }
+        return n;
     }
 
     /// The pixel-art claim, stated as an equation.
