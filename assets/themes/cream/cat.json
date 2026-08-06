@@ -38,7 +38,23 @@
     "pupil_r",
     "lid_l",
     "lid_r",
-    "face"
+    "face",
+    "peek_r_ear_far",
+    "peek_r_paw_a",
+    "peek_r_paw_b",
+    "peek_r_ear",
+    "peek_r_head",
+    "peek_r_eye",
+    "peek_r_pupil",
+    "peek_r_face",
+    "peek_l_ear_far",
+    "peek_l_paw_a",
+    "peek_l_paw_b",
+    "peek_l_ear",
+    "peek_l_head",
+    "peek_l_eye",
+    "peek_l_pupil",
+    "peek_l_face"
   ],
   "parts": {
     "shadow": {
@@ -194,6 +210,188 @@
       "y": 25,
       "w": 24,
       "h": 6
+    },
+    "peek_r_ear_far": {
+      "file": "parts/peek_r_ear_far.png",
+      "x": 26,
+      "y": 2,
+      "w": 11,
+      "h": 13
+    },
+    "peek_r_ear_far_hot": {
+      "file": "parts/peek_r_ear_far_hot.png",
+      "x": 26,
+      "y": 2,
+      "w": 11,
+      "h": 13
+    },
+    "peek_r_paw_a": {
+      "file": "parts/peek_r_paw_a.png",
+      "x": 10,
+      "y": 25,
+      "w": 10,
+      "h": 8
+    },
+    "peek_r_paw_a_hot": {
+      "file": "parts/peek_r_paw_a_hot.png",
+      "x": 10,
+      "y": 25,
+      "w": 10,
+      "h": 8
+    },
+    "peek_r_paw_b": {
+      "file": "parts/peek_r_paw_b.png",
+      "x": 19,
+      "y": 26,
+      "w": 10,
+      "h": 8
+    },
+    "peek_r_paw_b_hot": {
+      "file": "parts/peek_r_paw_b_hot.png",
+      "x": 19,
+      "y": 26,
+      "w": 10,
+      "h": 8
+    },
+    "peek_r_ear": {
+      "file": "parts/peek_r_ear.png",
+      "x": 13,
+      "y": 0,
+      "w": 15,
+      "h": 19
+    },
+    "peek_r_ear_hot": {
+      "file": "parts/peek_r_ear_hot.png",
+      "x": 13,
+      "y": 0,
+      "w": 15,
+      "h": 19
+    },
+    "peek_r_head": {
+      "file": "parts/peek_r_head.png",
+      "x": 9,
+      "y": 8,
+      "w": 26,
+      "h": 22
+    },
+    "peek_r_head_hot": {
+      "file": "parts/peek_r_head_hot.png",
+      "x": 9,
+      "y": 8,
+      "w": 26,
+      "h": 22
+    },
+    "peek_r_eye": {
+      "file": "parts/peek_r_eye.png",
+      "x": 12,
+      "y": 15,
+      "w": 10,
+      "h": 10
+    },
+    "peek_r_pupil": {
+      "file": "parts/peek_r_pupil.png",
+      "x": 13,
+      "y": 18,
+      "w": 5,
+      "h": 4
+    },
+    "peek_r_face": {
+      "file": "parts/peek_r_face.png",
+      "x": 7,
+      "y": 19,
+      "w": 8,
+      "h": 9
+    },
+    "peek_l_ear_far": {
+      "file": "parts/peek_l_ear_far.png",
+      "x": 11,
+      "y": 2,
+      "w": 11,
+      "h": 13
+    },
+    "peek_l_ear_far_hot": {
+      "file": "parts/peek_l_ear_far_hot.png",
+      "x": 11,
+      "y": 2,
+      "w": 11,
+      "h": 13
+    },
+    "peek_l_paw_a": {
+      "file": "parts/peek_l_paw_a.png",
+      "x": 28,
+      "y": 25,
+      "w": 10,
+      "h": 8
+    },
+    "peek_l_paw_a_hot": {
+      "file": "parts/peek_l_paw_a_hot.png",
+      "x": 28,
+      "y": 25,
+      "w": 10,
+      "h": 8
+    },
+    "peek_l_paw_b": {
+      "file": "parts/peek_l_paw_b.png",
+      "x": 19,
+      "y": 26,
+      "w": 10,
+      "h": 8
+    },
+    "peek_l_paw_b_hot": {
+      "file": "parts/peek_l_paw_b_hot.png",
+      "x": 19,
+      "y": 26,
+      "w": 10,
+      "h": 8
+    },
+    "peek_l_ear": {
+      "file": "parts/peek_l_ear.png",
+      "x": 20,
+      "y": 0,
+      "w": 15,
+      "h": 19
+    },
+    "peek_l_ear_hot": {
+      "file": "parts/peek_l_ear_hot.png",
+      "x": 20,
+      "y": 0,
+      "w": 15,
+      "h": 19
+    },
+    "peek_l_head": {
+      "file": "parts/peek_l_head.png",
+      "x": 13,
+      "y": 8,
+      "w": 26,
+      "h": 22
+    },
+    "peek_l_head_hot": {
+      "file": "parts/peek_l_head_hot.png",
+      "x": 13,
+      "y": 8,
+      "w": 26,
+      "h": 22
+    },
+    "peek_l_eye": {
+      "file": "parts/peek_l_eye.png",
+      "x": 26,
+      "y": 15,
+      "w": 10,
+      "h": 10
+    },
+    "peek_l_pupil": {
+      "file": "parts/peek_l_pupil.png",
+      "x": 30,
+      "y": 18,
+      "w": 5,
+      "h": 4
+    },
+    "peek_l_face": {
+      "file": "parts/peek_l_face.png",
+      "x": 33,
+      "y": 19,
+      "w": 8,
+      "h": 9
     }
   },
   "hot": [
@@ -203,7 +401,17 @@
     "paw_r",
     "ear_l",
     "ear_r",
-    "head"
+    "head",
+    "peek_r_ear_far",
+    "peek_r_paw_a",
+    "peek_r_paw_b",
+    "peek_r_ear",
+    "peek_r_head",
+    "peek_l_ear_far",
+    "peek_l_paw_a",
+    "peek_l_paw_b",
+    "peek_l_ear",
+    "peek_l_head"
   ],
   "overlays": {
     "parts": {
@@ -679,6 +887,28 @@
       22
     ]
   },
+  "poses": {
+    "peek_r": [
+      "peek_r_ear_far",
+      "peek_r_paw_a",
+      "peek_r_paw_b",
+      "peek_r_ear",
+      "peek_r_head",
+      "peek_r_eye",
+      "peek_r_pupil",
+      "peek_r_face"
+    ],
+    "peek_l": [
+      "peek_l_ear_far",
+      "peek_l_paw_a",
+      "peek_l_paw_b",
+      "peek_l_ear",
+      "peek_l_head",
+      "peek_l_eye",
+      "peek_l_pupil",
+      "peek_l_face"
+    ]
+  },
   "eye": {
     "sclera_r": 4.6,
     "pupil_r": 2.4,
@@ -769,14 +999,10 @@
       "bob_px": 1.5,
       "disarm_ms": 80,
       "edge_zone_px": 12,
-      "head_lean_px": 2.0,
-      "head_rise_px": 1.0,
       "hide_at": 0.55,
       "indicator_fade_ms": 120,
       "indicator_w_px": 3.0,
-      "paw_gather_px": 1.5,
-      "paw_rise_px": 13,
-      "reveal_px": 15,
+      "reveal_px": 23,
       "settle_pt": 0.35,
       "slide_rate": 11.0
     },

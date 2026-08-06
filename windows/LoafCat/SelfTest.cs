@@ -320,9 +320,10 @@ public static class SelfTest
         Hold(ref b, PeekEdge.Left, 0, 0.40);
         Check("the left edge arms too", b.Armed == PeekEdge.Left, "");
 
-        // Parked geometry, measured on the HEAD -- the only thing the peek pose draws
-        // wide. A head spanning 9..39 inside a 4px-margin canvas at 2x, revealing 28:
-        // its left edge must land exactly 28 logical px inside the right screen edge.
+        // Parked geometry, on invented numbers rather than this theme's, because the
+        // arithmetic is what is under test and it should not change when the art does.
+        // Ink spanning 9..39 inside a 4px-margin canvas at 2x, revealing 28: its left
+        // edge must land exactly 28 logical px inside the right screen edge.
         double x = PeekModule.ParkedX(PeekEdge.Right, 0, 1000, padX: 4,
                                       inkMinX: 9, inkMaxX: 39, revealPx: 28, scale: 2);
         Check("a right park leaves exactly the reveal on screen",
@@ -515,8 +516,44 @@ public static class SelfTest
         Check($"{theme}: fully transparent in the margin", corner == 0,
             $"alpha {corner} at (1, 1) — clicks there fall through to the app below");
 
+        // The pose swap, on the composed surface rather than in the plan. This is the
+        // Windows stand-in for looking at the cat, and it is aimed at the two ways a
+        // pose fails invisibly: the standing cat stays on and you get a body behind a
+        // peeking head, or one hide too many and the window goes empty. Neither shows
+        // up in a build log and neither is reachable from `CheckPeekPlan`, which only
+        // ever sees numbers.
+        int standingPx = OpaqueCount(view);
+        foreach (string pose in atlas.Poses.Keys)
+        {
+            CatStage.Shared.Pose = pose;
+            view.Compose();
+            int posePx = OpaqueCount(view);
+            Check($"{theme}: {pose} draws something", posePx > side,
+                $"{posePx} opaque px — an empty window is what hiding one part too many looks like");
+            Check($"{theme}: {pose} is less cat than the standing pose", posePx < standingPx,
+                $"{posePx} vs {standingPx} — a pose that is not SMALLER is the standing "
+                + "cat still being drawn underneath it");
+        }
+        CatStage.Shared.Pose = null;
+        view.Compose();
+
         CheckIntegerMagnification(theme, atlas);
         CheckDuplicateFrames(theme, atlas);
+    }
+
+    /// Opaque pixels on the composed surface. The cat is the only thing drawn into it,
+    /// so this is "how much cat is there" without needing to know what shape it is.
+    private static int OpaqueCount(CatView view)
+    {
+        int n = 0;
+        for (int y = 0; y < view.HeightPx; y++)
+        {
+            for (int x = 0; x < view.WidthPx; x++)
+            {
+                if (view.AlphaAt(x, y) > 40) n++;
+            }
+        }
+        return n;
     }
 
     /// The pixel-art claim, stated as an equation.

@@ -79,19 +79,21 @@ public sealed class CatStage
     public Pt PawOffsetR = Pt.Zero;
     public Pt TailOffset = Pt.Zero;
 
-    /// Parts the winning module does not want drawn this frame.
+    /// The pose the winning module wants drawn instead of the standing cat, named
+    /// from `Atlas.Poses`, or null for the cat itself.
     ///
-    /// Added for the peek pose, where the cat hides behind the screen edge and puts
-    /// only its head and two paws over it — the body is not clipped, it is *absent*,
-    /// which is the difference between a cat hiding and a cat someone has cut in half.
-    /// Every other pose leaves this empty and draws the whole animal.
-    public readonly HashSet<string> HiddenParts = [];
-
-    /// True while the cat is in that pose. The view keeps a second hit mask for it:
-    /// the silhouette really is a different shape, and testing clicks against the
-    /// whole-cat mask would leave a body-sized patch of dead screen under the chin
-    /// where there is nothing to click on.
-    public bool PeekPose;
+    /// A pose is a *different drawing*, not a rearrangement: while one is set, the
+    /// view draws that pose's parts and nothing else. The peek pose is what forced
+    /// this. A cat looking round a screen edge is side-on — one eye, one near ear,
+    /// the muzzle leading — and the standing cat cannot be moved into that shape.
+    /// Sliding it behind the edge bisects the face; rotating it 90° reads as a cat
+    /// that has fallen over. Both were tried and both are recorded in
+    /// `spikes/RESULTS.md` so the next pose does not try them again.
+    ///
+    /// The view also keeps a hit mask per pose: the silhouette really is a different
+    /// shape, and testing clicks against the standing cat's mask would leave a
+    /// body-sized patch of dead screen under the chin with nothing to click on.
+    public string? Pose;
 
     /// 0 = normal coat, 1 = fully overheated. The view cross-fades the `_hot`
     /// palette-remapped variant of each coat part by this much.
@@ -127,8 +129,7 @@ public sealed class CatStage
         PawOffsetL = Pt.Zero;
         PawOffsetR = Pt.Zero;
         TailOffset = Pt.Zero;
-        HiddenParts.Clear();
-        PeekPose = false;
+        Pose = null;
         Heat = 0;
         Overlays.Clear();
     }

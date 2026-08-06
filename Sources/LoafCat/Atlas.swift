@@ -200,6 +200,23 @@ struct Atlas {
     /// cross-faded in place.
     let hotParts: Set<String>
 
+    /// Alternative part sets that REPLACE the cat rather than move it, keyed by
+    /// pose name and listed in draw order.
+    ///
+    /// The peek pose is the reason this exists. A cat looking round a screen edge
+    /// is a side-on drawing — one eye, one near ear, the muzzle leading — and no
+    /// arrangement of the front-facing parts is that drawing. Sliding the standing
+    /// cat behind the edge bisects its face, and rotating it 90° (which is lossless
+    /// on a pixel grid, so it was tried) reads as a cat that has fallen over.
+    ///
+    /// While a pose is active the view draws these parts and no others, which is
+    /// what lets a pose be a different drawing rather than a rearrangement.
+    let poses: [String: [String]]
+
+    /// Every part belonging to any pose. Hidden unless its own pose is the one
+    /// running, so the peek head does not sit on top of the standing cat.
+    let posedParts: Set<String>
+
     /// Eye geometry, needed for pupil tracking. `maxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     struct Eye {
@@ -314,6 +331,16 @@ struct Atlas {
         // build a cross-fade layer for an image that is not there.
         let hot = Set((root["hot"] as? [String] ?? []).filter { parts["\($0)_hot"] != nil })
 
+        // Same guard as the hot variants: only advertise a pose part whose art
+        // actually loaded. A theme that drops the whiskers drops `peek_r_face` with
+        // them, and a pose naming a part the atlas does not carry would be a hole
+        // in the cat rather than an error anyone would see.
+        var poses: [String: [String]] = [:]
+        for (name, list) in (root["poses"] as? [String: [String]] ?? [:]) {
+            poses[name] = list.filter { parts[$0] != nil }
+        }
+        let posed = Set(poses.values.flatMap { $0 })
+
         return Atlas(
             canvas: canvas, order: order, parts: parts, pivots: pivots,
             layout: layout,
@@ -322,6 +349,7 @@ struct Atlas {
             overlays: overlays, overlayAnimations: overlayAnims,
             animations: animations,
             hotParts: hot,
+            poses: poses, posedParts: posed,
             eye: eye,
             behaviour: Behaviour(root["behaviour"] as? [String: Any] ?? [:]))
     }

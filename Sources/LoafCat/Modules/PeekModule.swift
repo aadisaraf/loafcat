@@ -104,24 +104,26 @@ final class PeekModule: CatModule, AtlasTuned {
     private var edgeZonePx: CGFloat = 12
     private var armMs: Double = 320
     private var disarmMs: Double = 80
-    private var revealPx: CGFloat = 28
+    private var revealPx: CGFloat = 23
     private var slideRate: CGFloat = 11
     private var settlePt: CGFloat = 0.35
-    private var pawRisePx: CGFloat = 10
-    private var pawGatherPx: CGFloat = 1.5
     private var hideAt: CGFloat = 0.55
-    private var headLeanPx: CGFloat = 2
-    private var headRisePx: CGFloat = 1
     private var bobPx: CGFloat = 1.5
     private var bobHz: CGFloat = 0.42
     private var indicatorWPx: CGFloat = 3
     private var indicatorFadeMs: Double = 120
 
-    /// The cat's ink inside the 48px canvas, so `reveal_px` means "this much cat" and
-    /// not "this much canvas, most of which is transparent".
-    private var inkMinX: CGFloat = 0
-    private var inkMaxX: CGFloat = 48
-    private var inkHeight: CGFloat = 48
+    /// The pose's ink inside the 48px canvas, per facing, so `reveal_px` means "this
+    /// much cat" and not "this much canvas, most of which is transparent".
+    struct Ink {
+        var minX: CGFloat
+        var maxX: CGFloat
+        var height: CGFloat
+    }
+    private var ink: [PeekEdge: Ink] = [:]
+    private func ink(_ edge: PeekEdge) -> Ink {
+        ink[edge] ?? Ink(minX: 0, maxX: 48, height: 48)
+    }
 
     /// The WHOLE drawn cat, which is a different box from the head above and is used
     /// for a different question. The head decides where the cat parks; this decides
@@ -129,17 +131,6 @@ final class PeekModule: CatModule, AtlasTuned {
     /// you can see and what you are aiming at.
     private var dragInkMinX: CGFloat = 0
     private var dragInkMaxX: CGFloat = 48
-
-    /// Everything the peek pose does NOT draw. Published to the stage while parked.
-    ///
-    /// The body is not clipped, it is absent — and that distinction is the entire
-    /// reason this pose works where slicing the cat vertically never could. A cat cut
-    /// in half by the screen edge reads as a rendering bug at every width that was
-    /// tried; a head and two paws over the edge reads as a cat immediately, because
-    /// it is a whole face rather than part of one.
-    private static let behindTheEdge: Set<String> = [
-        "body", "body_hot", "tail", "tail_hot", "shadow",
-    ]
 
     func retune(_ atlas: Atlas) {
         func v(_ k: String, _ d: CGFloat) -> CGFloat { atlas.tune("peek", k, d) }
@@ -149,30 +140,41 @@ final class PeekModule: CatModule, AtlasTuned {
         revealPx = v("reveal_px", revealPx)
         slideRate = v("slide_rate", slideRate)
         settlePt = v("settle_pt", settlePt)
-        pawRisePx = v("paw_rise_px", pawRisePx)
-        pawGatherPx = v("paw_gather_px", pawGatherPx)
         hideAt = v("hide_at", hideAt)
-        headLeanPx = v("head_lean_px", headLeanPx)
-        headRisePx = v("head_rise_px", headRisePx)
         bobPx = v("bob_px", bobPx)
         bobHz = v("bob_hz", bobHz)
         indicatorWPx = v("indicator_w_px", indicatorWPx)
         indicatorFadeMs = Double(v("indicator_fade_ms", CGFloat(indicatorFadeMs)))
 
-        var minX = CGFloat.greatestFiniteMagnitude
-        var maxX = -CGFloat.greatestFiniteMagnitude
-        var minY = CGFloat.greatestFiniteMagnitude
-        var maxY = -CGFloat.greatestFiniteMagnitude
-        for name in CatView.peekParts {
-            guard let p = atlas.parts[name] else { continue }
-            minX = min(minX, p.origin.x)
-            maxX = max(maxX, p.origin.x + p.size.width)
-            minY = min(minY, p.origin.y)
-            maxY = max(maxY, p.origin.y + p.size.height)
+        // Each facing is measured on its OWN parts. The two are mirror images, so a
+        // single box would be right for one edge and wrong for the other by however
+        // far the pose sits off the canvas centre — which is the width of a muzzle,
+        // and would show up as the cat parking deeper on one side than the other.
+        for edge in [PeekEdge.right, .left] {
+            var minX = CGFloat.greatestFiniteMagnitude
+            var maxX = -CGFloat.greatestFiniteMagnitude
+            var minY = CGFloat.greatestFiniteMagnitude
+            var maxY = -CGFloat.greatestFiniteMagnitude
+            for name in atlas.poses[Self.poseName(edge)] ?? [] {
+                guard let p = atlas.parts[name] else { continue }
+                minX = min(minX, p.origin.x)
+                maxX = max(maxX, p.origin.x + p.size.width)
+                minY = min(minY, p.origin.y)
+                maxY = max(maxY, p.origin.y + p.size.height)
+            }
+            guard minX <= maxX else { continue }
+            ink[edge] = Ink(minX: minX, maxX: maxX, height: max(maxY - minY, 1))
         }
+
+        // The whole STANDING cat, which is a different box used for a different
+        // question: the pose decides where the cat parks, this decides when the
+        // gesture arms, because while you are dragging it the standing cat is what
+        // you can see and what you are aiming at. The pose parts are excluded for
+        // exactly that reason — they are not on screen while you are dragging.
         var dMinX = CGFloat.greatestFiniteMagnitude
         var dMaxX = -CGFloat.greatestFiniteMagnitude
-        for (name, p) in atlas.parts where name != "shadow" {
+        for (name, p) in atlas.parts
+        where name != "shadow" && !atlas.posedParts.contains(name) {
             dMinX = min(dMinX, p.origin.x)
             dMaxX = max(dMaxX, p.origin.x + p.size.width)
         }
@@ -180,12 +182,12 @@ final class PeekModule: CatModule, AtlasTuned {
             dragInkMinX = dMinX
             dragInkMaxX = dMaxX
         }
+    }
 
-        if minX <= maxX {
-            inkMinX = minX
-            inkMaxX = maxX
-            inkHeight = max(maxY - minY, 1)
-        }
+    /// The atlas pose each edge wears. `peek_r` faces left, which is the drawing for
+    /// a cat whose body is behind the RIGHT edge.
+    static func poseName(_ edge: PeekEdge) -> String {
+        edge == .right ? "peek_r" : "peek_l"
     }
 
     // --- how the cat came to be parked --------------------------------------
@@ -372,57 +374,29 @@ final class PeekModule: CatModule, AtlasTuned {
         guard settled > 0.002, let edge = parkedEdge ?? lastEdge else { return .none }
         lastEdge = edge
 
-        // The pose, and the whole thing rests on ONE idea: the body tucks a little
-        // further behind the edge while the head cranes the other way, out past it.
-        // It is the DIFFERENCE between those two that reads as an animal looking
-        // round a corner.
-        //
-        // The first version moved the whole cat inward instead, which does nothing
-        // but put more cat on screen — the opposite of peeking, and it looked like a
-        // window had sliced the cat rather than the cat had hidden. Combined with a
-        // reveal that left 54% of the ink showing, there was no peek there at all.
-        //
-        // Offsets rather than new art, so nothing here needs a sprite that does not
-        // already exist — and so a theme retunes the pose in the same JSON diff that
-        // retunes everything else.
+        // The pose is a DIFFERENT DRAWING, and that is the whole lesson of this
+        // feature. Everything here used to be per-part offsets on the standing cat —
+        // crane the head out, bring the paws up, hide the body — and it never once
+        // looked like a cat peeking, because a front-facing face cut by a vertical
+        // line is a bisected cat at every width and every offset. Two full rounds of
+        // tuning went into the numbers before the numbers turned out not to be the
+        // problem. A cat looking round a corner is side-on: one eye, one near ear, a
+        // muzzle leading the way. So the module asks for that drawing instead, and
+        // the only motion left here is a breath applied to the whole of it.
         bobPhase += ctx.dt * bobHz
         while bobPhase >= 1 { bobPhase -= 1 }
 
         var out = ModuleOutput()
-        let toEdge: CGFloat = edge == .right ? 1 : -1
-        let bobY = sin(bobPhase * 2 * .pi) * bobPx * settled
-        out.offset.y = bobY
-        stage.headOffset.x -= toEdge * headLeanPx * settled
-        stage.headOffset.y -= headRisePx * settled
+        out.offset.y = sin(bobPhase * 2 * .pi) * bobPx * settled
 
-        // The pose: two paws up under the chin, and no body at all.
-        //
-        // The paws are the cat's own — no new sprite was needed, which is the tell
-        // that this is the right shape rather than a clever one. They ride up to the
-        // jaw and gather slightly toward each other, the way an animal's do when it
-        // is holding an edge and looking over it.
-        stage.pawOffsetL.y -= pawRisePx * settled
-        stage.pawOffsetR.y -= pawRisePx * settled
-        stage.pawOffsetL.x += pawGatherPx * settled
-        stage.pawOffsetR.x -= pawGatherPx * settled
-
-        // The body ducks away late, while the cat is already mostly off screen, so it
-        // reads as getting behind the edge rather than as the body being deleted.
-        if settled >= hideAt {
-            stage.hiddenParts.formUnion(Self.behindTheEdge)
-            stage.peekPose = true
-        }
-        // The paw hooked over the edge. An overlay rather than a body part, which
-        // gets it three things for free: it is not in the draw order or the hit mask,
-        // it can be faded in with the park, and — because overlays do not take
-        // `bodyOffset` — it stays pinned to the screen edge while the body tucks away
-        // behind it. That last one is the whole gag: the cat slides back, the paw
-        // does not let go.
+        // Late in the slide, while the cat is already mostly off screen, so the swap
+        // is covered by the edge rather than happening in full view.
+        if settled >= hideAt { stage.pose = Self.poseName(edge) }
         if park.isParked { out.state = .peeking }
         return out
     }
 
-    /// Remembered so the lean eases OUT rather than vanishing on the frame the park
+    /// Remembered so the pose eases OUT rather than vanishing on the frame the park
     /// is released.
     private var lastEdge: PeekEdge?
 
@@ -484,9 +458,10 @@ final class PeekModule: CatModule, AtlasTuned {
     /// transparent margin for the speech bubble — parking by the panel edge would
     /// leave the margin on screen and the cat entirely off it.
     private func parkedX(edge: PeekEdge, vf: NSRect, atlas: Atlas, scale: CGFloat) -> CGFloat {
-        Self.parkedX(edge: edge, minX: vf.minX, maxX: vf.maxX,
+        let i = ink(edge)
+        return Self.parkedX(edge: edge, minX: vf.minX, maxX: vf.maxX,
                      padX: CGFloat(atlas.layout.padX),
-                     inkMinX: inkMinX, inkMaxX: inkMaxX,
+                     inkMinX: i.minX, inkMaxX: i.maxX,
                      revealPx: revealPx, scale: scale)
     }
 
@@ -516,7 +491,7 @@ final class PeekModule: CatModule, AtlasTuned {
         lastArmed = edge
 
         let w = (indicatorWPx * ctx.scale).rounded()
-        let h = (inkHeight * ctx.scale).rounded()
+        let h = (ink(edge).height * ctx.scale).rounded()
         let x = edge == .right ? vf.maxX - w : vf.minX
         let rect = NSRect(x: x, y: (ctx.frame.midY - h / 2).rounded(), width: w, height: h)
 
@@ -600,88 +575,98 @@ extension PeekModule {
         //    of canvas, most of which is the transparent bubble margin.
         let padX = CGFloat(atlas.layout.padX)
         let want = revealPx * scale
+        let iR = ink(.right), iL = ink(.left)
         let pr = Self.parkedX(edge: .right, minX: vf.minX, maxX: vf.maxX, padX: padX,
-                              inkMinX: inkMinX, inkMaxX: inkMaxX,
+                              inkMinX: iR.minX, inkMaxX: iR.maxX,
                               revealPx: revealPx, scale: scale)
         let pl = Self.parkedX(edge: .left, minX: vf.minX, maxX: vf.maxX, padX: padX,
-                              inkMinX: inkMinX, inkMaxX: inkMaxX,
+                              inkMinX: iL.minX, inkMaxX: iL.maxX,
                               revealPx: revealPx, scale: scale)
-        let shownR = vf.maxX - (pr + (padX + inkMinX) * scale)
-        let shownL = (pl + (padX + inkMaxX) * scale) - vf.minX
+        let shownR = vf.maxX - (pr + (padX + iR.minX) * scale)
+        let shownL = (pl + (padX + iL.maxX) * scale) - vf.minX
         check("parked right shows \(Int(revealPx))px of cat", abs(shownR - want) < 0.01,
               String(format: "%.2fpt vs %.2fpt", Double(shownR), Double(want)))
         check("parked left shows \(Int(revealPx))px of cat", abs(shownL - want) < 0.01,
               String(format: "%.2fpt vs %.2fpt", Double(shownL), Double(want)))
 
-        // 6. WHICH parts the cut lands between, which is the whole difference between
-        //    a peek and a cat with a slice taken off it. One eye showing and one
-        //    hidden is the thing being aimed at; at reveal 20 both were on screen and
-        //    it read as a window clipping a cat. Retuning past that is a design
-        //    change and should have to argue with a failing check first.
-        // Both edges, separately. They are NOT mirror images of each other — the cat
-        // carries a tail on one side and nothing on the other — and assuming they
-        // were is exactly how a left-edge park came to spend its whole reveal on tail
-        // and cut the face in half.
-        let seenTo = inkMinX + revealPx        // right-edge park: 0..seenTo is on screen
-        let seenFrom = inkMaxX - revealPx      // left-edge park: seenFrom.. is on screen
+        // 6. THE POSE IS A DIFFERENT DRAWING, not the standing cat rearranged.
+        //
+        // This is the check the feature was missing for three attempts. Every earlier
+        // version tried to make the front-facing cat peek — slide it behind the edge,
+        // crane the head, hide the body, rotate it 90° — and each one was tuned,
+        // shipped and reported back as "that is not a cat peeking". A face drawn
+        // front-on and cut by a vertical line is a bisected cat at every width, and
+        // no number fixes that. So the shape itself is what gets asserted here.
+        let poseR = atlas.poses[Self.poseName(.right)] ?? []
+        let poseL = atlas.poses[Self.poseName(.left)] ?? []
+        check("the pose is side-on: exactly one eye", poseR.filter {
+            $0.hasSuffix("_eye")
+        }.count == 1, "two eyes is a front-facing face, which cannot peek round a corner")
+        check("the pose brings its own head, ears and paws",
+              poseR.contains("peek_r_head") && poseR.contains("peek_r_ear")
+              && poseR.contains("peek_r_paw_a") && poseR.contains("peek_r_paw_b"))
+        check("the pose leaves out the body, the tail and the shadow",
+              poseR.allSatisfy { !["body", "tail", "shadow"].contains($0) })
+        check("neither edge's pose borrows a part of the standing cat",
+              (poseR + poseL).allSatisfy { $0.hasPrefix("peek_") })
+        check("the two facings are mirror images",
+              abs((iR.minX - 0) - (CGFloat(atlas.canvas) - iL.maxX)) < 0.001
+              && abs(iR.height - iL.height) < 0.001,
+              String(format: "R %.0f..%.0f, L %.0f..%.0f on a %.0f canvas",
+                     Double(iR.minX), Double(iR.maxX),
+                     Double(iL.minX), Double(iL.maxX), Double(atlas.canvas)))
+        check("the two edges show the same amount of cat",
+              abs(shownR - shownL) < 0.01)
+
+        // WHICH parts the cut lands between. With a side-on drawing the cut is no
+        // longer what does the hiding — the art is — so the claim is narrower and
+        // more honest than it used to be: the face comes out, the back of the skull
+        // does not, and that difference is what makes the head read as emerging from
+        // behind the edge rather than floating beside it.
+        let seenTo = iR.minX + revealPx        // right-edge park: 0..seenTo is on screen
+        let seenFrom = iL.maxX - revealPx      // left-edge park: seenFrom.. is on screen
         func box(_ name: String) -> (lo: CGFloat, hi: CGFloat)? {
             guard let p = atlas.parts[name] else { return nil }
             return (p.origin.x, p.origin.x + p.size.width)
         }
-        func showsR(_ n: String) -> Bool { box(n).map { $0.hi <= seenTo + 1 } ?? false }
-        func showsL(_ n: String) -> Bool { box(n).map { $0.lo >= seenFrom - 1 } ?? false }
+        check("right park: the whole eye clears the edge",
+              (box("peek_r_eye")?.hi ?? .infinity) <= seenTo)
+        check("left park: the whole eye clears the edge",
+              (box("peek_l_eye")?.lo ?? -.infinity) >= seenFrom)
+        check("right park: both paws clear the edge",
+              (box("peek_r_paw_a")?.hi ?? .infinity) <= seenTo
+              && (box("peek_r_paw_b")?.hi ?? .infinity) <= seenTo,
+              "the paws over the edge are half the pose; cutting one is a cat with a stump")
+        check("left park: both paws clear the edge",
+              (box("peek_l_paw_a")?.lo ?? -.infinity) >= seenFrom
+              && (box("peek_l_paw_b")?.lo ?? -.infinity) >= seenFrom)
+        check("right park: the back of the skull stays behind the edge",
+              (box("peek_r_head")?.hi ?? 0) > seenTo,
+              "with the whole head on screen it floats beside the edge instead of coming from behind it")
+        check("left park: the back of the skull stays behind the edge",
+              (box("peek_l_head")?.lo ?? 0) < seenFrom)
 
-        // ONE eye out and one eye behind the edge. This check used to demand that
-        // BOTH eyes cleared it, on the reasoning that a whole face is what stops the
-        // pose reading as a cat someone has sliced — and satisfying it is what drove
-        // `reveal_px` to 28, which is 93% of a 30px head. Shipped, that was a
-        // complete face hanging beside the screen with two paws under it: nothing
-        // was behind the edge, so nothing read as hiding.
-        //
-        // The earlier check was not wrong about slicing, it was aimed at the wrong
-        // pose. Back when the whole cat was clipped vertically, a second eye meant
-        // the window had cut through the animal. Now the body is absent rather than
-        // clipped, so the far eye going behind the edge is the cat turning its head
-        // out from cover — the one thing a peek actually looks like.
-        // Stated as where the far eye's NEAR rim falls rather than as "not fully
-        // shown", for the same reason the ear check below is: `showsR`/`showsL`
-        // carry a one-pixel tolerance, and a far eye with a single column poking
-        // out would satisfy the negation while looking like two eyes.
-        check("right park: the near eye clears the edge", showsR("eye_l"))
-        check("left park: the near eye clears the edge", showsL("eye_r"))
-        check("right park: the far eye stays wholly behind it",
-              (box("eye_r")?.lo ?? 0) >= seenTo,
-              "both eyes on screen is a floating head, not a cat looking round a corner")
-        check("left park: the far eye stays wholly behind it",
-              (box("eye_l")?.hi ?? 0) <= seenFrom)
-        // Stated directly rather than as "not fully shown": the shows/hides pair
-        // carry a one-pixel tolerance for the eyes, and reusing them here made a
-        // genuine one-pixel tuck read as a failure. Partly behind the edge is the
-        // claim, so partly behind the edge is what gets asserted.
-        let tuckedR = (box("ear_r")?.hi ?? 0) > seenTo
-        let tuckedL = (box("ear_l")?.lo ?? 0) < seenFrom
-        check("right park: the far ear tucks behind the edge", tuckedR,
-              "so the head reads as coming from behind it, not floating in front")
-        check("left park: the far ear tucks behind the edge", tuckedL)
-        check("the two edges show the same amount of cat",
-              abs((seenTo - inkMinX) - (inkMaxX - seenFrom)) < 0.001,
-              "measured on the head, which is the only thing this pose draws wide")
-        check("the body, tail and shadow are the parts left behind",
-              !CatView.peekParts.contains("body") && !CatView.peekParts.contains("tail")
-              && !CatView.peekParts.contains("shadow"))
-        check("both paws are part of the pose",
-              CatView.peekParts.contains("paw_l") && CatView.peekParts.contains("paw_r"))
-        // The raised paw has to end up INSIDE the head's box. Paws are drawn before
-        // the head, so overlapping it is the chin resting on the paw; stopping short
-        // leaves a gap of empty screen and two grey nubs hanging under the jaw, which
-        // is what a rise of 10 gave and what the screenshot showed.
-        if let paw = atlas.parts["paw_l"], let head = atlas.parts["head"] {
-            let top = paw.origin.y - pawRisePx
-            check("the raised paw reaches the chin",
-                  top < head.origin.y + head.size.height,
-                  String(format: "paw top %.0f, head bottom %.0f",
-                         Double(top), Double(head.origin.y + head.size.height)))
+        // What the view will actually DRAW, which is a separate question from where
+        // the window goes and is where a pose can fail invisibly: leave the standing
+        // cat on and you get a body behind a peeking head, hide one part too many and
+        // you get nothing at all. Asked of the same pure rule `sync()` uses.
+        func drawn(_ pose: String?) -> Set<String> {
+            let showing = pose.flatMap { atlas.poses[$0] }.map(Set.init) ?? []
+            return Set(atlas.order.filter {
+                !CatView.outOfPose($0, showing: showing, pose: pose,
+                                   posed: atlas.posedParts)
+            })
         }
+        let standing = drawn(nil)
+        let peeking = drawn(Self.poseName(.right))
+        check("with no pose the standing cat is drawn and no pose part is",
+              standing.contains("head") && standing.contains("body")
+              && standing.isDisjoint(with: atlas.posedParts))
+        check("while peeking the pose is drawn and the standing cat is not",
+              peeking == Set(poseR),
+              "\(peeking.count) parts drawn, \(poseR.count) in the pose")
+        check("the two facings are never drawn together",
+              drawn(Self.poseName(.left)).isDisjoint(with: peeking))
 
         // 7. THE WHOLE MODULE, driven through a synthetic drag.
         //

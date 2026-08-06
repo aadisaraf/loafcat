@@ -225,6 +225,23 @@ public sealed class Atlas
     /// cross-faded in place.
     public required HashSet<string> HotParts { get; init; }
 
+    /// Alternative part sets that REPLACE the cat rather than move it, keyed by pose
+    /// name and listed in draw order.
+    ///
+    /// The peek pose is the reason this exists. A cat looking round a screen edge is
+    /// a side-on drawing — one eye, one near ear, the muzzle leading — and no
+    /// arrangement of the front-facing parts is that drawing. Sliding the standing
+    /// cat behind the edge bisects its face, and rotating it 90° (which is lossless
+    /// on a pixel grid, so it was tried) reads as a cat that has fallen over.
+    ///
+    /// While a pose is active the view draws these parts and no others, which is what
+    /// lets a pose be a different drawing rather than a rearrangement.
+    public required Dictionary<string, List<string>> Poses { get; init; }
+
+    /// Every part belonging to any pose. Hidden unless its own pose is the one
+    /// running, so the peek head does not sit on top of the standing cat.
+    public required HashSet<string> PosedParts { get; init; }
+
     /// Eye geometry, needed for pupil tracking. `MaxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     public sealed class EyeInfo
@@ -414,6 +431,27 @@ public sealed class Atlas
                 }
             }
 
+            // Same guard as the hot variants: only advertise a pose part whose art
+            // actually loaded. A theme that drops the whiskers drops `peek_r_face`
+            // with them, and a pose naming a part the atlas does not carry would be
+            // a hole in the cat rather than an error anyone would see.
+            var poses = new Dictionary<string, List<string>>();
+            if (root.TryGetProperty("poses", out var posesEl) &&
+                posesEl.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var p in posesEl.EnumerateObject())
+                {
+                    if (p.Value.ValueKind != JsonValueKind.Array) continue;
+                    var list = new List<string>();
+                    foreach (var n in p.Value.EnumerateArray())
+                    {
+                        if (n.GetString() is { } s && parts.ContainsKey(s)) list.Add(s);
+                    }
+                    poses[p.Name] = list;
+                }
+            }
+            var posed = new HashSet<string>(poses.Values.SelectMany(v => v));
+
             root.TryGetProperty("behaviour", out var behaviourEl);
 
             return new Atlas
@@ -429,6 +467,8 @@ public sealed class Atlas
                 OverlayAnimations = overlayAnims,
                 Animations = animations,
                 HotParts = hot,
+                Poses = poses,
+                PosedParts = posed,
                 Eye = eye,
                 Behaviour = new Behaviour(behaviourEl),
             };

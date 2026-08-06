@@ -244,6 +244,16 @@ is kept on both sides anyway, so the two files still read as translations.
   when the intersection is *zero*, so a park that leaves any cat on screen is safe — and
   `--demo-peek` asserts that rather than trusting it, because the failure would only
   ever show up on a machine with two monitors.
+- **The peek pose is different ART, not different offsets, and the compositor has to
+  know it.** `cat.json` carries a `poses` block; while one is active the software
+  compositor draws that pose's parts and *nothing else*, through the same
+  `CatView.OutOfPose` the plan is asserted against. Both ways this fails are invisible
+  in a build log — leave the standing cat on and you get a body behind a peeking head,
+  hide one part too many and the window goes empty — so `--selftest` counts opaque
+  pixels on the composed surface for every pose: it must draw something, and it must
+  draw *less* than the standing cat. A pose that is not smaller is the standing cat
+  still being drawn underneath it. The two facings are mirrored **by the generator**;
+  do not add a runtime flip, or the ports gain one more thing to disagree about.
 - **The indicator uses `Form.Opacity`, not `UpdateLayeredWindow`.** The cat needs
   per-pixel alpha because it is a silhouette; the snap capsule is one flat shape at one
   uniform alpha, and `SetLayeredWindowAttributes` — which is all `Opacity` is — is the
@@ -385,6 +395,11 @@ same drag feel before believing a difference.
   cat's Y moves under it.
 - **That a parked cat is still grabbable.** Only `reveal_px` of it is on screen by
   design; confirm that is enough to get hold of at 2× and at 4×.
+- **That the side-on peek pose reads as a cat** against a real video, at 2× and 4×, on
+  both edges. `--selftest` can prove the right sprites are drawn and `--demo-peek` can
+  prove the head lands where claimed, but neither can see that it looks like an animal
+  looking round a corner — and three earlier versions of this pose passed every check
+  they had while looking wrong.
 - That the hook does not slow a real Claude Code session — kill the app, run a long
   task, confirm normal speed.
 - Behaviour on a mixed-DPI multi-monitor setup, and after unplugging a monitor the cat

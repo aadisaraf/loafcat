@@ -57,7 +57,7 @@ public sealed class CatView : IDisposable
     private bool[] _hitMask;
 
     /// The same thing for the peek pose, where only the head and two paws are drawn.
-    private bool[] _peekMask = [];
+    private Dictionary<string, bool[]> _poseMasks = [];
     private const int MaskDilation = 6;
 
     private double PadX => Atlas.Layout.PadX;
@@ -217,21 +217,26 @@ public sealed class CatView : IDisposable
     /// disappear into nothing.
     private void BuildHitMask()
     {
-        _hitMask = Mask(Atlas.Order, 0);
-        // The paws ride up to the chin in the peek pose, so the mask has to know
-        // where they went. The amount is the atlas's, read here rather than passed in,
-        // because the view already reads the atlas for every other measurement.
-        _peekMask = Mask(PeekParts, Atlas.Tune("peek", "paw_rise_px", 10));
+        // The standing cat is everything that is not part of a pose. A pose part left
+        // in here would inflate the silhouette by a head the user cannot see, and the
+        // symptom — clicks vanishing into empty screen beside the cat — is the one
+        // this project already went to some trouble to eliminate.
+        _hitMask = Mask(Atlas.Order.Where(n => !Atlas.PosedParts.Contains(n)));
+        _poseMasks = Atlas.Poses.ToDictionary(p => p.Key, p => Mask(p.Value));
     }
 
-    /// The parts the peek pose draws. Everything else is behind the screen edge.
-    public static readonly string[] PeekParts =
-    [
-        "head", "ear_l", "ear_r", "eye_l", "eye_r", "lid_l", "lid_r",
-        "pupil_l", "pupil_r", "face", "paw_l", "paw_r",
-    ];
+    /// Whether a part is left undrawn this frame because of the pose.
+    ///
+    /// A pose replaces the cat outright: its own parts are drawn and everything else
+    /// is not. Pulled out as a pure function for the same reason `Arming` and
+    /// `ParkedX` are — it is the rule that decides whether the user sees a peeking
+    /// head, a standing cat, both at once, or nothing, and the only way to check that
+    /// on a machine with no screen is to be able to ask it directly.
+    public static bool OutOfPose(string name, HashSet<string> showing, string? pose,
+                                 HashSet<string> posed) =>
+        posed.Contains(name) ? !showing.Contains(name) : pose is not null;
 
-    private bool[] Mask(IEnumerable<string> names, double pawRise)
+    private bool[] Mask(IEnumerable<string> names)
     {
         int side = (int)Atlas.Canvas;
         var raw = new bool[side * side];
@@ -242,8 +247,6 @@ public sealed class CatView : IDisposable
             if (!Atlas.Parts.TryGetValue(name, out var part)) continue;
             int w = (int)part.Size.W, h = (int)part.Size.H;
             if (w <= 0 || h <= 0) continue;
-            int lift = name is "paw_l" or "paw_r" ? (int)MathX.Round(pawRise) : 0;
-
             var img = part.Image;
             for (int py = 0; py < h; py++)
             {
@@ -251,7 +254,7 @@ public sealed class CatView : IDisposable
                 {
                     if (img[px, py].A <= 40) continue;
                     int gx = (int)part.Origin.X + px;
-                    int gy = (int)part.Origin.Y + py - lift;
+                    int gy = (int)part.Origin.Y + py;
                     if (gx >= 0 && gx < side && gy >= 0 && gy < side) raw[gy * side + gx] = true;
                 }
             }
@@ -312,7 +315,8 @@ public sealed class CatView : IDisposable
 
         if (lx < 0 || lx >= side || ly < 0 || ly >= side) return null;
         // Whichever silhouette is actually on screen this frame.
-        var live = CatStage.Shared.PeekPose && _peekMask.Length > 0 ? _peekMask : _hitMask;
+        var live = CatStage.Shared.Pose is { } activePose &&
+                   _poseMasks.TryGetValue(activePose, out var pm) ? pm : _hitMask;
         if (!live[ly * side + lx]) return null;
         return new Pt(lx, ly);
     }
@@ -340,6 +344,10 @@ public sealed class CatView : IDisposable
         double originX = MathX.Round(_widthPx / 2.0) - CanvasW * sc / 2;
         double originY = MathX.Round(_heightPx / 2.0) - CanvasH * sc / 2;
 
+        string? pose = CatStage.Shared.Pose;
+        HashSet<string> showing = pose is not null &&
+            Atlas.Poses.TryGetValue(pose, out var pl) ? new HashSet<string>(pl) : [];
+
         foreach (string name in Atlas.Order)
         {
             if (!Atlas.Parts.TryGetValue(name, out var part)) continue;
@@ -347,7 +355,7 @@ public sealed class CatView : IDisposable
             // One test covers the coat and its overheated twin, because the hot
             // variant is blitted from inside this same iteration — a hidden body with
             // a visible red body floating where it was would be quite a bug.
-            if (t.Hidden || CatStage.Shared.HiddenParts.Contains(name)) continue;
+            if (t.Hidden || OutOfPose(name, showing, pose, Atlas.PosedParts)) continue;
 
             var pivot = Atlas.Pivot(name);
             var placement = Place(part, t, pivot, originX, originY, sc);

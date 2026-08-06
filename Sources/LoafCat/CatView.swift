@@ -60,8 +60,9 @@ final class CatView: NSView {
     /// unchanged by the padding — `isOnCat` does the conversion.
     private(set) var hitMask: [Bool]
 
-    /// The same thing for the peek pose, where only the head and two paws are drawn.
-    private(set) var peekMask: [Bool] = []
+    /// The same thing per pose, since a pose is a different drawing and therefore a
+    /// different silhouette.
+    private(set) var poseMasks: [String: [Bool]] = [:]
     private let maskDilation = 6
 
     private var padX: CGFloat { CGFloat(atlas.layout.padX) }
@@ -285,28 +286,35 @@ final class CatView: NSView {
     /// the cat", the window would stop ignoring mouse events, and clicks would
     /// disappear into nothing. That is the click-through bug this project already
     /// went to some trouble to get right.
-    private func buildHitMask() {
-        hitMask = mask(parts: atlas.order.filter { $0 != "shadow" }, pawRise: 0)
-        // The paws ride up to the chin in the peek pose, so the mask has to know
-        // where they went. The amount is the atlas's, read here rather than passed
-        // in, because the view already reads the atlas for every other measurement.
-        let rise = atlas.tune("peek", "paw_rise_px", 10)
-        peekMask = mask(parts: Self.peekParts, pawRise: rise)
+    /// Whether a part is left undrawn this frame because of the pose.
+    ///
+    /// A pose replaces the cat outright: its own parts are drawn and everything else
+    /// is not. Pulled out as a pure function for the same reason `Arming` and
+    /// `parkedX` are — it is the rule that decides whether the user sees a peeking
+    /// head, a standing cat, both at once, or nothing, and the only way to check
+    /// that on a machine with no screen is to be able to ask it directly.
+    static func outOfPose(_ name: String, showing: Set<String>,
+                          pose: String?, posed: Set<String>) -> Bool {
+        posed.contains(name) ? !showing.contains(name) : pose != nil
     }
 
-    /// The parts the peek pose draws. Everything else is behind the screen edge.
-    static let peekParts = [
-        "head", "ear_l", "ear_r", "eye_l", "eye_r", "lid_l", "lid_r",
-        "pupil_l", "pupil_r", "face", "paw_l", "paw_r",
-    ]
+    private func buildHitMask() {
+        // The standing cat is everything that is not part of a pose. A pose part
+        // left in here would inflate the silhouette by a head the user cannot see,
+        // and the symptom — clicks vanishing into empty screen beside the cat — is
+        // the one this project already went to some trouble to eliminate.
+        hitMask = mask(parts: atlas.order.filter {
+            $0 != "shadow" && !atlas.posedParts.contains($0)
+        })
+        poseMasks = atlas.poses.mapValues { mask(parts: $0) }
+    }
 
-    private func mask(parts names: [String], pawRise: CGFloat) -> [Bool] {
+    private func mask(parts names: [String]) -> [Bool] {
         let side = Int(atlas.canvas)
         var raw = [Bool](repeating: false, count: side * side)
 
         for name in names where !name.hasPrefix("lid_") && name != "shadow" {
             guard let part = atlas.parts[name] else { continue }
-            let lift = (name == "paw_l" || name == "paw_r") ? Int(pawRise.rounded()) : 0
             let w = Int(part.size.width), h = Int(part.size.height)
             guard w > 0, h > 0 else { continue }
 
@@ -329,7 +337,7 @@ final class CatView: NSView {
                     let alpha = buf[(py * w + pxi) * 4 + 3]
                     guard alpha > 40 else { continue }
                     let gx = Int(part.origin.x) + pxi
-                    let gy = Int(part.origin.y) + py - lift
+                    let gy = Int(part.origin.y) + py
                     if gx >= 0, gx < side, gy >= 0, gy < side { raw[gy * side + gx] = true }
                 }
             }
@@ -399,7 +407,7 @@ final class CatView: NSView {
         let ly = side - 1 - Int(lyUp.rounded(.down))
         guard lx >= 0, lx < side, ly >= 0, ly < side else { return nil }
         // Whichever silhouette is actually on screen this frame.
-        let live = (CatStage.shared.peekPose && !peekMask.isEmpty) ? peekMask : hitMask
+        let live = CatStage.shared.pose.flatMap { poseMasks[$0] } ?? hitMask
         guard live[ly * side + lx] else { return nil }
         return CGPoint(x: CGFloat(lx), y: CGFloat(ly))
     }
@@ -456,10 +464,15 @@ final class CatView: NSView {
         let heat = min(max(CatStage.shared.heat, 0), 1)
         CATransaction.begin()
         CATransaction.setDisableActions(true)   // no implicit animation; we drive it
+        let pose = CatStage.shared.pose
+        let showing = pose.flatMap { atlas.poses[$0] }.map(Set.init) ?? []
+
         for (name, l) in layers {
             guard let part = atlas.parts[name] else { continue }
             let t = rig.transforms[name] ?? Rig.Transform()
-            l.isHidden = t.hidden || CatStage.shared.hiddenParts.contains(name)
+            let notInPose = Self.outOfPose(name, showing: showing, pose: pose,
+                                           posed: atlas.posedParts)
+            l.isHidden = t.hidden || notInPose
 
             l.position = containerPosition(for: part, offset: t.offset)
 
@@ -482,8 +495,7 @@ final class CatView: NSView {
                 // Keyed by the BASE part's name, so one membership test covers the
                 // coat and its overheated twin — a hidden body with a visible red
                 // body floating where it was would be quite a bug.
-                h.isHidden = t.hidden || heat < 0.004
-                    || CatStage.shared.hiddenParts.contains(name)
+                h.isHidden = t.hidden || heat < 0.004 || notInPose
                 if !h.isHidden {
                     h.position = l.position
                     h.transform = l.transform

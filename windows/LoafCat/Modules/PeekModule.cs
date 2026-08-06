@@ -116,24 +116,21 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private double _edgeZonePx = 12;
     private double _armMs = 320;
     private double _disarmMs = 80;
-    private double _revealPx = 28;
+    private double _revealPx = 23;
     private double _slideRate = 11;
     private double _settlePt = 0.35;
-    private double _pawRisePx = 10;
-    private double _pawGatherPx = 1.5;
     private double _hideAt = 0.55;
-    private double _headLeanPx = 2;
-    private double _headRisePx = 1;
     private double _bobPx = 1.5;
     private double _bobHz = 0.42;
     private double _indicatorWPx = 3;
     private double _indicatorFadeMs = 120;
 
-    /// The cat's ink inside the 48px canvas, so `reveal_px` means "this much cat" and
-    /// not "this much canvas, most of which is transparent".
-    private double _inkMinX;
-    private double _inkMaxX = 48;
-    private double _inkHeight = 48;
+    /// The pose's ink inside the 48px canvas, per facing, so `reveal_px` means "this
+    /// much cat" and not "this much canvas, most of which is transparent".
+    internal readonly record struct Ink(double MinX, double MaxX, double Height);
+    private readonly Dictionary<PeekEdge, Ink> _ink = [];
+    private Ink InkFor(PeekEdge edge) =>
+        _ink.TryGetValue(edge, out var i) ? i : new Ink(0, 48, 48);
 
     /// The WHOLE drawn cat, which is a different box from the head above and is used
     /// for a different question. The head decides where the cat parks; this decides
@@ -142,15 +139,9 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private double _dragInkMinX;
     private double _dragInkMaxX = 48;
 
-    /// Everything the peek pose does NOT draw. Published to the stage while parked.
-    ///
-    /// The body is not clipped, it is absent — and that distinction is the entire
-    /// reason this pose works where slicing the cat vertically never could. A cat cut
-    /// in half by the screen edge reads as a rendering bug at every width that was
-    /// tried; a head and two paws over the edge reads as a cat immediately, because it
-    /// is a whole face rather than part of one.
-    private static readonly HashSet<string> BehindTheEdge =
-        ["body", "body_hot", "tail", "tail_hot", "shadow"];
+    /// The atlas pose each edge wears. `peek_r` faces left, which is the drawing for a
+    /// cat whose body is behind the RIGHT edge.
+    public static string PoseName(PeekEdge edge) => edge == PeekEdge.Right ? "peek_r" : "peek_l";
 
     public void Retune(Atlas atlas)
     {
@@ -161,30 +152,43 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         _revealPx = V("reveal_px", _revealPx);
         _slideRate = V("slide_rate", _slideRate);
         _settlePt = V("settle_pt", _settlePt);
-        _pawRisePx = V("paw_rise_px", _pawRisePx);
-        _pawGatherPx = V("paw_gather_px", _pawGatherPx);
         _hideAt = V("hide_at", _hideAt);
-        _headLeanPx = V("head_lean_px", _headLeanPx);
-        _headRisePx = V("head_rise_px", _headRisePx);
         _bobPx = V("bob_px", _bobPx);
         _bobHz = V("bob_hz", _bobHz);
         _indicatorWPx = V("indicator_w_px", _indicatorWPx);
         _indicatorFadeMs = V("indicator_fade_ms", _indicatorFadeMs);
 
-        double minX = double.MaxValue, maxX = double.MinValue;
-        double minY = double.MaxValue, maxY = double.MinValue;
-        foreach (string name in CatView.PeekParts)
+        // Each facing is measured on its OWN parts. The two are mirror images, so a
+        // single box would be right for one edge and wrong for the other by however far
+        // the pose sits off the canvas centre — which is the width of a muzzle, and
+        // would show up as the cat parking deeper on one side than the other.
+        _ink.Clear();
+        foreach (var edge in new[] { PeekEdge.Right, PeekEdge.Left })
         {
-            if (!atlas.Parts.TryGetValue(name, out var p)) continue;
-            minX = Math.Min(minX, p.Origin.X);
-            maxX = Math.Max(maxX, p.Origin.X + p.Size.W);
-            minY = Math.Min(minY, p.Origin.Y);
-            maxY = Math.Max(maxY, p.Origin.Y + p.Size.H);
+            double minX = double.MaxValue, maxX = double.MinValue;
+            double minY = double.MaxValue, maxY = double.MinValue;
+            if (!atlas.Poses.TryGetValue(PoseName(edge), out var pose)) continue;
+            foreach (string name in pose)
+            {
+                if (!atlas.Parts.TryGetValue(name, out var p)) continue;
+                minX = Math.Min(minX, p.Origin.X);
+                maxX = Math.Max(maxX, p.Origin.X + p.Size.W);
+                minY = Math.Min(minY, p.Origin.Y);
+                maxY = Math.Max(maxY, p.Origin.Y + p.Size.H);
+            }
+            if (minX > maxX) continue;
+            _ink[edge] = new Ink(minX, maxX, Math.Max(maxY - minY, 1));
         }
+
+        // The whole STANDING cat, which is a different box used for a different
+        // question: the pose decides where the cat parks, this decides when the gesture
+        // arms, because while you are dragging it the standing cat is what you can see
+        // and what you are aiming at. The pose parts are excluded for exactly that
+        // reason — they are not on screen while you are dragging.
         double dMinX = double.MaxValue, dMaxX = double.MinValue;
         foreach (var (name, p) in atlas.Parts)
         {
-            if (name == "shadow") continue;
+            if (name == "shadow" || atlas.PosedParts.Contains(name)) continue;
             dMinX = Math.Min(dMinX, p.Origin.X);
             dMaxX = Math.Max(dMaxX, p.Origin.X + p.Size.W);
         }
@@ -192,13 +196,6 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         {
             _dragInkMinX = dMinX;
             _dragInkMaxX = dMaxX;
-        }
-
-        if (minX <= maxX)
-        {
-            _inkMinX = minX;
-            _inkMaxX = maxX;
-            _inkHeight = Math.Max(maxY - minY, 1);
         }
     }
 
@@ -393,52 +390,24 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         if ((IsParked ? _parkEdge : _lastEdge) is not { } edgeNow) return ModuleOutput.None;
         _lastEdge = edgeNow;
 
-        // The pose, and the whole thing rests on ONE idea: the body tucks a little
-        // further behind the edge while the head cranes the other way, out past it. It
-        // is the DIFFERENCE between those two that reads as an animal looking round a
-        // corner.
-        //
-        // The first version moved the whole cat inward instead, which does nothing but
-        // put more cat on screen — the opposite of peeking, and it looked like a window
-        // had sliced the cat rather than the cat had hidden. Combined with a reveal that
-        // left 54% of the ink showing, there was no peek there at all.
-        //
-        // Offsets rather than new art, so nothing here needs a sprite that does not
-        // already exist — and so a theme retunes the pose in the same JSON diff that
-        // retunes everything else.
+        // The pose is a DIFFERENT DRAWING, and that is the whole lesson of this
+        // feature. Everything here used to be per-part offsets on the standing cat —
+        // crane the head out, bring the paws up, hide the body — and it never once
+        // looked like a cat peeking, because a front-facing face cut by a vertical
+        // line is a bisected cat at every width and every offset. Two full rounds of
+        // tuning went into the numbers before the numbers turned out not to be the
+        // problem. A cat looking round a corner is side-on: one eye, one near ear, a
+        // muzzle leading the way. So the module asks for that drawing instead, and the
+        // only motion left here is a breath applied to the whole of it.
         _bobPhase += ctx.Dt * _bobHz;
         while (_bobPhase >= 1) _bobPhase -= 1;
 
         var outv = new ModuleOutput();
-        double toEdge = edgeNow == PeekEdge.Right ? 1 : -1;
-        double bobY = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
-        outv.Offset.Y = bobY;
-        stage.HeadOffset.X -= toEdge * _headLeanPx * _settled;
-        stage.HeadOffset.Y -= _headRisePx * _settled;
-        // The paw hooked over the edge. An overlay rather than a body part, which gets
-        // it three things for free: it is not in the draw order or the hit mask, it can
-        // be faded in with the park, and — because overlays do not take `BodyOffset` —
-        // it stays pinned to the screen edge while the body tucks away behind it. That
-        // last one is the whole gag: the cat slides back, the paw does not let go.
+        outv.Offset.Y = Math.Sin(_bobPhase * 2 * Math.PI) * _bobPx * _settled;
 
-        // The pose: two paws up under the chin, and no body at all.
-        //
-        // The paws are the cat's own — no new sprite was needed, which is the tell
-        // that this is the right shape rather than a clever one. They ride up to the
-        // jaw and gather slightly toward each other, the way an animal's do when it is
-        // holding an edge and looking over it.
-        stage.PawOffsetL.Y -= _pawRisePx * _settled;
-        stage.PawOffsetR.Y -= _pawRisePx * _settled;
-        stage.PawOffsetL.X += _pawGatherPx * _settled;
-        stage.PawOffsetR.X -= _pawGatherPx * _settled;
-
-        // The body ducks away late, while the cat is already mostly off screen, so it
-        // reads as getting behind the edge rather than as the body being deleted.
-        if (_settled >= _hideAt)
-        {
-            stage.HiddenParts.UnionWith(BehindTheEdge);
-            stage.PeekPose = true;
-        }
+        // Late in the slide, while the cat is already mostly off screen, so the swap is
+        // covered by the edge rather than happening in full view.
+        if (_settled >= _hideAt) stage.Pose = PoseName(edgeNow);
         if (IsParked) outv.State = CatState.Peeking;
         return outv;
     }
@@ -486,9 +455,12 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     public static PeekEdge NearerEdge(Rect frame, Rect work) =>
         frame.MidX - work.MinX < work.MaxX - frame.MidX ? PeekEdge.Left : PeekEdge.Right;
 
-    private double ParkedX(PeekEdge edge, Rect work, Atlas atlas, double scale) =>
-        ParkedX(edge, work.MinX, work.MaxX, atlas.Layout.PadX,
-                _inkMinX, _inkMaxX, _revealPx, scale);
+    private double ParkedX(PeekEdge edge, Rect work, Atlas atlas, double scale)
+    {
+        var i = InkFor(edge);
+        return ParkedX(edge, work.MinX, work.MaxX, atlas.Layout.PadX,
+                       i.MinX, i.MaxX, _revealPx, scale);
+    }
 
     /// Window origin that leaves exactly `reveal_px` of the cat's INK on screen.
     ///
@@ -522,7 +494,7 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         _lastArmed = edge;
 
         double w = MathX.Round(_indicatorWPx * ctx.Scale);
-        double h = MathX.Round(_inkHeight * ctx.Scale);
+        double h = MathX.Round(InkFor(edge).Height * ctx.Scale);
         double x = edge == PeekEdge.Right ? work.MaxX - w : work.MinX;
         var rect = new Rect(x, MathX.Round(ctx.Frame.MidY - h / 2), w, h);
 
@@ -532,8 +504,9 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
 
     // Read by the scripted demo, which needs the tuning it is asserting against.
     internal (double EdgeZonePx, double ArmMs, double DisarmMs, double RevealPx,
-              double InkMinX, double InkMaxX, double PawRisePx) DemoTuning =>
-        (_edgeZonePx, _armMs, _disarmMs, _revealPx, _inkMinX, _inkMaxX, _pawRisePx);
+              Ink InkR, Ink InkL) DemoTuning =>
+        (_edgeZonePx, _armMs, _disarmMs, _revealPx,
+         InkFor(PeekEdge.Right), InkFor(PeekEdge.Left));
 
     /// Which edge the snap is armed for, for the scripted drag above.
     internal PeekEdge? DemoArmed => ArmedEdge;
@@ -584,7 +557,7 @@ internal static class PeekDemo
         }
         PeekEdge? inBandR = PeekEdge.Right, inBandL = PeekEdge.Left, middle = null;
         double prX = PeekModule.ParkedX(PeekEdge.Right, work.MinX, work.MaxX,
-                                        atlas.Layout.PadX, t.InkMinX, t.InkMaxX,
+                                        atlas.Layout.PadX, t.InkR.MinX, t.InkR.MaxX,
                                         t.RevealPx, scale);
 
         Console.WriteLine($"# demo: peek — screen {(int)work.W}x{(int)work.H} at "
@@ -622,9 +595,9 @@ internal static class PeekDemo
         double want = t.RevealPx * scale;
         double pr = prX;
         double pl = PeekModule.ParkedX(PeekEdge.Left, work.MinX, work.MaxX, padX,
-                                       t.InkMinX, t.InkMaxX, t.RevealPx, scale);
-        double shownR = work.MaxX - (pr + (padX + t.InkMinX) * scale);
-        double shownL = pl + (padX + t.InkMaxX) * scale - work.MinX;
+                                       t.InkL.MinX, t.InkL.MaxX, t.RevealPx, scale);
+        double shownR = work.MaxX - (pr + (padX + t.InkR.MinX) * scale);
+        double shownL = pl + (padX + t.InkL.MaxX) * scale - work.MinX;
         Check($"parked right shows {(int)t.RevealPx}px of cat", Math.Abs(shownR - want) < 0.01,
               $"{shownR:F2}pt vs {want:F2}pt");
         Check($"parked left shows {(int)t.RevealPx}px of cat", Math.Abs(shownL - want) < 0.01,
@@ -686,17 +659,42 @@ internal static class PeekDemo
               $"landed at {window.Frame.X:F0}, expected to stay at {home:F0}");
         Reset();
 
-        // 6. WHICH parts the cut lands between, which is the whole difference between a
-        //    peek and a cat with a slice taken off it. One eye showing and one hidden
-        //    is the thing being aimed at; at reveal 20 both were on screen and it read
-        //    as a window clipping a cat. Retuning past that is a design change and
-        //    should have to argue with a failing check first.
-        // Both edges, separately. They are NOT mirror images of each other — the cat
-        // carries a tail on one side and nothing on the other — and assuming they were
-        // is exactly how a left-edge park came to spend its whole reveal on tail and
-        // cut the face in half.
-        double seenTo = t.InkMinX + t.RevealPx;     // right park: 0..seenTo is on screen
-        double seenFrom = t.InkMaxX - t.RevealPx;   // left park: seenFrom.. is on screen
+        // 6. THE POSE IS A DIFFERENT DRAWING, not the standing cat rearranged.
+        //
+        // This is the check the feature was missing for three attempts. Every earlier
+        // version tried to make the front-facing cat peek — slide it behind the edge,
+        // crane the head, hide the body, rotate it 90° — and each one was tuned,
+        // shipped and reported back as "that is not a cat peeking". A face drawn
+        // front-on and cut by a vertical line is a bisected cat at every width, and no
+        // number fixes that. So the shape itself is what gets asserted here.
+        List<string> poseR =
+            atlas.Poses.TryGetValue(PeekModule.PoseName(PeekEdge.Right), out var pR) ? pR : [];
+        List<string> poseL =
+            atlas.Poses.TryGetValue(PeekModule.PoseName(PeekEdge.Left), out var pL) ? pL : [];
+        Check("the pose is side-on: exactly one eye",
+              poseR.Count(n => n.EndsWith("_eye", StringComparison.Ordinal)) == 1,
+              "two eyes is a front-facing face, which cannot peek round a corner");
+        Check("the pose brings its own head, ears and paws",
+              poseR.Contains("peek_r_head") && poseR.Contains("peek_r_ear")
+              && poseR.Contains("peek_r_paw_a") && poseR.Contains("peek_r_paw_b"), "");
+        Check("the pose leaves out the body, the tail and the shadow",
+              poseR.All(n => n is not ("body" or "tail" or "shadow")), "");
+        Check("neither edge's pose borrows a part of the standing cat",
+              poseR.Concat(poseL).All(n => n.StartsWith("peek_", StringComparison.Ordinal)), "");
+        Check("the two facings are mirror images",
+              Math.Abs(t.InkR.MinX - (atlas.Canvas - t.InkL.MaxX)) < 0.001
+              && Math.Abs(t.InkR.Height - t.InkL.Height) < 0.001,
+              $"R {t.InkR.MinX:F0}..{t.InkR.MaxX:F0}, L {t.InkL.MinX:F0}..{t.InkL.MaxX:F0} "
+              + $"on a {atlas.Canvas:F0} canvas");
+        Check("the two edges show the same amount of cat", Math.Abs(shownR - shownL) < 0.01, "");
+
+        // WHICH parts the cut lands between. With a side-on drawing the cut is no
+        // longer what does the hiding — the art is — so the claim is narrower and more
+        // honest than it used to be: the face comes out, the back of the skull does
+        // not, and that difference is what makes the head read as emerging from behind
+        // the edge rather than floating beside it.
+        double seenTo = t.InkR.MinX + t.RevealPx;    // right park: 0..seenTo on screen
+        double seenFrom = t.InkL.MaxX - t.RevealPx;  // left park: seenFrom.. on screen
         // Spelled out rather than as a ternary on a separate `ok`: nullable flow
         // analysis cannot see through that and rejects the dereference.
         bool Lo(string n, out double lo)
@@ -715,63 +713,45 @@ internal static class PeekDemo
             hi = 0;
             return false;
         }
-        bool ShowsR(string n) => Hi(n, out double hi) && hi <= seenTo + 1;
-        bool ShowsL(string n) => Lo(n, out double lo) && lo >= seenFrom - 1;
+        Check("right park: the whole eye clears the edge",
+              Hi("peek_r_eye", out double eyeR) && eyeR <= seenTo, "");
+        Check("left park: the whole eye clears the edge",
+              Lo("peek_l_eye", out double eyeL) && eyeL >= seenFrom, "");
+        Check("right park: both paws clear the edge",
+              Hi("peek_r_paw_a", out double pawAR) && pawAR <= seenTo
+              && Hi("peek_r_paw_b", out double pawBR) && pawBR <= seenTo,
+              "the paws over the edge are half the pose; cutting one is a cat with a stump");
+        Check("left park: both paws clear the edge",
+              Lo("peek_l_paw_a", out double pawAL) && pawAL >= seenFrom
+              && Lo("peek_l_paw_b", out double pawBL) && pawBL >= seenFrom, "");
+        Check("right park: the back of the skull stays behind the edge",
+              Hi("peek_r_head", out double skullR) && skullR > seenTo,
+              "with the whole head on screen it floats beside the edge instead of "
+              + "coming from behind it");
+        Check("left park: the back of the skull stays behind the edge",
+              Lo("peek_l_head", out double skullL) && skullL < seenFrom, "");
 
-        // ONE eye out and one eye behind the edge. This check used to demand that BOTH
-        // eyes cleared it, on the reasoning that a whole face is what stops the pose
-        // reading as a cat someone has sliced — and satisfying it is what drove
-        // `reveal_px` to 28, which is 93% of a 30px head. Shipped, that was a complete
-        // face hanging beside the screen with two paws under it: nothing was behind
-        // the edge, so nothing read as hiding.
-        //
-        // The earlier check was not wrong about slicing, it was aimed at the wrong
-        // pose. Back when the whole cat was clipped vertically, a second eye meant the
-        // window had cut through the animal. Now the body is absent rather than
-        // clipped, so the far eye going behind the edge is the cat turning its head
-        // out from cover — the one thing a peek actually looks like.
-        //
-        // Stated as where the far eye's NEAR rim falls rather than as "not fully
-        // shown", for the same reason the ear check below is: ShowsR/ShowsL carry a
-        // one-pixel tolerance, and a far eye with a single column poking out would
-        // satisfy the negation while looking like two eyes.
-        Check("right park: the near eye clears the edge", ShowsR("eye_l"), "");
-        Check("left park: the near eye clears the edge", ShowsL("eye_r"), "");
-        Check("right park: the far eye stays wholly behind it",
-              Lo("eye_r", out double farR) && farR >= seenTo,
-              "both eyes on screen is a floating head, not a cat looking round a corner");
-        Check("left park: the far eye stays wholly behind it",
-              Hi("eye_l", out double farL) && farL <= seenFrom, "");
-
-        // Stated directly rather than as "not fully shown": the Shows/Hides pair carry
-        // a one-pixel tolerance for the eyes, and reusing them here made a genuine
-        // one-pixel tuck read as a failure. Partly behind the edge is the claim, so
-        // partly behind the edge is what gets asserted.
-        Check("right park: the far ear tucks behind the edge",
-              Hi("ear_r", out double earR) && earR > seenTo,
-              "so the head reads as coming from behind it, not floating in front");
-        Check("left park: the far ear tucks behind the edge",
-              Lo("ear_l", out double earL) && earL < seenFrom, "");
-        Check("the two edges show the same amount of cat",
-              Math.Abs((seenTo - t.InkMinX) - (t.InkMaxX - seenFrom)) < 0.001,
-              "measured on the head, which is the only thing this pose draws wide");
-        Check("the body, tail and shadow are the parts left behind",
-              !CatView.PeekParts.Contains("body") && !CatView.PeekParts.Contains("tail")
-              && !CatView.PeekParts.Contains("shadow"), "");
-        Check("both paws are part of the pose",
-              CatView.PeekParts.Contains("paw_l") && CatView.PeekParts.Contains("paw_r"), "");
-        // The raised paw has to end up INSIDE the head's box. Paws are drawn before
-        // the head, so overlapping it is the chin resting on the paw; stopping short
-        // leaves a gap of empty screen and two grey nubs hanging under the jaw, which
-        // is what a rise of 10 gave and what the screenshot showed.
-        if (atlas.Parts.TryGetValue("paw_l", out var pawL) &&
-            atlas.Parts.TryGetValue("head", out var headBox))
+        // What the view will actually DRAW, which is a separate question from where the
+        // window goes and is where a pose can fail invisibly: leave the standing cat on
+        // and you get a body behind a peeking head, hide one part too many and you get
+        // nothing at all. Asked of the same pure rule the compositor uses.
+        HashSet<string> Drawn(string? pose)
         {
-            double top = pawL.Origin.Y - t.PawRisePx;
-            Check("the raised paw reaches the chin",
-                  top < headBox.Origin.Y + headBox.Size.H,
-                  $"paw top {top:F0}, head bottom {headBox.Origin.Y + headBox.Size.H:F0}");
+            HashSet<string> showing = pose is not null &&
+                atlas.Poses.TryGetValue(pose, out var pp) ? new HashSet<string>(pp) : [];
+            return new HashSet<string>(atlas.Order.Where(
+                n => !CatView.OutOfPose(n, showing, pose, atlas.PosedParts)));
         }
+        var standing = Drawn(null);
+        var peeking = Drawn(PeekModule.PoseName(PeekEdge.Right));
+        Check("with no pose the standing cat is drawn and no pose part is",
+              standing.Contains("head") && standing.Contains("body")
+              && !standing.Overlaps(atlas.PosedParts), "");
+        Check("while peeking the pose is drawn and the standing cat is not",
+              peeking.SetEquals(poseR),
+              $"{peeking.Count} parts drawn, {poseR.Count} in the pose");
+        Check("the two facings are never drawn together",
+              !Drawn(PeekModule.PoseName(PeekEdge.Left)).Overlaps(peeking), "");
 
         // 7. A parked cat must still overlap the work area, or ClampIntoView will
         //    haul it back the next time a monitor is plugged in and the park will

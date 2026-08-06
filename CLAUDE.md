@@ -122,6 +122,20 @@ the documentation and most blog posts say.
   "get out of the way" state and not to *stay* in one — a paused film drops the
   assertion, and a cat that walked back in front of the picture on every pause would
   be worse than one that never moved.
+- **A pose that needs a different silhouette needs different ART, not different
+  offsets.** The parked "peeking" cat was attempted three times by moving the
+  front-facing parts — slide the whole cat behind the edge, hide the body and raise
+  the paws, then halve the reveal — and once by rotating the result 90°, which is
+  lossless on a pixel grid so it was worth trying. Every one failed identically: a
+  face drawn front-on and cut by a vertical line is a bisected cat at *every* width,
+  and rotating it reads as a cat that has fallen over, because two eyes stacked
+  vertically is what lying down looks like. There is no number in between. A cat
+  looking round a corner is one eye, one near ear and a muzzle leading — a **drawing**
+  the standing cat cannot be moved into. So `cat.json` carries a `poses` block, a pose
+  *replaces* the cat rather than rearranging it, and `tools/generate_art.py` draws
+  both facings (the second is the first mirrored — never flip at runtime, or the two
+  ports have one more thing to disagree about). The check that guards it is about
+  shape, not size: **the pose must contain exactly one eye.**
 - **Never read a window position back off the window as the source of truth.** The
   window server quantises it. An exponential ease toward a target takes smaller and
   smaller steps, so once they fall under the quantum they round away faster than they
