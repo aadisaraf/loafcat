@@ -287,22 +287,34 @@ G = {
     # once and neither port ever flips anything at runtime.
     #
     # The paws are moved BEFORE the rotation, from under the standing cat up to
-    # where a lying cat's front paws sit. Their offsets are the pose: they have to
-    # land under the chin and short of the neck, so the edge tucks the back of the
-    # skull away while both paws stay in front of it. Paws further out than the
-    # skull cannot both be shown and be hidden, and that dilemma is what every cut
-    # tried before this one ran into.
-    "peek_parts": ["paw_a", "paw_b", "ear_l", "ear_r", "head",
-                   "eye_l", "eye_r", "pupil_l", "pupil_r", "face"],
-    "peek_paw_a": dict(src="paw_l", dx=-11, dy=-27),
-    "peek_paw_b": dict(src="paw_r", dx=-21, dy=-21),
+    # where a lying cat's front paws sit. Their offsets are the pose: `dy` decides
+    # how far out toward the edge they sit, `dx` how low they hang, and the two
+    # swap roles once the whole thing is turned.
+    #
+    # They have to land short of the neck. Paws further out than the skull cannot
+    # both be shown and be tucked -- tuck the head and you amputate a paw, show
+    # both paws and nothing is behind the edge at all -- and that dilemma is what
+    # every cut tried before this one ran into.
+    #
+    # Offsets keep every pixel on the canvas: `px()` silently drops anything
+    # outside 0..CANVAS, and a paw shifted one column too far loses its outline on
+    # that side, which reads as a chipped paw rather than as a clipped sprite.
+    "peek_parts": ["ear_l", "ear_r", "head", "eye_l", "eye_r",
+                   "pupil_l", "pupil_r", "face", "paw_a", "paw_b"],
+    "peek_paw_a": dict(src="paw_l", dx=-13, dy=-27),
+    "peek_paw_b": dict(src="paw_r", dx=-23, dy=-21),
 }
 
-# The peek pose in draw order, without the edge prefix, matching the standing cat's
-# own relative order: paws first so the head rests ON them, ears behind the head,
-# face last. `peek_r_*` lies against the RIGHT edge; `peek_l_*` is its mirror.
-PEEK_POSE = ["paw_a", "paw_b", "ear_l", "ear_r", "head",
-             "eye_l", "eye_r", "pupil_l", "pupil_r", "face"]
+# The peek pose in draw order, without the edge prefix. `peek_r_*` lies against the
+# RIGHT edge; `peek_l_*` is its mirror.
+#
+# The paws draw LAST, which is the one place this pose departs from the standing
+# cat's order. Standing, the head rests on the paws and hiding most of each one is
+# correct. Lying down they are in FRONT of the chin, and behind the head they came
+# out as two nubs with the rest eaten by the jaw -- the paws are half the idea, so
+# they go on top.
+PEEK_POSE = ["ear_l", "ear_r", "head", "eye_l", "eye_r",
+             "pupil_l", "pupil_r", "face", "paw_a", "paw_b"]
 
 
 # ---------------------------------------------------------------------------

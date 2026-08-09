@@ -173,8 +173,7 @@ final class PeekModule: CatModule, AtlasTuned {
         // exactly that reason — they are not on screen while you are dragging.
         var dMinX = CGFloat.greatestFiniteMagnitude
         var dMaxX = -CGFloat.greatestFiniteMagnitude
-        for (name, p) in atlas.parts
-        where name != "shadow" && !atlas.posedParts.contains(name) {
+        for (name, p) in atlas.standing where name != "shadow" {
             dMinX = min(dMinX, p.origin.x)
             dMaxX = max(dMaxX, p.origin.x + p.size.width)
         }
@@ -619,6 +618,26 @@ extension PeekModule {
               "a body would have to be behind the edge, and it is not drawn at all")
         check("neither edge's pose borrows a part of the standing cat",
               (poseR + poseL).allSatisfy { $0.hasPrefix("peek_") })
+        // ...and nothing of the pose leaks the other way, into measurements of the
+        // standing cat. The overheat twins are what slip through: the atlas grows a
+        // `_hot` variant automatically and `poses` names only the base parts, so the
+        // pose's lower paw — a pixel below anything the standing cat has — silently
+        // became the drag pendulum's floor and moved a measured drop by 1.75px.
+        check("no pose part counts as standing cat",
+              atlas.standing.keys.allSatisfy { !$0.hasPrefix("peek_") },
+              "\(atlas.standing.count) standing of \(atlas.parts.count) parts")
+        // The paws draw LAST, which is the one place this pose departs from the
+        // standing cat's order. Standing, the head rests ON the paws and hiding most
+        // of each is correct. Lying down they are in FRONT of the chin — behind the
+        // head the jaw ate them and two nubs was all that was left, which is what
+        // shipped. The paws out from under the blanket are half the idea.
+        if let headAt = poseR.firstIndex(of: "peek_r_head") {
+            check("the paws draw in front of the head",
+                  poseR.enumerated()
+                      .filter { $0.element.contains("paw") }
+                      .allSatisfy { $0.offset > headAt },
+                  "behind it the jaw eats them and two nubs is what is left")
+        }
         check("the two facings are mirror images",
               abs(iR.minX - (CGFloat(atlas.canvas) - iL.maxX)) < 0.001
               && abs(iR.height - iL.height) < 0.001,

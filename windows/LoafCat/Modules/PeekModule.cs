@@ -186,9 +186,9 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
         // and what you are aiming at. The pose parts are excluded for exactly that
         // reason — they are not on screen while you are dragging.
         double dMinX = double.MaxValue, dMaxX = double.MinValue;
-        foreach (var (name, p) in atlas.Parts)
+        foreach (var (name, p) in atlas.Standing)
         {
-            if (name == "shadow" || atlas.PosedParts.Contains(name)) continue;
+            if (name == "shadow") continue;
             dMinX = Math.Min(dMinX, p.Origin.X);
             dMaxX = Math.Max(dMaxX, p.Origin.X + p.Size.W);
         }
@@ -706,6 +706,25 @@ internal static class PeekDemo
               "a body would have to be behind the edge, and it is not drawn at all");
         Check("neither edge's pose borrows a part of the standing cat",
               poseR.Concat(poseL).All(n => n.StartsWith("peek_", StringComparison.Ordinal)), "");
+        // ...and nothing of the pose leaks the other way, into measurements of the
+        // standing cat. The overheat twins are what slip through: the atlas grows a
+        // `_hot` variant automatically and `poses` names only the base parts, so the
+        // pose's lower paw — a pixel below anything the standing cat has — silently
+        // became the drag pendulum's floor and moved a measured drop by 1.75px.
+        Check("no pose part counts as standing cat",
+              atlas.Standing.All(kv => !kv.Key.StartsWith("peek_", StringComparison.Ordinal)),
+              $"{atlas.Standing.Count} standing of {atlas.Parts.Count} parts");
+        // The paws draw LAST, which is the one place this pose departs from the
+        // standing cat's order. Standing, the head rests ON the paws and hiding most of
+        // each is correct. Lying down they are in FRONT of the chin — behind the head
+        // the jaw ate them and two nubs was all that was left, which is what shipped.
+        // The paws out from under the blanket are half the idea.
+        int headAt = poseR.IndexOf("peek_r_head");
+        Check("the paws draw in front of the head",
+              headAt >= 0 && poseR.Select((n, i) => (Name: n, Index: i))
+                  .Where(e => e.Name.Contains("paw", StringComparison.Ordinal))
+                  .All(e => e.Index > headAt),
+              "behind it the jaw eats them and two nubs is what is left");
         Check("the two facings are mirror images",
               Math.Abs(t.InkR.MinX - (atlas.Canvas - t.InkL.MaxX)) < 0.001
               && Math.Abs(t.InkR.Height - t.InkL.Height) < 0.001,

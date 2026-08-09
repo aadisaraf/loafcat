@@ -242,6 +242,18 @@ public sealed class Atlas
     /// running, so the peek head does not sit on top of the standing cat.
     public required HashSet<string> PosedParts { get; init; }
 
+    /// The parts of the STANDING cat — everything that is not in a pose.
+    ///
+    /// Anything measuring "how big is the cat" wants this and not `Parts`. A pose part
+    /// is drawn in a different orientation at a different place, so it lands outside
+    /// the standing silhouette by construction, and a sweep over `Parts` silently
+    /// takes it into account. That is not hypothetical: the peek pose's lower paw
+    /// reaches one pixel further down than any standing part, which moved the drag
+    /// pendulum's floor and changed the measured drop by 1.75px in a feature that has
+    /// nothing to do with peeking.
+    public IEnumerable<KeyValuePair<string, Part>> Standing =>
+        Parts.Where(kv => !PosedParts.Contains(kv.Key));
+
     /// Eye geometry, needed for pupil tracking. `MaxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     public sealed class EyeInfo
@@ -450,7 +462,18 @@ public sealed class Atlas
                     poses[p.Name] = list;
                 }
             }
+            // A pose part's overheat twin belongs to the same pose. The atlas grows
+            // one automatically for anything the coat remap touched, and `poses`
+            // lists only base names — so without this the `_hot` variants count as
+            // standing cat. They did, and the peek pose's lower paw reaches a pixel
+            // further down than anything the standing cat has, which moved the drag
+            // pendulum's floor and changed a measured drop in a feature with nothing
+            // to do with peeking.
             var posed = new HashSet<string>(poses.Values.SelectMany(v => v));
+            foreach (string name in posed.ToList())
+            {
+                if (parts.ContainsKey($"{name}_hot")) posed.Add($"{name}_hot");
+            }
 
             root.TryGetProperty("behaviour", out var behaviourEl);
 

@@ -217,6 +217,19 @@ struct Atlas {
     /// running, so the peek head does not sit on top of the standing cat.
     let posedParts: Set<String>
 
+    /// The parts of the STANDING cat — everything that is not in a pose.
+    ///
+    /// Anything measuring "how big is the cat" wants this and not `parts`. A pose
+    /// part is drawn in a different orientation at a different place, so it lands
+    /// outside the standing silhouette by construction, and a sweep over `parts`
+    /// silently takes it into account. That is not hypothetical: the peek pose's
+    /// lower paw reaches one pixel further down than any standing part, which moved
+    /// the drag pendulum's `inkBottom` and changed the measured drop by 1.75px in a
+    /// feature that has nothing to do with peeking.
+    var standing: [String: Part] {
+        parts.filter { !posedParts.contains($0.key) }
+    }
+
     /// Eye geometry, needed for pupil tracking. `maxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     struct Eye {
@@ -339,7 +352,14 @@ struct Atlas {
         for (name, list) in (root["poses"] as? [String: [String]] ?? [:]) {
             poses[name] = list.filter { parts[$0] != nil }
         }
-        let posed = Set(poses.values.flatMap { $0 })
+        // A pose part's overheat twin belongs to the same pose. The atlas grows one
+        // automatically for anything the coat remap touched, and `poses` lists only
+        // base names — so without this the `_hot` variants count as standing cat.
+        // They did, and the peek pose's lower paw reaches a pixel further down than
+        // anything the standing cat has, which moved the drag pendulum's floor and
+        // changed a measured drop in a feature with nothing to do with peeking.
+        var posed = Set(poses.values.flatMap { $0 })
+        for name in posed where parts["\(name)_hot"] != nil { posed.insert("\(name)_hot") }
 
         return Atlas(
             canvas: canvas, order: order, parts: parts, pivots: pivots,

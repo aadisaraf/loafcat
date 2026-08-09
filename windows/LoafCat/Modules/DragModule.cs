@@ -347,7 +347,7 @@ public sealed class DragModule : ICatModule
     private static double InkBottom(Atlas atlas)
     {
         double bottom = 0;
-        foreach (var (name, p) in atlas.Parts)
+        foreach (var (name, p) in atlas.Standing)
         {
             if (name == "shadow") continue;
             bottom = Math.Max(bottom, p.Origin.Y + p.Size.H);

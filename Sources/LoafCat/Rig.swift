@@ -138,7 +138,7 @@ final class Rig {
         // bottom of the pendulum below the paws.
         var top = CGFloat.greatestFiniteMagnitude
         var bottom: CGFloat = 0
-        for (name, part) in atlas.parts where name != "shadow" {
+        for (name, part) in atlas.standing where name != "shadow" {
             top = min(top, part.origin.y)
             bottom = max(bottom, part.origin.y + part.size.height)
         }

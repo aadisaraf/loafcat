@@ -312,7 +312,7 @@ final class DragModule: CatModule {
     /// Bottom of the cat's ink, from the atlas. The hang is measured against it.
     private func inkBottom(_ atlas: Atlas) -> CGFloat {
         var bottom: CGFloat = 0
-        for (name, p) in atlas.parts where name != "shadow" {
+        for (name, p) in atlas.standing where name != "shadow" {
             bottom = max(bottom, p.origin.y + p.size.height)
         }
         return max(bottom, 1)

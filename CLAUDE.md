@@ -136,6 +136,17 @@ the documentation and most blog posts say.
   - The paws are moved **before** the rotation, and must land *short of the neck*.
     Paws further out than the skull cannot both be shown and be tucked, and that
     dilemma is what every cut tried before this one ran into.
+  - **A pose part must never reach a measurement of the standing cat**, and the parts
+    that slip through are the `_hot` overheat twins: the atlas grows one automatically
+    for anything the coat remap touched, while `poses` names only the base parts. The
+    peek pose's lower paw sits a pixel below anything the standing cat has, so it
+    silently became the drag pendulum's floor and moved `--demo-drag`'s measured drop
+    from 22.75 to 24.50 — in a feature with nothing to do with peeking. Sweep
+    `atlas.standing` / `Atlas.Standing`, never `parts`.
+  - The paws draw **last**, which is the one place this pose departs from the standing
+    cat's order. Standing, the head rests on the paws and hiding most of each is
+    correct; lying down they are in *front* of the chin, and behind the head the jaw
+    ate them and left two nubs. Asserted, because it shipped that way once.
   - `cat.json` carries a `poses` block; a pose **replaces** the cat rather than
     rearranging it. Nothing at runtime moves one part of a pose against another — the
     art is the pose, and an offset on top can only pull it apart.

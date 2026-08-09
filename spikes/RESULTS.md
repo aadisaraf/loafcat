@@ -257,6 +257,22 @@ shown and be tucked, and that dilemma is what every cut tried before this one ra
 into: tuck the head and you amputate a paw, show both paws and nothing is behind the
 edge at all.
 
+**The paws also have to draw in front of the head**, which is the one place this pose
+departs from the standing cat's draw order. Standing, the head rests on the paws and
+hiding most of each one is right. Lying down they are in front of the chin, and behind
+the head the jaw ate them: what shipped was two nubs under a face, which is the same
+symptom the very first attempt had and a completely different cause. Both facts are
+asserted now — the paws must clear the edge, and they must come after the head.
+
+**A pose also has to stay out of measurements of the standing cat**, and the parts
+that slip through are the overheat twins. The atlas grows a `_hot` variant for
+anything the coat remap touched, while `poses` names only the base parts — so
+`peek_r_paw_a_hot` counted as standing cat, and since it sits a pixel below anything
+the standing cat actually has, it became the drag pendulum's floor. `--demo-drag`'s
+measured drop went from 22.75 to 24.50 in a feature with nothing to do with peeking,
+and the only reason it was caught is that the drop is a saturating channel: it does
+not vary run to run, so a 1.75px move is unmistakable rather than plausible noise.
+
 The mirror for the other edge is produced by the generator, not by a runtime flip, so
 both ports load two sets of ordinary sprites and draw whichever the module asked for.
 
