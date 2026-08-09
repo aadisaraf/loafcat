@@ -116,7 +116,7 @@ public sealed class PeekModule(CatWindow window) : ICatModule, IAtlasTuned
     private double _edgeZonePx = 12;
     private double _armMs = 320;
     private double _disarmMs = 80;
-    private double _revealPx = 23;
+    private double _revealPx = 29;
     private double _slideRate = 11;
     private double _settlePt = 0.35;
     private double _hideAt = 0.55;
@@ -659,42 +659,20 @@ internal static class PeekDemo
               $"landed at {window.Frame.X:F0}, expected to stay at {home:F0}");
         Reset();
 
-        // 6. THE POSE IS A DIFFERENT DRAWING, not the standing cat rearranged.
+        // 6. THE CAT IS TURNED A QUARTER TURN, and only its head and two paws show.
         //
-        // This is the check the feature was missing for three attempts. Every earlier
-        // version tried to make the front-facing cat peek — slide it behind the edge,
-        // crane the head, hide the body, rotate it 90° — and each one was tuned,
-        // shipped and reported back as "that is not a cat peeking". A face drawn
-        // front-on and cut by a vertical line is a bisected cat at every width, and no
-        // number fixes that. So the shape itself is what gets asserted here.
+        // This is the check the feature was missing for four attempts. Every earlier
+        // version left the cat upright and tried to make an upright cat peek — slide it
+        // behind the edge, hide the body, crane the head, redraw it side-on — and each
+        // was tuned, shipped and reported back as wrong. An upright face cut by a
+        // vertical line is a bisected cat at every width, and a side-on redraw is a
+        // different animal rather than this one lying down. So the pose is the standing
+        // cat's own parts turned 90°, and the turn itself is what gets asserted: a
+        // rotated part's box is its standing box with the sides swapped.
         List<string> poseR =
             atlas.Poses.TryGetValue(PeekModule.PoseName(PeekEdge.Right), out var pR) ? pR : [];
         List<string> poseL =
             atlas.Poses.TryGetValue(PeekModule.PoseName(PeekEdge.Left), out var pL) ? pL : [];
-        Check("the pose is side-on: exactly one eye",
-              poseR.Count(n => n.EndsWith("_eye", StringComparison.Ordinal)) == 1,
-              "two eyes is a front-facing face, which cannot peek round a corner");
-        Check("the pose brings its own head, ears and paws",
-              poseR.Contains("peek_r_head") && poseR.Contains("peek_r_ear")
-              && poseR.Contains("peek_r_paw_a") && poseR.Contains("peek_r_paw_b"), "");
-        Check("the pose leaves out the body, the tail and the shadow",
-              poseR.All(n => n is not ("body" or "tail" or "shadow")), "");
-        Check("neither edge's pose borrows a part of the standing cat",
-              poseR.Concat(poseL).All(n => n.StartsWith("peek_", StringComparison.Ordinal)), "");
-        Check("the two facings are mirror images",
-              Math.Abs(t.InkR.MinX - (atlas.Canvas - t.InkL.MaxX)) < 0.001
-              && Math.Abs(t.InkR.Height - t.InkL.Height) < 0.001,
-              $"R {t.InkR.MinX:F0}..{t.InkR.MaxX:F0}, L {t.InkL.MinX:F0}..{t.InkL.MaxX:F0} "
-              + $"on a {atlas.Canvas:F0} canvas");
-        Check("the two edges show the same amount of cat", Math.Abs(shownR - shownL) < 0.01, "");
-
-        // WHICH parts the cut lands between. With a side-on drawing the cut is no
-        // longer what does the hiding — the art is — so the claim is narrower and more
-        // honest than it used to be: the face comes out, the back of the skull does
-        // not, and that difference is what makes the head read as emerging from behind
-        // the edge rather than floating beside it.
-        double seenTo = t.InkR.MinX + t.RevealPx;    // right park: 0..seenTo on screen
-        double seenFrom = t.InkL.MaxX - t.RevealPx;  // left park: seenFrom.. on screen
         // Spelled out rather than as a ternary on a separate `ok`: nullable flow
         // analysis cannot see through that and rejects the dereference.
         bool Lo(string n, out double lo)
@@ -713,22 +691,52 @@ internal static class PeekDemo
             hi = 0;
             return false;
         }
-        Check("right park: the whole eye clears the edge",
-              Hi("peek_r_eye", out double eyeR) && eyeR <= seenTo, "");
-        Check("left park: the whole eye clears the edge",
-              Lo("peek_l_eye", out double eyeL) && eyeL >= seenFrom, "");
+        if (atlas.Parts.TryGetValue("head", out var upHead) &&
+            atlas.Parts.TryGetValue("peek_r_head", out var lyingHead))
+        {
+            Check("the pose is the cat turned a quarter turn",
+                  Math.Abs(lyingHead.Size.W - upHead.Size.H) < 0.001
+                  && Math.Abs(lyingHead.Size.H - upHead.Size.W) < 0.001,
+                  $"standing {upHead.Size.W:F0}x{upHead.Size.H:F0}, "
+                  + $"lying {lyingHead.Size.W:F0}x{lyingHead.Size.H:F0}");
+        }
+        Check("only the head and two paws are in it",
+              poseR.Count(n => n.Contains("paw", StringComparison.Ordinal)) == 2
+              && poseR.All(n => n is not ("body" or "tail" or "shadow")),
+              "a body would have to be behind the edge, and it is not drawn at all");
+        Check("neither edge's pose borrows a part of the standing cat",
+              poseR.Concat(poseL).All(n => n.StartsWith("peek_", StringComparison.Ordinal)), "");
+        Check("the two facings are mirror images",
+              Math.Abs(t.InkR.MinX - (atlas.Canvas - t.InkL.MaxX)) < 0.001
+              && Math.Abs(t.InkR.Height - t.InkL.Height) < 0.001,
+              $"R {t.InkR.MinX:F0}..{t.InkR.MaxX:F0}, L {t.InkL.MinX:F0}..{t.InkL.MaxX:F0} "
+              + $"on a {atlas.Canvas:F0} canvas");
+        Check("the two edges show the same amount of cat", Math.Abs(shownR - shownL) < 0.01, "");
+
+        // Where the edge falls across the pose. The paws are placed short of the neck
+        // on purpose: paws further out than the skull cannot both be shown and be
+        // tucked, and that dilemma is what every cut tried before this one hit.
+        double seenTo = t.InkR.MinX + t.RevealPx;    // right park: 0..seenTo on screen
+        double seenFrom = t.InkL.MaxX - t.RevealPx;  // left park: seenFrom.. on screen
+        Check("right park: both eyes clear the edge",
+              Hi("peek_r_eye_l", out double eyeLR) && eyeLR <= seenTo
+              && Hi("peek_r_eye_r", out double eyeRR) && eyeRR <= seenTo,
+              "the whole face is the point — this pose hides the BODY, not half the head");
+        Check("left park: both eyes clear the edge",
+              Lo("peek_l_eye_l", out double eyeLL) && eyeLL >= seenFrom
+              && Lo("peek_l_eye_r", out double eyeRL) && eyeRL >= seenFrom, "");
         Check("right park: both paws clear the edge",
               Hi("peek_r_paw_a", out double pawAR) && pawAR <= seenTo
               && Hi("peek_r_paw_b", out double pawBR) && pawBR <= seenTo,
-              "the paws over the edge are half the pose; cutting one is a cat with a stump");
+              "the paws out from under the blanket are half the idea; cutting one is a stump");
         Check("left park: both paws clear the edge",
               Lo("peek_l_paw_a", out double pawAL) && pawAL >= seenFrom
               && Lo("peek_l_paw_b", out double pawBL) && pawBL >= seenFrom, "");
-        Check("right park: the back of the skull stays behind the edge",
+        Check("right park: the back of the skull tucks under the edge",
               Hi("peek_r_head", out double skullR) && skullR > seenTo,
-              "with the whole head on screen it floats beside the edge instead of "
-              + "coming from behind it");
-        Check("left park: the back of the skull stays behind the edge",
+              "with all of it on screen the cat floats beside the edge instead of "
+              + "lying behind it");
+        Check("left park: the back of the skull tucks under the edge",
               Lo("peek_l_head", out double skullL) && skullL < seenFrom, "");
 
         // What the view will actually DRAW, which is a separate question from where the

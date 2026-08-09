@@ -272,42 +272,37 @@ G = {
     "paw_l":  dict(cx=18, cy=43, w=8, h=6, n=2.2),
     "paw_r":  dict(cx=30, cy=43, w=8, h=6, n=2.2),
 
-    # --- the peek pose, drawn SIDE-ON -------------------------------------
-    # A separate set of sprites rather than a transform of the front-facing ones,
-    # and that is the whole lesson of this pose. Every attempt to reuse the normal
-    # cat failed the same way: sliding it behind the edge slices the face, and
-    # rotating it 90 degrees (lossless on a pixel grid, so it was worth trying)
-    # reads as a cat that has fallen over, because two eyes stacked vertically is
-    # what "lying down" looks like. A cat looking round a corner is a DIFFERENT
-    # DRAWING -- one eye, one near ear, a muzzle leading the way -- and no amount
-    # of moving the front-facing parts arrives at it.
+    # --- the peek pose ----------------------------------------------------
+    # The cat turned ninety degrees, lying against the screen edge with its head
+    # and two front paws out from under it -- the edge being the blanket.
     #
-    # Drawn facing LEFT, which is the pose for parking against the RIGHT edge; the
+    # It is the STANDING cat's own parts, rotated. Nothing new is drawn, which is
+    # what makes it a pose of this cat rather than a second cat: the same face,
+    # the same ears, the same coat markings, lying down. 90 degrees is the only
+    # angle a pixel grid allows losslessly, and it is the angle wanted anyway.
+    #
+    # Rotation is CCW, so the top of the head points INTO the screen and the neck
+    # -- where the body would continue -- faces the edge it is hiding behind. The
     # left-edge set is this one mirrored by the generator, so the art is authored
-    # once and the runtime never flips anything.
-    "peek_head":    dict(cx=22, cy=19, w=24, h=20, n=2.7),
-    "peek_muzzle":  dict(cx=14, cy=24, r=5.0),
-    "peek_eye":     dict(cx=17, cy=20, r=4.6),
-    "peek_ear":     [(14, 18), (17, 0), (26, 14)],
-    # Smaller, tucked behind the skull and filled in the shadow tone: it is what
-    # stops the head reading as a flat disc with one ear glued on.
-    "peek_ear_far": [(27, 14), (30, 3), (35, 13)],
-    # The paws ride INSIDE the head's box. Paws draw before the head, so an overlap
-    # is a chin resting on a paw; clear of it entirely and they are two nubs
-    # floating under the jaw, which is the exact bug the front-facing pose hit.
-    "peek_paw_a":   dict(cx=15, cy=29, w=8, h=6, n=2.2),
-    "peek_paw_b":   dict(cx=24, cy=30, w=8, h=6, n=2.2),
-    # Nose, mouth and whiskers, in the same hand-placed idiom as `face`.
-    "peek_nose":    [(11, 22), (12, 22), (11, 23), (12, 23), (13, 22)],
-    "peek_mouth":   [(12, 25), (13, 25), (11, 24), (14, 26)],
-    "peek_whisker": [(8, 20), (7, 19), (8, 25), (7, 26), (9, 27)],
+    # once and neither port ever flips anything at runtime.
+    #
+    # The paws are moved BEFORE the rotation, from under the standing cat up to
+    # where a lying cat's front paws sit. Their offsets are the pose: they have to
+    # land under the chin and short of the neck, so the edge tucks the back of the
+    # skull away while both paws stay in front of it. Paws further out than the
+    # skull cannot both be shown and be hidden, and that dilemma is what every cut
+    # tried before this one ran into.
+    "peek_parts": ["paw_a", "paw_b", "ear_l", "ear_r", "head",
+                   "eye_l", "eye_r", "pupil_l", "pupil_r", "face"],
+    "peek_paw_a": dict(src="paw_l", dx=-11, dy=-27),
+    "peek_paw_b": dict(src="paw_r", dx=-21, dy=-21),
 }
 
-# The peek pose, in draw order, without the edge prefix. `peek_r_*` faces left and
-# parks against the right edge; `peek_l_*` is its mirror. Listed here rather than
-# in either port because the runtime has to be told which parts make up a pose, and
-# that is a fact about the art.
-PEEK_POSE = ["ear_far", "paw_a", "paw_b", "ear", "head", "eye", "pupil", "face"]
+# The peek pose in draw order, without the edge prefix, matching the standing cat's
+# own relative order: paws first so the head rests ON them, ears behind the head,
+# face last. `peek_r_*` lies against the RIGHT edge; `peek_l_*` is its mirror.
+PEEK_POSE = ["paw_a", "paw_b", "ear_l", "ear_r", "head",
+             "eye_l", "eye_r", "pupil_l", "pupil_r", "face"]
 
 
 # ---------------------------------------------------------------------------
@@ -690,90 +685,40 @@ def build_parts():
             px(img, x, y, "shadow")
     parts["shadow"] = img
 
-    parts.update(build_peek_parts())
+    parts.update(build_peek_parts(parts))
     return parts
 
 
-def build_peek_parts():
-    """The side-on head the cat wears while parked against a screen edge.
+def build_peek_parts(parts):
+    """The cat lying on its side against a screen edge, head and two paws out.
 
-    Authored facing LEFT -- the pose for the RIGHT edge, where the cat's head comes
-    out past the edge and its body is behind it -- and mirrored for the left edge.
-    Mirroring here rather than at runtime keeps both ports free of a flip: they load
-    two sets of ordinary sprites and draw whichever the module asked for.
+    The standing cat's own parts, rotated a quarter turn -- so it is this cat lying
+    down rather than a second cat drawn from scratch, and every theme's markings
+    come along for free. 90 degrees is lossless on a pixel grid: `transpose` maps
+    each pixel to exactly one other pixel, with no resampling anywhere.
+
+    Authored lying against the RIGHT edge and mirrored for the left, so neither
+    port has to flip anything at runtime.
     """
     facing = {}
-
-    # --- head -------------------------------------------------------------
-    img = new_layer()
-    spans = superellipse_spans(**G["peek_head"])
-    fill_spans(img, spans, "coat")
-    shade_spans(img, spans, "coat_sh", depth=2)
-    if not FLAT:
-        for y, (x0, x1) in list(spans.items())[:3]:
-            for x in range(x0, min(x0 + 5, x1 + 1)):
-                px(img, x, y, "coat_hi")
-        # The muzzle sits at the FRONT of the face here, not in the middle of it.
-        # That relocation is most of what distinguishes a profile from a squashed
-        # front view.
-        for y, (x0, x1) in disc_spans(**G["peek_muzzle"]).items():
-            for x in range(x0, x1 + 1):
-                if img.getpixel((x, y))[3] > 0:
-                    px(img, x, y, "muzzle")
-    outline(img)
-    facing["head"] = img
-
-    # --- ears -------------------------------------------------------------
-    img = new_layer()
-    tri_fill(img, G["peek_ear_far"], "coat_sh")
-    outline(img)
-    facing["ear_far"] = img
-
-    img = new_layer()
-    ear = G["peek_ear"]
-    tri_fill(img, ear, "coat")
-    cx = sum(p[0] for p in ear) / len(ear)
-    cy = sum(p[1] for p in ear) / len(ear)
-    inner = [(round(cx + (x - cx) * 0.42), round(cy + (y - cy) * 0.52 - 1.5))
-             for x, y in ear]
-    tri_fill(img, inner, "ear_inner")
-    outline(img)
-    facing["ear"] = img
-
-    # --- the one eye ------------------------------------------------------
-    # Split into sclera and pupil like the front-facing pair, so the same cursor
-    # tracking works on it without a second code path.
-    g = G["peek_eye"]
-    img = new_layer()
-    fill_spans(img, disc_spans(g["cx"], g["cy"], g["r"]), "eye_white")
-    if THEME_CFG.get("eye_outline"):
-        outline(img)
-    facing["eye"] = img
-
-    img = new_layer()
-    fill_spans(img, disc_spans(g["cx"] - 1.6, g["cy"], G["pupil_r_px"]), "pupil")
-    px(img, int(g["cx"] - 2.6), int(g["cy"] - 1), "eye_white")
-    facing["pupil"] = img
-
-    # --- nose, mouth, whiskers -------------------------------------------
-    img = new_layer()
-    for x, y in G["peek_nose"]:
-        px(img, x, y, "nose")
-    for x, y in G["peek_mouth"]:
-        px(img, x, y, "outline")
-    for x, y in G["peek_whisker"]:
-        px(img, x, y, "outline_lit")
-    facing["face"] = img
-
-    # --- the two paws over the edge ---------------------------------------
-    for name, base in (("paw_a", "paw_l"), ("paw_b", "paw_r")):
-        img = new_layer()
-        spans = superellipse_spans(**G[f"peek_{name}"])
-        white = base in WHITE_PARTS
-        fill_spans(img, spans, "muzzle" if white else "coat_hi")
-        shade_spans(img, spans, "coat_sh" if white else "coat", depth=1)
-        outline(img)
-        facing[name] = img
+    for name in G["peek_parts"]:
+        if name.startswith("paw_"):
+            spec = G[f"peek_{name}"]
+            src = parts.get(spec["src"])
+            if src is None:
+                continue
+            # Moved before the rotation, because "up to the chin" is a statement
+            # about the standing cat and only becomes "in front of the neck" once
+            # it has been turned.
+            img = new_layer()
+            img.alpha_composite(src, (spec["dx"], spec["dy"]))
+        else:
+            if name not in parts:
+                continue
+            img = parts[name]
+        # ROTATE_90 is counter-clockwise, which points the top of the head into the
+        # screen and leaves the neck facing the edge the cat is hiding behind.
+        facing[name] = img.transpose(Image.ROTATE_90)
 
     out = {}
     for name, img in facing.items():
@@ -1302,12 +1247,15 @@ BEHAVIOUR = {
         # read as hiding. There was no value in between, because a front-facing face
         # cut by a vertical line looks like a bisected cat at every width.
         #
-        # With a side-on drawing the cut is no longer doing the hiding -- the art
-        # is -- so this only has to decide where the head stops. 23 puts the whole
-        # face, the near ear and both paws on screen and leaves the back of the
-        # skull and the far ear behind the edge, which is what makes the head read
-        # as coming OUT from behind it rather than floating beside it.
-        "reveal_px": 23,
+        # With the cat turned on its side the cut only has to decide where the head
+        # stops. 29 shows the whole face, both ears and both paws, and tucks the
+        # back of the skull under the edge -- which is what makes it read as a cat
+        # lying behind the edge rather than one floating beside it.
+        #
+        # It is also why the paws are placed short of the neck (see `peek_paw_a`):
+        # paws further out than the skull cannot both be shown and be tucked, and
+        # every cut tried before this one ran into that.
+        "reveal_px": 29,
         # How far into the slide the standing cat swaps for the peek pose. Late
         # enough that it happens while it is mostly off screen already, so it reads
         # as the cat getting behind the edge rather than as one cat being swapped

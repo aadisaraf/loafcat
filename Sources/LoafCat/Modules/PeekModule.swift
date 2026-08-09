@@ -104,7 +104,7 @@ final class PeekModule: CatModule, AtlasTuned {
     private var edgeZonePx: CGFloat = 12
     private var armMs: Double = 320
     private var disarmMs: Double = 80
-    private var revealPx: CGFloat = 23
+    private var revealPx: CGFloat = 29
     private var slideRate: CGFloat = 11
     private var settlePt: CGFloat = 0.35
     private var hideAt: CGFloat = 0.55
@@ -589,28 +589,38 @@ extension PeekModule {
         check("parked left shows \(Int(revealPx))px of cat", abs(shownL - want) < 0.01,
               String(format: "%.2fpt vs %.2fpt", Double(shownL), Double(want)))
 
-        // 6. THE POSE IS A DIFFERENT DRAWING, not the standing cat rearranged.
+        // 6. THE CAT IS TURNED A QUARTER TURN, and only its head and two paws show.
         //
-        // This is the check the feature was missing for three attempts. Every earlier
-        // version tried to make the front-facing cat peek — slide it behind the edge,
-        // crane the head, hide the body, rotate it 90° — and each one was tuned,
-        // shipped and reported back as "that is not a cat peeking". A face drawn
-        // front-on and cut by a vertical line is a bisected cat at every width, and
-        // no number fixes that. So the shape itself is what gets asserted here.
+        // This is the check the feature was missing for four attempts. Every earlier
+        // version left the cat upright and tried to make an upright cat peek — slide
+        // it behind the edge, hide the body, crane the head, redraw it side-on — and
+        // each was tuned, shipped and reported back as wrong. An upright face cut by
+        // a vertical line is a bisected cat at every width, and a side-on redraw is a
+        // different animal rather than this one lying down. So the pose is the
+        // standing cat's own parts turned 90°, and the turn itself is what gets
+        // asserted: a rotated part's box is its standing box with the sides swapped.
         let poseR = atlas.poses[Self.poseName(.right)] ?? []
         let poseL = atlas.poses[Self.poseName(.left)] ?? []
-        check("the pose is side-on: exactly one eye", poseR.filter {
-            $0.hasSuffix("_eye")
-        }.count == 1, "two eyes is a front-facing face, which cannot peek round a corner")
-        check("the pose brings its own head, ears and paws",
-              poseR.contains("peek_r_head") && poseR.contains("peek_r_ear")
-              && poseR.contains("peek_r_paw_a") && poseR.contains("peek_r_paw_b"))
-        check("the pose leaves out the body, the tail and the shadow",
-              poseR.allSatisfy { !["body", "tail", "shadow"].contains($0) })
+        func box(_ name: String) -> (lo: CGFloat, hi: CGFloat)? {
+            guard let p = atlas.parts[name] else { return nil }
+            return (p.origin.x, p.origin.x + p.size.width)
+        }
+        if let up = atlas.parts["head"], let lying = atlas.parts["peek_r_head"] {
+            check("the pose is the cat turned a quarter turn",
+                  abs(lying.size.width - up.size.height) < 0.001
+                  && abs(lying.size.height - up.size.width) < 0.001,
+                  String(format: "standing %.0fx%.0f, lying %.0fx%.0f",
+                         Double(up.size.width), Double(up.size.height),
+                         Double(lying.size.width), Double(lying.size.height)))
+        }
+        check("only the head and two paws are in it",
+              poseR.filter { $0.contains("paw") }.count == 2
+              && poseR.allSatisfy { !["body", "tail", "shadow"].contains($0) },
+              "a body would have to be behind the edge, and it is not drawn at all")
         check("neither edge's pose borrows a part of the standing cat",
               (poseR + poseL).allSatisfy { $0.hasPrefix("peek_") })
         check("the two facings are mirror images",
-              abs((iR.minX - 0) - (CGFloat(atlas.canvas) - iL.maxX)) < 0.001
+              abs(iR.minX - (CGFloat(atlas.canvas) - iL.maxX)) < 0.001
               && abs(iR.height - iL.height) < 0.001,
               String(format: "R %.0f..%.0f, L %.0f..%.0f on a %.0f canvas",
                      Double(iR.minX), Double(iR.maxX),
@@ -618,32 +628,29 @@ extension PeekModule {
         check("the two edges show the same amount of cat",
               abs(shownR - shownL) < 0.01)
 
-        // WHICH parts the cut lands between. With a side-on drawing the cut is no
-        // longer what does the hiding — the art is — so the claim is narrower and
-        // more honest than it used to be: the face comes out, the back of the skull
-        // does not, and that difference is what makes the head read as emerging from
-        // behind the edge rather than floating beside it.
+        // Where the edge falls across the pose. The paws are placed short of the neck
+        // on purpose: paws further out than the skull cannot both be shown and be
+        // tucked, and that dilemma is what every cut tried before this one hit.
         let seenTo = iR.minX + revealPx        // right-edge park: 0..seenTo is on screen
         let seenFrom = iL.maxX - revealPx      // left-edge park: seenFrom.. is on screen
-        func box(_ name: String) -> (lo: CGFloat, hi: CGFloat)? {
-            guard let p = atlas.parts[name] else { return nil }
-            return (p.origin.x, p.origin.x + p.size.width)
-        }
-        check("right park: the whole eye clears the edge",
-              (box("peek_r_eye")?.hi ?? .infinity) <= seenTo)
-        check("left park: the whole eye clears the edge",
-              (box("peek_l_eye")?.lo ?? -.infinity) >= seenFrom)
+        check("right park: both eyes clear the edge",
+              (box("peek_r_eye_l")?.hi ?? .infinity) <= seenTo
+              && (box("peek_r_eye_r")?.hi ?? .infinity) <= seenTo,
+              "the whole face is the point — this pose hides the BODY, not half the head")
+        check("left park: both eyes clear the edge",
+              (box("peek_l_eye_l")?.lo ?? -.infinity) >= seenFrom
+              && (box("peek_l_eye_r")?.lo ?? -.infinity) >= seenFrom)
         check("right park: both paws clear the edge",
               (box("peek_r_paw_a")?.hi ?? .infinity) <= seenTo
               && (box("peek_r_paw_b")?.hi ?? .infinity) <= seenTo,
-              "the paws over the edge are half the pose; cutting one is a cat with a stump")
+              "the paws out from under the blanket are half the idea; cutting one is a stump")
         check("left park: both paws clear the edge",
               (box("peek_l_paw_a")?.lo ?? -.infinity) >= seenFrom
               && (box("peek_l_paw_b")?.lo ?? -.infinity) >= seenFrom)
-        check("right park: the back of the skull stays behind the edge",
+        check("right park: the back of the skull tucks under the edge",
               (box("peek_r_head")?.hi ?? 0) > seenTo,
-              "with the whole head on screen it floats beside the edge instead of coming from behind it")
-        check("left park: the back of the skull stays behind the edge",
+              "with all of it on screen the cat floats beside the edge instead of lying behind it")
+        check("left park: the back of the skull tucks under the edge",
               (box("peek_l_head")?.lo ?? 0) < seenFrom)
 
         // What the view will actually DRAW, which is a separate question from where

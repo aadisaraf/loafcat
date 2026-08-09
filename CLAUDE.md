@@ -122,20 +122,27 @@ the documentation and most blog posts say.
   "get out of the way" state and not to *stay* in one — a paused film drops the
   assertion, and a cat that walked back in front of the picture on every pause would
   be worse than one that never moved.
-- **A pose that needs a different silhouette needs different ART, not different
-  offsets.** The parked "peeking" cat was attempted three times by moving the
-  front-facing parts — slide the whole cat behind the edge, hide the body and raise
-  the paws, then halve the reveal — and once by rotating the result 90°, which is
-  lossless on a pixel grid so it was worth trying. Every one failed identically: a
-  face drawn front-on and cut by a vertical line is a bisected cat at *every* width,
-  and rotating it reads as a cat that has fallen over, because two eyes stacked
-  vertically is what lying down looks like. There is no number in between. A cat
-  looking round a corner is one eye, one near ear and a muzzle leading — a **drawing**
-  the standing cat cannot be moved into. So `cat.json` carries a `poses` block, a pose
-  *replaces* the cat rather than rearranging it, and `tools/generate_art.py` draws
-  both facings (the second is the first mirrored — never flip at runtime, or the two
-  ports have one more thing to disagree about). The check that guards it is about
-  shape, not size: **the pose must contain exactly one eye.**
+- **A pose that needs a different silhouette needs different ART, and for the peek
+  that art is the standing cat TURNED, not redrawn.** The parked cat was wrong four
+  times. Three attempts left it upright and tried to make an upright cat peek — slide
+  the whole thing behind the edge, hide the body and raise the paws, then halve the
+  reveal — and an upright face cut by a vertical line is a bisected cat at *every*
+  width, so there is no number in between "sliver" and "floating head". The fourth
+  drew a side-on head from scratch, which reads as a *different animal* rather than
+  this one lying down. What works is the cat rotated **90° CCW**: its own head, ears,
+  eyes and two front paws, lying against the edge with the back of the skull tucked
+  under it — the screen edge as a blanket. Lossless on a pixel grid (`transpose`, not
+  `rotate`), so every theme's markings come along for free.
+  - The paws are moved **before** the rotation, and must land *short of the neck*.
+    Paws further out than the skull cannot both be shown and be tucked, and that
+    dilemma is what every cut tried before this one ran into.
+  - `cat.json` carries a `poses` block; a pose **replaces** the cat rather than
+    rearranging it. Nothing at runtime moves one part of a pose against another — the
+    art is the pose, and an offset on top can only pull it apart.
+  - The mirror for the other edge is made **by the generator**. Never flip at runtime,
+    or the two ports gain one more thing to disagree about.
+  - The check that guards it asserts the *turn*: a rotated part's box is its standing
+    box with the sides swapped (`standing 30x22, lying 22x30`).
 - **Never read a window position back off the window as the source of truth.** The
   window server quantises it. An exponential ease toward a target takes smaller and
   smaller steps, so once they fall under the quantum they round away faster than they
