@@ -713,7 +713,7 @@ internal static class PeekDemo
         // became the drag pendulum's floor and moved a measured drop by 1.75px.
         Check("no pose part counts as standing cat",
               atlas.Standing.All(kv => !kv.Key.StartsWith("peek_", StringComparison.Ordinal)),
-              $"{atlas.Standing.Count} standing of {atlas.Parts.Count} parts");
+              $"{atlas.Standing.Count()} standing of {atlas.Parts.Count} parts");
         // The paws draw LAST, which is the one place this pose departs from the
         // standing cat's order. Standing, the head rests ON the paws and hiding most of
         // each is correct. Lying down they are in FRONT of the chin — behind the head
