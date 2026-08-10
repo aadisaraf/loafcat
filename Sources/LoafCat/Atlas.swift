@@ -200,6 +200,36 @@ struct Atlas {
     /// cross-faded in place.
     let hotParts: Set<String>
 
+    /// Alternative part sets that REPLACE the cat rather than move it, keyed by
+    /// pose name and listed in draw order.
+    ///
+    /// The peek pose is the reason this exists. A cat looking round a screen edge
+    /// is a side-on drawing — one eye, one near ear, the muzzle leading — and no
+    /// arrangement of the front-facing parts is that drawing. Sliding the standing
+    /// cat behind the edge bisects its face, and rotating it 90° (which is lossless
+    /// on a pixel grid, so it was tried) reads as a cat that has fallen over.
+    ///
+    /// While a pose is active the view draws these parts and no others, which is
+    /// what lets a pose be a different drawing rather than a rearrangement.
+    let poses: [String: [String]]
+
+    /// Every part belonging to any pose. Hidden unless its own pose is the one
+    /// running, so the peek head does not sit on top of the standing cat.
+    let posedParts: Set<String>
+
+    /// The parts of the STANDING cat — everything that is not in a pose.
+    ///
+    /// Anything measuring "how big is the cat" wants this and not `parts`. A pose
+    /// part is drawn in a different orientation at a different place, so it lands
+    /// outside the standing silhouette by construction, and a sweep over `parts`
+    /// silently takes it into account. That is not hypothetical: the peek pose's
+    /// lower paw reaches one pixel further down than any standing part, which moved
+    /// the drag pendulum's `inkBottom` and changed the measured drop by 1.75px in a
+    /// feature that has nothing to do with peeking.
+    var standing: [String: Part] {
+        parts.filter { !posedParts.contains($0.key) }
+    }
+
     /// Eye geometry, needed for pupil tracking. `maxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     struct Eye {
@@ -314,6 +344,23 @@ struct Atlas {
         // build a cross-fade layer for an image that is not there.
         let hot = Set((root["hot"] as? [String] ?? []).filter { parts["\($0)_hot"] != nil })
 
+        // Same guard as the hot variants: only advertise a pose part whose art
+        // actually loaded. A theme that drops the whiskers drops `peek_r_face` with
+        // them, and a pose naming a part the atlas does not carry would be a hole
+        // in the cat rather than an error anyone would see.
+        var poses: [String: [String]] = [:]
+        for (name, list) in (root["poses"] as? [String: [String]] ?? [:]) {
+            poses[name] = list.filter { parts[$0] != nil }
+        }
+        // A pose part's overheat twin belongs to the same pose. The atlas grows one
+        // automatically for anything the coat remap touched, and `poses` lists only
+        // base names — so without this the `_hot` variants count as standing cat.
+        // They did, and the peek pose's lower paw reaches a pixel further down than
+        // anything the standing cat has, which moved the drag pendulum's floor and
+        // changed a measured drop in a feature with nothing to do with peeking.
+        var posed = Set(poses.values.flatMap { $0 })
+        for name in posed where parts["\(name)_hot"] != nil { posed.insert("\(name)_hot") }
+
         return Atlas(
             canvas: canvas, order: order, parts: parts, pivots: pivots,
             layout: layout,
@@ -322,6 +369,7 @@ struct Atlas {
             overlays: overlays, overlayAnimations: overlayAnims,
             animations: animations,
             hotParts: hot,
+            poses: poses, posedParts: posed,
             eye: eye,
             behaviour: Behaviour(root["behaviour"] as? [String: Any] ?? [:]))
     }

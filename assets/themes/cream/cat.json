@@ -38,7 +38,27 @@
     "pupil_r",
     "lid_l",
     "lid_r",
-    "face"
+    "face",
+    "peek_r_ear_l",
+    "peek_r_ear_r",
+    "peek_r_head",
+    "peek_r_eye_l",
+    "peek_r_eye_r",
+    "peek_r_pupil_l",
+    "peek_r_pupil_r",
+    "peek_r_face",
+    "peek_r_paw_a",
+    "peek_r_paw_b",
+    "peek_l_ear_l",
+    "peek_l_ear_r",
+    "peek_l_head",
+    "peek_l_eye_l",
+    "peek_l_eye_r",
+    "peek_l_pupil_l",
+    "peek_l_pupil_r",
+    "peek_l_face",
+    "peek_l_paw_a",
+    "peek_l_paw_b"
   ],
   "parts": {
     "shadow": {
@@ -194,6 +214,216 @@
       "y": 25,
       "w": 24,
       "h": 6
+    },
+    "peek_r_ear_l": {
+      "file": "parts/peek_r_ear_l.png",
+      "x": 0,
+      "y": 23,
+      "w": 19,
+      "h": 15
+    },
+    "peek_r_ear_l_hot": {
+      "file": "parts/peek_r_ear_l_hot.png",
+      "x": 0,
+      "y": 23,
+      "w": 19,
+      "h": 15
+    },
+    "peek_r_ear_r": {
+      "file": "parts/peek_r_ear_r.png",
+      "x": 0,
+      "y": 9,
+      "w": 19,
+      "h": 15
+    },
+    "peek_r_ear_r_hot": {
+      "file": "parts/peek_r_ear_r_hot.png",
+      "x": 0,
+      "y": 9,
+      "w": 19,
+      "h": 15
+    },
+    "peek_r_head": {
+      "file": "parts/peek_r_head.png",
+      "x": 8,
+      "y": 9,
+      "w": 22,
+      "h": 30
+    },
+    "peek_r_head_hot": {
+      "file": "parts/peek_r_head_hot.png",
+      "x": 8,
+      "y": 9,
+      "w": 22,
+      "h": 30
+    },
+    "peek_r_eye_l": {
+      "file": "parts/peek_r_eye_l.png",
+      "x": 17,
+      "y": 25,
+      "w": 10,
+      "h": 10
+    },
+    "peek_r_eye_r": {
+      "file": "parts/peek_r_eye_r.png",
+      "x": 17,
+      "y": 13,
+      "w": 10,
+      "h": 10
+    },
+    "peek_r_pupil_l": {
+      "file": "parts/peek_r_pupil_l.png",
+      "x": 20,
+      "y": 28,
+      "w": 4,
+      "h": 4
+    },
+    "peek_r_pupil_r": {
+      "file": "parts/peek_r_pupil_r.png",
+      "x": 20,
+      "y": 16,
+      "w": 4,
+      "h": 4
+    },
+    "peek_r_face": {
+      "file": "parts/peek_r_face.png",
+      "x": 25,
+      "y": 12,
+      "w": 6,
+      "h": 24
+    },
+    "peek_r_paw_a": {
+      "file": "parts/peek_r_paw_a.png",
+      "x": 26,
+      "y": 25,
+      "w": 8,
+      "h": 10
+    },
+    "peek_r_paw_a_hot": {
+      "file": "parts/peek_r_paw_a_hot.png",
+      "x": 26,
+      "y": 25,
+      "w": 8,
+      "h": 10
+    },
+    "peek_r_paw_b": {
+      "file": "parts/peek_r_paw_b.png",
+      "x": 26,
+      "y": 13,
+      "w": 8,
+      "h": 10
+    },
+    "peek_r_paw_b_hot": {
+      "file": "parts/peek_r_paw_b_hot.png",
+      "x": 26,
+      "y": 13,
+      "w": 8,
+      "h": 10
+    },
+    "peek_l_ear_l": {
+      "file": "parts/peek_l_ear_l.png",
+      "x": 29,
+      "y": 23,
+      "w": 19,
+      "h": 15
+    },
+    "peek_l_ear_l_hot": {
+      "file": "parts/peek_l_ear_l_hot.png",
+      "x": 29,
+      "y": 23,
+      "w": 19,
+      "h": 15
+    },
+    "peek_l_ear_r": {
+      "file": "parts/peek_l_ear_r.png",
+      "x": 29,
+      "y": 9,
+      "w": 19,
+      "h": 15
+    },
+    "peek_l_ear_r_hot": {
+      "file": "parts/peek_l_ear_r_hot.png",
+      "x": 29,
+      "y": 9,
+      "w": 19,
+      "h": 15
+    },
+    "peek_l_head": {
+      "file": "parts/peek_l_head.png",
+      "x": 18,
+      "y": 9,
+      "w": 22,
+      "h": 30
+    },
+    "peek_l_head_hot": {
+      "file": "parts/peek_l_head_hot.png",
+      "x": 18,
+      "y": 9,
+      "w": 22,
+      "h": 30
+    },
+    "peek_l_eye_l": {
+      "file": "parts/peek_l_eye_l.png",
+      "x": 21,
+      "y": 25,
+      "w": 10,
+      "h": 10
+    },
+    "peek_l_eye_r": {
+      "file": "parts/peek_l_eye_r.png",
+      "x": 21,
+      "y": 13,
+      "w": 10,
+      "h": 10
+    },
+    "peek_l_pupil_l": {
+      "file": "parts/peek_l_pupil_l.png",
+      "x": 24,
+      "y": 28,
+      "w": 4,
+      "h": 4
+    },
+    "peek_l_pupil_r": {
+      "file": "parts/peek_l_pupil_r.png",
+      "x": 24,
+      "y": 16,
+      "w": 4,
+      "h": 4
+    },
+    "peek_l_face": {
+      "file": "parts/peek_l_face.png",
+      "x": 17,
+      "y": 12,
+      "w": 6,
+      "h": 24
+    },
+    "peek_l_paw_a": {
+      "file": "parts/peek_l_paw_a.png",
+      "x": 14,
+      "y": 25,
+      "w": 8,
+      "h": 10
+    },
+    "peek_l_paw_a_hot": {
+      "file": "parts/peek_l_paw_a_hot.png",
+      "x": 14,
+      "y": 25,
+      "w": 8,
+      "h": 10
+    },
+    "peek_l_paw_b": {
+      "file": "parts/peek_l_paw_b.png",
+      "x": 14,
+      "y": 13,
+      "w": 8,
+      "h": 10
+    },
+    "peek_l_paw_b_hot": {
+      "file": "parts/peek_l_paw_b_hot.png",
+      "x": 14,
+      "y": 13,
+      "w": 8,
+      "h": 10
     }
   },
   "hot": [
@@ -203,7 +433,17 @@
     "paw_r",
     "ear_l",
     "ear_r",
-    "head"
+    "head",
+    "peek_r_ear_l",
+    "peek_r_ear_r",
+    "peek_r_head",
+    "peek_r_paw_a",
+    "peek_r_paw_b",
+    "peek_l_ear_l",
+    "peek_l_ear_r",
+    "peek_l_head",
+    "peek_l_paw_a",
+    "peek_l_paw_b"
   ],
   "overlays": {
     "parts": {
@@ -679,6 +919,32 @@
       22
     ]
   },
+  "poses": {
+    "peek_r": [
+      "peek_r_ear_l",
+      "peek_r_ear_r",
+      "peek_r_head",
+      "peek_r_eye_l",
+      "peek_r_eye_r",
+      "peek_r_pupil_l",
+      "peek_r_pupil_r",
+      "peek_r_face",
+      "peek_r_paw_a",
+      "peek_r_paw_b"
+    ],
+    "peek_l": [
+      "peek_l_ear_l",
+      "peek_l_ear_r",
+      "peek_l_head",
+      "peek_l_eye_l",
+      "peek_l_eye_r",
+      "peek_l_pupil_l",
+      "peek_l_pupil_r",
+      "peek_l_face",
+      "peek_l_paw_a",
+      "peek_l_paw_b"
+    ]
+  },
   "eye": {
     "sclera_r": 4.6,
     "pupil_r": 2.4,
@@ -762,6 +1028,19 @@
       "steam_at": 0.3,
       "steam_period": 0.85,
       "steam_rise": 11.0
+    },
+    "peek": {
+      "arm_ms": 320,
+      "bob_hz": 0.42,
+      "bob_px": 1.5,
+      "disarm_ms": 80,
+      "edge_zone_px": 12,
+      "hide_at": 0.55,
+      "indicator_fade_ms": 120,
+      "indicator_w_px": 3.0,
+      "reveal_px": 32,
+      "settle_pt": 0.35,
+      "slide_rate": 11.0
     },
     "pet": {
       "attack": 0.14,

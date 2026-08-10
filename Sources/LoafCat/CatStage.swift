@@ -50,6 +50,12 @@ final class CatStage {
     /// to know which module owns dragging.
     private(set) var state: CatState = .idle
 
+    /// True while a full-screen window is covering the cat's display and something is
+    /// holding the screen awake — a film, a call, a presentation. Published by
+    /// `PeekModule`; read by the wellness reminders, which must not blow the cat up
+    /// to the size of the screen over any of those.
+    var fullscreenBusy = false
+
     func publish(atlas: Atlas) {
         self.atlas = atlas
         atlasGeneration &+= 1
@@ -68,6 +74,22 @@ final class CatStage {
     var pawOffsetL = CGPoint.zero
     var pawOffsetR = CGPoint.zero
     var tailOffset = CGPoint.zero
+
+    /// The pose the winning module wants drawn instead of the standing cat, named
+    /// from `atlas.poses`, or nil for the cat itself.
+    ///
+    /// A pose is a *different drawing*, not a rearrangement: while one is set, the
+    /// view draws that pose's parts and nothing else. The peek pose is what forced
+    /// this. A cat looking round a screen edge is side-on — one eye, one near ear,
+    /// the muzzle leading — and the standing cat cannot be moved into that shape.
+    /// Sliding it behind the edge bisects the face; rotating it 90° reads as a cat
+    /// that has fallen over. Both were tried and both are recorded in
+    /// `spikes/RESULTS.md` so the next pose does not try them again.
+    ///
+    /// The view also keeps a hit mask per pose: the silhouette really is a different
+    /// shape, and testing clicks against the standing cat's mask would leave a
+    /// body-sized patch of dead screen under the chin with nothing to click on.
+    var pose: String?
 
     /// 0 = normal coat, 1 = fully overheated. The view cross-fades the `_hot`
     /// palette-remapped variant of each coat part by this much.
@@ -103,6 +125,7 @@ final class CatStage {
         tailOffset = .zero
         heat = 0
         overlays.removeAll(keepingCapacity: true)
+        pose = nil
     }
 
     func endFrame(state: CatState, bodyOffset: CGPoint) {

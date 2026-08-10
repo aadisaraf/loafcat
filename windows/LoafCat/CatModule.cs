@@ -54,6 +54,7 @@ public enum CatState
     Errored,        // agent failed
     Sleeping,
     Stretching,
+    Peeking,        // parked against a screen edge
 }
 
 public static class CatStateExtensions
@@ -71,6 +72,15 @@ public static class CatStateExtensions
         CatState.Purring or CatState.Hunting => 5,
         CatState.Celebrating or CatState.Errored => 6,
         CatState.Stretching => 7,
+        // Above stretching, and that placement is the point: a stretch break
+        // magnifies the cat to the size of the screen, which over a full-screen video
+        // is the worst thing this app could do. Below dragging, because a hand on the
+        // cat outranks everything.
+        //
+        // Note it is NOT `Exclusive`. Being parked is the headline state, but the
+        // numbers still blend — so a parked cat visibly kneads while you type, which
+        // is what keeps it an animal rather than a sticker.
+        CatState.Peeking => 8,
         CatState.Dragging => 10,
         _ => 0,
     };

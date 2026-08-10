@@ -298,6 +298,8 @@ internal sealed class CatPane(ISettingsHost host) : SettingsPane(host)
     private CheckBox _login = null!;
     private Label _loginNote = null!;
     private CheckBox _taskbar = null!;
+    private CheckBox _autoPeek = null!;
+    private CheckBox _snapDrag = null!;
     private CheckBox _onOff = null!;
     private bool _updating;
 
@@ -381,6 +383,32 @@ internal sealed class CatPane(ISettingsHost host) : SettingsPane(host)
                     + "Subtle barely droops; springy snaps back hardest."));
 
         Add(Divider());
+        Add(Heading("Getting out of the way"));
+        _autoPeek = Checkbox("Move aside for full-screen video", () =>
+        {
+            if (_updating) return;
+            Prefs.Set("peekFullscreen", _autoPeek.Checked);
+        });
+        Add(_autoPeek);
+        Add(Caption(
+            "When a full-screen window covers this display and something is holding "
+            + "the screen awake — a film, a call, a presentation — the cat parks "
+            + "against the nearer edge and peers in, keeping the height it was at. It "
+            + "walks back when the video ends, and dragging it out overrules it."));
+
+        _snapDrag = Checkbox("Snap to the screen edge when dragged there", () =>
+        {
+            if (_updating) return;
+            Prefs.Set("peekSnapDrag", _snapDrag.Checked);
+        });
+        Add(_snapDrag);
+        Add(Caption(
+            "Hold the cat against the left or right edge for a moment while dragging "
+            + "and a white line appears where it will land; let go and it parks there. "
+            + "Passing the edge without stopping never snaps, and no line means no "
+            + "snap."));
+
+        Add(Divider());
         Add(Heading("Starting up"));
         _login = Checkbox("Open loafcat at login", ToggleLogin);
         Add(_login);
@@ -422,6 +450,8 @@ internal sealed class CatPane(ISettingsHost host) : SettingsPane(host)
                 DragFeelExtensions.All, DragFeelExtensions.Current);
             _taskbar.Checked = TaskbarPresence.ShowInTaskbar;
             _onOff.Checked = Host.IsCatVisible;
+            _autoPeek.Checked = PeekModule.AutoPeekEnabled;
+            _snapDrag.Checked = PeekModule.SnapOnDragEnabled;
             RefreshLogin();
         }
         finally

@@ -146,7 +146,7 @@ public sealed class Rig
         // the pendulum below the paws.
         double top = double.MaxValue;
         double bottom = 0;
-        foreach (var (name, part) in atlas.Parts)
+        foreach (var (name, part) in atlas.Standing)
         {
             if (name == "shadow") continue;
             top = Math.Min(top, part.Origin.Y);

@@ -288,6 +288,22 @@ jobs:
           Select-String -Path $log -Pattern "# demo:" | ForEach-Object { $_.Line }
           if ($p.ExitCode -ne 0) { throw "the drag demo did not settle (exit $($p.ExitCode))" }
 
+      # The edge-snap gesture. Nobody on a runner can drag a cat to a screen edge and
+      # hold it there, so the decision is a pure state machine and this drives it with
+      # a scripted clock — the same script the macOS build runs. Both ports print the
+      # same summary line and are expected to agree exactly: there is no spring here to
+      # disagree about, only thresholds.
+      - name: Edge snap
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/*/loafcat.exe | Select-Object -First 1   # the staged folder, not the bare copy beside it
+          $log = Join-Path $env:RUNNER_TEMP "peek.log"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--demo-peek" `
+                 -PassThru -RedirectStandardOutput $log -NoNewWindow
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the peek demo hung" }
+          Get-Content $log
+          if ($p.ExitCode -ne 0) { throw "the peek demo failed (exit $($p.ExitCode))" }
+
       # Starting for real, with a window. Allowed to be the flakier check — a CI
       # runner's desktop session is not a user's — so it reports rather than fails,
       # and the two checks above are what actually gate the build.

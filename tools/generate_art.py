@@ -155,6 +155,10 @@ def apply_theme(name):
     WHITE_PARTS = t.get("white_parts", set())
     FLAT = t.get("flat", False)
     HIDDEN = t.get("hide", set())
+    # A theme that drops the front-facing face drops the side-on one too. Derived
+    # rather than listed, so a theme cannot end up with a mono cat that grows
+    # whiskers the moment it parks against an edge.
+    HIDDEN = HIDDEN | {f"peek_{e}_{n}" for e in ("r", "l") for n in HIDDEN}
 
 
 def new_layer():
@@ -267,7 +271,58 @@ G = {
     "ear_r":  [(37, 18), (34, 1), (25, 15)],
     "paw_l":  dict(cx=18, cy=43, w=8, h=6, n=2.2),
     "paw_r":  dict(cx=30, cy=43, w=8, h=6, n=2.2),
+
+    # --- the peek pose ----------------------------------------------------
+    # The cat turned ninety degrees, lying against the screen edge with its head
+    # and two front paws out from under it -- the edge being the blanket.
+    #
+    # It is the STANDING cat's own parts, rotated. Nothing new is drawn, which is
+    # what makes it a pose of this cat rather than a second cat: the same face,
+    # the same ears, the same coat markings, lying down. 90 degrees is the only
+    # angle a pixel grid allows losslessly, and it is the angle wanted anyway.
+    #
+    # Rotation is CCW, so the top of the head points INTO the screen and the neck
+    # -- where the body would continue -- faces the edge it is hiding behind. The
+    # left-edge set is this one mirrored by the generator, so the art is authored
+    # once and neither port ever flips anything at runtime.
+    #
+    # The paws are moved BEFORE the rotation, and they move along ONE axis only:
+    # `dy` slides them up the standing cat, which after the turn is straight out
+    # toward the edge. `dx` is zero on purpose. The standing cat's paws sit one
+    # under each eye, so the turn already puts them exactly where a lying cat's
+    # front paws belong -- level with the face, one either side of the chin -- and
+    # any `dx` is a paw sliding off its own eye.
+    #
+    # Left where the turn puts them they are 10px past the skull, entirely behind
+    # the edge; slid all the way in they cover the eyes. The value is the largest
+    # slide that still leaves both eyes whole, which is what makes the cut land
+    # across the PAWS and nothing else -- see `reveal_px`.
+    #
+    # This replaces an earlier pair of offsets that lifted the paws up the standing
+    # cat AND across it, so that after the turn they hung below the chin in mid
+    # air. That is the standing cat's own arrangement -- head resting on paws --
+    # surviving a rotation that was supposed to undo it, and it reads as a cat with
+    # its feet dangling rather than one lying down.
+    #
+    # Offsets keep every pixel on the canvas: `px()` silently drops anything
+    # outside 0..CANVAS, and a paw shifted one column too far loses its outline on
+    # that side, which reads as a chipped paw rather than as a clipped sprite.
+    "peek_parts": ["ear_l", "ear_r", "head", "eye_l", "eye_r",
+                   "pupil_l", "pupil_r", "face", "paw_a", "paw_b"],
+    "peek_paw_a": dict(src="paw_l", dx=0, dy=-13),
+    "peek_paw_b": dict(src="paw_r", dx=0, dy=-13),
 }
+
+# The peek pose in draw order, without the edge prefix. `peek_r_*` lies against the
+# RIGHT edge; `peek_l_*` is its mirror.
+#
+# The paws draw LAST, which is the one place this pose departs from the standing
+# cat's order. Standing, the head rests on the paws and hiding most of each one is
+# correct. Lying down they are in FRONT of the chin, and behind the head they came
+# out as two nubs with the rest eaten by the jaw -- the paws are half the idea, so
+# they go on top.
+PEEK_POSE = ["ear_l", "ear_r", "head", "eye_l", "eye_r",
+             "pupil_l", "pupil_r", "face", "paw_a", "paw_b"]
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +354,7 @@ OVERLAY_G = {
     # Exclamation mark for "needs your permission". Deliberately the only red
     # glyph in the set -- it is the one the user has to act on.
     "alert": (43, 2),
+
 }
 
 
@@ -406,6 +462,7 @@ def build_overlays():
                 px(img, 21 + dx, 14 + dy, "heart")
     outline(img)
     add("heart", img, slots=3)
+
 
     return ov
 
@@ -648,7 +705,46 @@ def build_parts():
             px(img, x, y, "shadow")
     parts["shadow"] = img
 
+    parts.update(build_peek_parts(parts))
     return parts
+
+
+def build_peek_parts(parts):
+    """The cat lying on its side against a screen edge, head and two paws out.
+
+    The standing cat's own parts, rotated a quarter turn -- so it is this cat lying
+    down rather than a second cat drawn from scratch, and every theme's markings
+    come along for free. 90 degrees is lossless on a pixel grid: `transpose` maps
+    each pixel to exactly one other pixel, with no resampling anywhere.
+
+    Authored lying against the RIGHT edge and mirrored for the left, so neither
+    port has to flip anything at runtime.
+    """
+    facing = {}
+    for name in G["peek_parts"]:
+        if name.startswith("paw_"):
+            spec = G[f"peek_{name}"]
+            src = parts.get(spec["src"])
+            if src is None:
+                continue
+            # Moved before the rotation, because "up to the chin" is a statement
+            # about the standing cat and only becomes "in front of the neck" once
+            # it has been turned.
+            img = new_layer()
+            img.alpha_composite(src, (spec["dx"], spec["dy"]))
+        else:
+            if name not in parts:
+                continue
+            img = parts[name]
+        # ROTATE_90 is counter-clockwise, which points the top of the head into the
+        # screen and leaves the neck facing the edge the cat is hiding behind.
+        facing[name] = img.transpose(Image.ROTATE_90)
+
+    out = {}
+    for name, img in facing.items():
+        out[f"peek_r_{name}"] = img
+        out[f"peek_l_{name}"] = img.transpose(Image.FLIP_LEFT_RIGHT)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -931,6 +1027,10 @@ ORDER = [
     "ear_l", "ear_r", "head",
     "eye_l", "eye_r", "pupil_l", "pupil_r", "lid_l", "lid_r",
     "face",
+    # The peek pose. In the atlas order like any other part -- the runtime draws
+    # only the set whose pose is active, and none of them the rest of the time.
+    *[f"peek_r_{n}" for n in PEEK_POSE],
+    *[f"peek_l_{n}" for n in PEEK_POSE],
 ]
 
 # ---------------------------------------------------------------------------
@@ -1138,6 +1238,67 @@ BEHAVIOUR = {
         "attack": 0.06,
         "decay": 0.18,
     },
+
+    # --- parking against a screen edge --------------------------------------
+    # Lengths are logical pixels of this 48px canvas and are multiplied by the
+    # render scale where they are used, so the snap band and the parked reveal
+    # both grow with the cat. That is deliberate: a cat drawn at 3x is a bigger
+    # target and earns a wider band, and a fixed number of screen points would
+    # make the gesture feel twitchy at 3x and sluggish at 1x.
+    "peek": {
+        # How close to the screen edge the CURSOR has to be before the dwell
+        # starts counting. 12 logical px is 24pt at the default 2x, which is
+        # about what Windows and macOS use for their own snap zones.
+        "edge_zone_px": 12,
+        # How long it has to stay there before the snap arms and the line
+        # appears. This is the entire "come in a certain way and it won't snap"
+        # gesture: brushing the edge on the way past never reaches it.
+        "arm_ms": 320,
+        # Grace before disarming again. Without it, one pixel of hand wobble at
+        # the boundary strobes the line on and off.
+        "disarm_ms": 80,
+        # How much of the parked cat stays on screen, measured across the pose's
+        # own ink rather than the standing cat's.
+        #
+        # This number was tuned twice against a pose that no longer exists, and both
+        # times the number was blamed for what was really the drawing. While the
+        # pose was the FRONT-FACING cat slid behind the edge, no value worked: too
+        # little and it was a sliver, too much and both eyes came back and nothing
+        # read as hiding. There was no value in between, because a front-facing face
+        # cut by a vertical line looks like a bisected cat at every width.
+        #
+        # With the cat turned on its side the cut has one job: fall across the
+        # PAWS. They are the only part of the pose that can be cut and still gain
+        # by it -- a paw with its wrist under the edge is a paw coming out from
+        # under a blanket, where a head with its jaw under the edge is just a
+        # bisected head, which is what the front-facing cuts above all were.
+        #
+        # 32 leaves six of each paw's eight columns on screen and buries the other
+        # two. The head is a wide oval and reaches within two pixels of the same
+        # line, so the silhouette still meets the edge; the paws are what touches
+        # it. Less than this and each paw is a three-pixel bump on the cheek, more
+        # and the whole pose is on screen with nothing behind the edge at all.
+        "reveal_px": 32,
+        # How far into the slide the standing cat swaps for the peek pose. Late
+        # enough that it happens while it is mostly off screen already, so it reads
+        # as the cat getting behind the edge rather than as one cat being swapped
+        # for another.
+        "hide_at": 0.55,
+        # Exponential approach to the parked position, and back out of it.
+        "slide_rate": 11.0,
+        # Close enough, in screen points, to stop easing and sit exactly.
+        "settle_pt": 0.35,
+        # A slow breath, applied to the whole pose. There is deliberately nothing
+        # here that moves one part of the pose against another: the turn and the
+        # paws out at the edge are drawn that way now, and a runtime offset on top
+        # would only ever pull the drawing apart.
+        "bob_px": 1.5,
+        "bob_hz": 0.42,
+        # The armed indicator. System chrome rather than cat art -- the same
+        # shape the OS uses to say "this is where it lands".
+        "indicator_w_px": 3.0,
+        "indicator_fade_ms": 120,
+    },
 }
 
 
@@ -1226,6 +1387,20 @@ def crop_and_write(parts, overlays, hot_parts=None):
         "tail":   [33, 43],   # root, where the shear chain starts
         "paw_l":  [18, 46], "paw_r": [30, 46],
         "pupil_l":[18, 22], "pupil_r": [30, 22],
+    }
+    # Poses: an alternative set of parts that REPLACES the cat, rather than moving
+    # it. While a pose is active the runtime draws these and nothing else, so a
+    # pose can be a genuinely different drawing -- which is what the side-on peek
+    # needs and what no arrangement of the front-facing parts could give.
+    #
+    # Emitted from the parts that actually survived this theme's `hide` set, so a
+    # theme without whiskers does not promise a `peek_r_face` that was never
+    # written. A part named in a pose but missing from the atlas would be a silent
+    # hole in the cat.
+    atlas["poses"] = {
+        f"peek_{edge}": [n for n in (f"peek_{edge}_{p}" for p in PEEK_POSE)
+                         if n in atlas["parts"]]
+        for edge in ("r", "l")
     }
     # How far a pupil may travel from centre before it would leave the sclera.
     atlas["eye"] = {
@@ -1341,6 +1516,10 @@ def composite(parts, names=None, scale=1):
     for name in (names or ORDER):
         if name.startswith("lid_"):
             continue  # lids are the blink frame, not the default pose
+        if names is None and name.startswith("peek_"):
+            continue  # a pose REPLACES the cat, so it is never part of one
+        if name not in parts:
+            continue
         out = Image.alpha_composite(out, parts[name])
     if scale > 1:
         out = out.resize((CANVAS * scale, CANVAS * scale), Image.NEAREST)
@@ -1384,6 +1563,29 @@ def main():
                 solid.putpixel((x, y), PALETTE["outline"])
     solid.resize((CANVAS * 8, CANVAS * 8), Image.NEAREST).save(
         os.path.join(OUT, "preview_silhouette.png"))
+
+    # The peek pose, both facings, each against the edge it parks on. This is the
+    # readability test that matters for it: the pose is only ever seen with a hard
+    # edge through it, so judging it as a free-floating sprite is judging something
+    # the user never sees.
+    peek = Image.new("RGBA", (CANVAS * 8 * 2 + 48, CANVAS * 8 + 32), (28, 28, 32, 255))
+    for i, edge in enumerate(("r", "l")):
+        names = [n for n in ORDER if n.startswith(f"peek_{edge}_") and n in parts]
+        pose = composite(parts, names=names, scale=8)
+        cell = Image.new("RGBA", (CANVAS * 8, CANVAS * 8), (0, 0, 0, 0))
+        cell.alpha_composite(pose)
+        # Black out what is behind the screen edge, at the reveal the module uses.
+        ink = composite(parts, names=names).getbbox()
+        rev = BEHAVIOUR["peek"]["reveal_px"] * 8
+        off = Image.new("RGBA", (CANVAS * 8, CANVAS * 8), (10, 11, 13, 255))
+        if edge == "r":
+            c = int(ink[0] * 8 + rev)
+            cell.paste(off.crop((0, 0, CANVAS * 8 - c, CANVAS * 8)), (c, 0))
+        else:
+            c = int(ink[2] * 8 - rev)
+            cell.paste(off.crop((0, 0, c, CANVAS * 8)), (0, 0))
+        peek.paste(cell, (16 + i * (CANVAS * 8 + 32), 16), cell)
+    peek.save(os.path.join(OUT, "preview_peek.png"))
 
     # Bubble sheet: the readability test for the UI half of the art. If the text is
     # illegible here it is illegible on a desktop, and this costs nothing to look at.

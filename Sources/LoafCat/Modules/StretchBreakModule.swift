@@ -60,6 +60,12 @@ final class StretchBreakModule: CatModule {
 
         if phase == .waiting {
             guard let iv = interval, now >= nextFire else { return .none }
+            // Held, NOT skipped and NOT rescheduled: this break magnifies the cat to
+            // the size of the screen, and doing that over a film — or over a call, or
+            // a presentation you are giving — is the worst thing this app could do.
+            // Leaving `nextFire` where it is means the break happens as soon as the
+            // full-screen window goes away, which is when it was wanted anyway.
+            if CatStage.shared.fullscreenBusy { return .none }
             if ctx.secondsSinceKey > bus.awaySeconds {
                 // Skip rather than bank it. Coming back from lunch to six queued
                 // stretch breaks firing in a row is worse than missing all six.

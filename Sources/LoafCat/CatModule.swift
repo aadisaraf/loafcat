@@ -52,6 +52,7 @@ enum CatState: String {
     case errored        // agent failed
     case sleeping
     case stretching
+    case peeking        // parked against a screen edge
 
     /// Higher wins when two modules want the cat at the same time. Direct physical
     /// manipulation always beats an ambient reaction — being picked up should
@@ -66,6 +67,15 @@ enum CatState: String {
         case .purring, .hunting: return 5
         case .celebrating, .errored: return 6
         case .stretching: return 7
+        // Above stretching, and that placement is the point: a stretch break
+        // magnifies the cat to the size of the screen, which over a full-screen
+        // video is the worst thing this app could do. Below dragging, because a
+        // hand on the cat outranks everything.
+        //
+        // Note it is NOT `exclusive`. Being parked is the headline state, but the
+        // numbers still blend — so a parked cat visibly kneads while you type,
+        // which is what keeps it an animal rather than a sticker.
+        case .peeking: return 8
         case .dragging: return 10
         }
     }

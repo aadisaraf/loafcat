@@ -174,3 +174,165 @@ The one fractional transform left is the squash/breathe **scale** on the body an
 **Worth knowing:** don't test this by rendering and comparing colours. The claim is about geometry; test the geometry.
 
 **Reproduce:** `./pixelgrid/build.sh && ./pixelgrid/build/PixelGridSpike` from the repo root.
+
+---
+
+## S6 — Detecting a full-screen video without asking for anything
+
+**Question:** the cat should get out of the way for a full-screen video. Can either half of that — "is a window covering this display" and "is a video playing" — be answered by a process with no permissions at all? If not, the feature is the wrong design and has to be dropped (CLAUDE.md).
+
+**Method.** Two probes. The first ran from the terminal and was *worthless*: iTerm2 has Screen Recording and Accessibility granted, and anything it spawns inherits that. So the second probe was built as its own ad-hoc-signed `.app` with a bundle identifier nothing had ever seen, launched through `open` so launchd — not the terminal — is its responsible process. It reports what it was granted before it reports anything else.
+
+### Result: **both, and with room to spare.**
+
+```
+bundle id: dev.loafcat.fsprobe.a1b2c3
+ScreenRecording granted: false
+Accessibility granted:   false
+windows: 80  bounds:80 owner:80 layer:80 pid:80 NAME:1
+IOPM ok: PreventUserIdleDisplaySleep=0 PreventUserIdleSystemSleep=1
+```
+
+With both permissions **denied**, `CGWindowListCopyWindowInfo` returned bounds, owner, layer and pid for all 80 on-screen windows. Only `kCGWindowName` is gated — 46 of 80 windows had a name when run from the privileged terminal, 1 of 80 from the unprivileged bundle. A desktop pet does not need titles, and `check-privacy.sh` bans the field outright.
+
+`IOPMCopyAssertionsStatus` — the table `pmset -g assertions` prints — needs no privilege either.
+
+### Why the assertion is the interesting half
+
+"Is a video playing" cannot be asked directly without recording the screen. `PreventUserIdleDisplaySleep` is the closest honest proxy: **every** video player takes it so the picture cannot dim mid-scene, and nothing that is merely being typed into does. That is the whole difference between parking the cat for a film and parking it for a full-screen text editor. Measured at 0 on an idle machine, 1 under `caffeinate -d`.
+
+It is required to **enter** the parked state and not to **stay** in it, because a paused film drops the assertion and a cat that walked back out in front of the picture on every pause would be worse than one that never moved.
+
+**Windows counterpart:** `CallNtPowerInformation(SystemExecutionState)` → `ES_DISPLAY_REQUIRED`, which is the same question and also needs no privilege — unlike `powercfg /requests`, which needs admin. The window half is cheaper there: the foreground window's rect answers it in three calls, so that port polls inline while this one does the 80-dictionary enumeration on a background queue.
+
+### Verified end to end
+
+A synthetic film — `caffeinate -d` plus a layer-0 window at exactly the display bounds, held at 3% alpha so testing it does not black out the machine — then removing each half in turn:
+
+| | fs | awake | parked | window x |
+|---|---:|---:|---:|---:|
+| nothing playing | 0 | 0 | 0.00 | 727 |
+| full screen + awake | 1 | 1 | 1.00 | 1572 |
+| "paused" — assertion dropped, still full screen | 1 | 0 | **1.00** | 1572 |
+| left full screen | 0 | 0 | 0.00 | **727** |
+
+**One real bug, found only because the last column was measured.** The cat first walked home to x=**728** and stopped there for good, one point short. The slide eases exponentially toward its target and read its own position back off the window each frame — but the window server quantises that position, so the last sub-point steps were rounded away faster than they could accumulate. Keep the slide in a float of your own and round only on the way out. It is the same lesson as the pixel grid in S5, arriving from the opposite direction: there the danger was a fractional value reaching the screen, here it was the screen's integer value being read back as truth.
+
+**Reproduce:** `./build/LoafCat.app/Contents/MacOS/LoafCat --demo-peek`, and on Windows `loafcat.exe --demo-peek`. Both print the same summary line.
+
+### Four poses that did not work, and why the fifth is the cat turned sideways
+
+The parked cat has been wrong five times. Recorded at length because the reason is
+not obvious and each round cost a full tune-ship-and-report cycle.
+
+**The first three kept the cat UPRIGHT.** Its parts already existed, so reusing them
+in place looked like the cheap answer every time.
+
+| attempt | what it did | what it looked like |
+|---|---|---|
+| slide it behind the edge | whole cat clipped vertically, `reveal_px` tuned | a cat someone had cut in half |
+| head and two paws, body hidden | `reveal_px: 28`, paws raised to the chin | a whole face floating beside the edge with two nubs under it |
+| the same, halved | `reveal_px: 15` — near eye out, far eye behind | a bisected face; better proportioned, still bisected |
+| a side-on head drawn from scratch | new `peek_*` sprites: one eye, one ear, muzzle leading | a *different animal*, not this one lying down — "goofy" |
+
+**An upright face cut by a vertical line is a bisected cat at every width.** There is
+no value of `reveal_px` between "sliver" and "floating head", because the number was
+never the problem — and one of those numbers was *defended by a passing test*, which
+is a much stickier way to be wrong than a magic number because it argues back.
+
+Drawing a side-on head instead fixed the bisection and introduced a worse problem: it
+was no longer recognisably the same cat.
+
+**What works is the cat itself, turned 90° counter-clockwise** — its own head, ears,
+eyes and two front paws, lying against the edge with the paws out from under it, the
+screen edge standing in for a blanket. `transpose(ROTATE_90)` rather than `rotate`,
+so every pixel maps to exactly one pixel and every theme's markings come along
+unchanged. CCW specifically: it points the top of the head *into* the screen and
+leaves the neck — where the body would continue — facing the edge.
+
+**The fifth failure was the turn done right with the paws left behind.** The head was
+rotated and the paws were carried up *and across* the standing cat, which after the
+turn hung them below the chin in mid air. That is the standing cat's own arrangement —
+head resting on paws — surviving a rotation whose whole purpose was to undo it, and it
+reads as a cat with its feet dangling rather than one lying down. The lesson is that
+rotating the parts is not the same as rotating the *pose*: any offset with a component
+across the turn axis is an unrotated fact about the standing cat smuggled through.
+
+**So the paws move along one axis only.** The standing cat's paws already sit one
+under each eye, which after the turn is exactly where a lying cat's front paws belong
+— level with the face, either side of the chin. The only freedom left is how far out
+toward the edge they slide, and the value is the largest slide that still leaves both
+eyes whole.
+
+**The edge then cuts the paws and nothing else.** That is the whole cut: a paw with
+its wrist under the edge is a paw out from under a blanket, where a head with its jaw
+under the edge is a bisected head — the failure all three upright attempts shared.
+`reveal_px: 32` leaves six of each paw's eight columns showing and buries two. The
+head is a wide oval and reaches within two pixels of the same line, so the silhouette
+still meets the edge and the paws are what touches it; there is no room for a paw to
+protrude *sideways* past a head that wide, which is why the paws are the outermost
+thing rather than something beside it.
+
+**The paws also have to draw in front of the head**, which is the one place this pose
+departs from the standing cat's draw order. Standing, the head rests on the paws and
+hiding most of each one is right. Lying down they are in front of the chin, and behind
+the head the jaw ate them: what shipped was two nubs under a face, which is the same
+symptom the very first attempt had and a completely different cause. Both facts are
+asserted now — the edge must cut across each paw, with more of it shown than hidden,
+and the paws must come after the head.
+
+**A pose also has to stay out of measurements of the standing cat**, and the parts
+that slip through are the overheat twins. The atlas grows a `_hot` variant for
+anything the coat remap touched, while `poses` names only the base parts — so
+`peek_r_paw_a_hot` counted as standing cat, and since it sits a pixel below anything
+the standing cat actually has, it became the drag pendulum's floor. `--demo-drag`'s
+measured drop went from 22.75 to 24.50 in a feature with nothing to do with peeking,
+and the only reason it was caught is that the drop is a saturating channel: it does
+not vary run to run, so a 1.75px move is unmistakable rather than plausible noise.
+
+The mirror for the other edge is produced by the generator, not by a runtime flip, so
+both ports load two sets of ordinary sprites and draw whichever the module asked for.
+
+**The check that guards this asserts the turn, not the cut:** a rotated part's box is
+its standing box with the sides swapped — `standing 30x22, lying 22x30`.
+
+### The test that locked in the wrong pose
+
+Worth keeping even though the pose it describes is gone, because the failure mode is
+general.
+
+Shipped, the parked cat looked like a whole face hanging beside the screen edge with
+two grey nubs under it. The number was `reveal_px: 28` against a head whose ink is
+**30px wide** — 93% of the head on screen. But the number was not the mistake. The
+mistake was the assertion that produced it: *"A WHOLE FACE is the point of this pose,
+so both eyes have to clear the edge."* Twenty-eight is the smallest reveal that
+satisfies it, so the check did its job perfectly and its job was wrong.
+
+That assertion was written for the **previous** pose, where the whole cat was clipped
+vertically and a second eye on screen genuinely did mean the window had sliced through
+the animal. When the pose changed, the check came along unexamined.
+
+Its replacement then made the same mistake in the opposite direction — "the far eye
+stays *wholly* behind the edge", which is 15, exactly half the head — and locked in a
+bisected face just as firmly. Both checks were about **where the cut falls**, and the
+cut was never what was wrong.
+
+**A design decision encoded as a passing check needs the reasoning stored beside it,
+or the next pose inherits it.** The current checks assert the *turn* — a rotated
+part's box is its standing box with the sides swapped — because that is the claim
+that actually distinguishes this pose from an upright cat with a slice taken off it.
+
+### Verifying a pose without looking at a screen
+
+Both of the ways a pose fails are invisible in a build log and neither is reachable
+from arithmetic:
+
+- the standing cat stays on, and you get a body behind a peeking head
+- one hide too many, and the window goes empty
+
+So the hide rule is a pure function — `CatView.outOfPose` / `CatView.OutOfPose`, the
+same one the compositor uses — and both ports assert what it says will be drawn.
+Windows goes one further and counts opaque pixels on the composed surface: a pose must
+draw *something*, and must draw *less* than the standing cat. A pose that is not
+smaller is the standing cat still being drawn underneath it.
+

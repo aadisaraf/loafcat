@@ -69,6 +69,12 @@ public sealed class StretchBreakModule : ICatModule
         if (_phase == Phase.Waiting)
         {
             if (Interval is not { } iv || now < _nextFire) return ModuleOutput.None;
+            // Held, NOT skipped and NOT rescheduled: this break magnifies the cat to
+            // the size of the screen, and doing that over a film — or over a call, or
+            // a presentation you are giving — is the worst thing this app could do.
+            // Leaving `_nextFire` where it is means the break happens as soon as the
+            // full-screen window goes away, which is when it was wanted anyway.
+            if (CatStage.Shared.FullscreenBusy) return ModuleOutput.None;
             if (ctx.SecondsSinceKey > _bus.AwaySeconds)
             {
                 // Skip rather than bank it. Coming back from lunch to six queued

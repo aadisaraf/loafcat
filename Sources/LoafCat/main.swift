@@ -52,6 +52,7 @@ final class CatController: NSObject, NSApplicationDelegate {
     /// Features live here, one file each. See CatModule.swift.
     let modules = ModuleRegistry()
     private var wellness: WellnessSuite?
+    private var peek: PeekModule?
     private var updater: Updater?
 
     /// Smoothed cursor velocity, in logical px/sec. Raw frame-to-frame deltas are
@@ -186,6 +187,8 @@ final class CatController: NSObject, NSApplicationDelegate {
         modules.register(HuntModule())
         modules.register(PettingModule())
         modules.register(ScrollModule())
+        peek = PeekModule(panel: panel)
+        modules.register(peek!)
         modules.register(AgentModule.shared)
         wellness = WellnessSuite(
             atlas: atlas, view: view, panel: panel, registry: modules)
@@ -289,6 +292,10 @@ final class CatController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func centre() {
+        // Before the move, or the park would ease the cat straight back to the edge
+        // and the menu item would look broken. This is the escape hatch for a cat
+        // parked somewhere you cannot conveniently grab it.
+        peek?.releasePark()
         let vf = NSScreen.main!.visibleFrame
         let size = CatView.panelSize(atlas: atlas, scale: renderScale)
         panel.setFrameOrigin(

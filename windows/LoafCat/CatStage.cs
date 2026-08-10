@@ -50,6 +50,12 @@ public sealed class CatStage
     /// which module owns dragging.
     public CatState State { get; private set; } = CatState.Idle;
 
+    /// True while a full-screen window is covering the cat's display and something is
+    /// holding the screen awake — a film, a call, a presentation. Published by
+    /// `PeekModule`; read by the wellness reminders, which must not blow the cat up to
+    /// the size of the screen over any of those.
+    public bool FullscreenBusy;
+
     public void Publish(Atlas atlas)
     {
         Atlas = atlas;
@@ -72,6 +78,22 @@ public sealed class CatStage
     public Pt PawOffsetL = Pt.Zero;
     public Pt PawOffsetR = Pt.Zero;
     public Pt TailOffset = Pt.Zero;
+
+    /// The pose the winning module wants drawn instead of the standing cat, named
+    /// from `Atlas.Poses`, or null for the cat itself.
+    ///
+    /// A pose is a *different drawing*, not a rearrangement: while one is set, the
+    /// view draws that pose's parts and nothing else. The peek pose is what forced
+    /// this. A cat looking round a screen edge is side-on — one eye, one near ear,
+    /// the muzzle leading — and the standing cat cannot be moved into that shape.
+    /// Sliding it behind the edge bisects the face; rotating it 90° reads as a cat
+    /// that has fallen over. Both were tried and both are recorded in
+    /// `spikes/RESULTS.md` so the next pose does not try them again.
+    ///
+    /// The view also keeps a hit mask per pose: the silhouette really is a different
+    /// shape, and testing clicks against the standing cat's mask would leave a
+    /// body-sized patch of dead screen under the chin with nothing to click on.
+    public string? Pose;
 
     /// 0 = normal coat, 1 = fully overheated. The view cross-fades the `_hot`
     /// palette-remapped variant of each coat part by this much.
@@ -107,6 +129,7 @@ public sealed class CatStage
         PawOffsetL = Pt.Zero;
         PawOffsetR = Pt.Zero;
         TailOffset = Pt.Zero;
+        Pose = null;
         Heat = 0;
         Overlays.Clear();
     }

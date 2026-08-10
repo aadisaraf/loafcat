@@ -53,9 +53,12 @@ public sealed class HydrationModule : ICatModule
 
         if (now >= _nextFire && Interval is { } iv)
         {
-            if (_bus.Busy)
+            if (_bus.Busy || CatStage.Shared.FullscreenBusy)
             {
-                // Never interrupt a stretch break; try again shortly.
+                // Never interrupt a stretch break, and never speak over a full-screen
+                // video — the cat is parked at the edge by then, and a bubble would
+                // put it right back over the picture. Try again shortly rather than
+                // skipping: this one is still owed.
                 _nextFire = now + 5;
             }
             else if (ctx.SecondsSinceKey > _bus.AwaySeconds)

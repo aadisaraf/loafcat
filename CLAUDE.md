@@ -108,6 +108,72 @@ the documentation and most blog posts say.
 - **Only `CGEventSourceStateID.combinedSessionState` is safe.** `.hidSystemState`
   and `.privateState` block *indefinitely* for an unprivileged process — no error,
   no prompt, just a hang.
+- **`CGWindowListCopyWindowInfo` needs no permission; only `kCGWindowName` does.**
+  Measured from an ad-hoc bundle with Screen Recording *and* Accessibility denied:
+  bounds, owner, layer and pid came back for all 80 on-screen windows, and 1 of 80
+  had a name (46 of 80 from a terminal that *was* granted). So "is a window covering
+  this display" is free and "what is that window" is not — which is the right side of
+  the line to be on anyway. Test this from a fresh bundle launched by `open`, never
+  from your terminal: anything spawned there inherits the terminal's grants and the
+  measurement is worthless.
+- **`IOPMCopyAssertionsStatus` is the only honest way to ask "is a video playing."**
+  It needs no privilege, and `PreventUserIdleDisplaySleep` is taken by every video
+  player and by nothing that is merely being typed into. Require it to *enter* a
+  "get out of the way" state and not to *stay* in one — a paused film drops the
+  assertion, and a cat that walked back in front of the picture on every pause would
+  be worse than one that never moved.
+- **A pose that needs a different silhouette needs different ART, and for the peek
+  that art is the standing cat TURNED, not redrawn.** The parked cat was wrong four
+  times. Three attempts left it upright and tried to make an upright cat peek — slide
+  the whole thing behind the edge, hide the body and raise the paws, then halve the
+  reveal — and an upright face cut by a vertical line is a bisected cat at *every*
+  width, so there is no number in between "sliver" and "floating head". The fourth
+  drew a side-on head from scratch, which reads as a *different animal* rather than
+  this one lying down. What works is the cat rotated **90° CCW**: its own head, ears,
+  eyes and two front paws, lying against the edge with the paws out from under it —
+  the screen edge as a blanket. Lossless on a pixel grid (`transpose`, not `rotate`),
+  so every theme's markings come along for free.
+  - **The edge cuts the paws and nothing else.** A paw with its wrist under the edge
+    is a paw out from under a blanket; a head with its jaw under it is a bisected
+    head, which is what all three upright attempts were. So the reveal is chosen to
+    leave six of each paw's eight columns showing and bury the other two, and the
+    head — a wide oval — comes within two pixels of the same line so the silhouette
+    still meets the edge without being cut by it. Both halves are asserted, in both
+    directions: a paw fully on screen is resting *beside* the edge, and a paw with
+    more hidden than shown is a stump.
+  - The paws are moved **before** the rotation and along **one axis only**. The
+    standing cat's paws sit one under each eye, so the turn already puts them where a
+    lying cat's front paws belong — level with the face, either side of the chin —
+    and the offset only slides them out toward the edge. A cross-axis offset shipped
+    once and it left them *hanging below the chin in mid air*: that is the standing
+    cat's own head-resting-on-paws arrangement surviving a rotation meant to undo it,
+    and it reads as a cat with its feet dangling rather than one lying down.
+  - **A pose part must never reach a measurement of the standing cat**, and the parts
+    that slip through are the `_hot` overheat twins: the atlas grows one automatically
+    for anything the coat remap touched, while `poses` names only the base parts. The
+    peek pose's lower paw sits a pixel below anything the standing cat has, so it
+    silently became the drag pendulum's floor and moved `--demo-drag`'s measured drop
+    from 22.75 to 24.50 — in a feature with nothing to do with peeking. Sweep
+    `atlas.standing` / `Atlas.Standing`, never `parts`.
+  - The paws draw **last**, which is the one place this pose departs from the standing
+    cat's order. Standing, the head rests on the paws and hiding most of each is
+    correct; lying down they are in *front* of the chin, and behind the head the jaw
+    ate them and left two nubs. Asserted, because it shipped that way once.
+  - `cat.json` carries a `poses` block; a pose **replaces** the cat rather than
+    rearranging it. Nothing at runtime moves one part of a pose against another — the
+    art is the pose, and an offset on top can only pull it apart.
+  - The mirror for the other edge is made **by the generator**. Never flip at runtime,
+    or the two ports gain one more thing to disagree about.
+  - The check that guards it asserts the *turn*: a rotated part's box is its standing
+    box with the sides swapped (`standing 30x22, lying 22x30`).
+- **Never read a window position back off the window as the source of truth.** The
+  window server quantises it. An exponential ease toward a target takes smaller and
+  smaller steps, so once they fall under the quantum they round away faster than they
+  accumulate and the cat stops short *for ever* — measured stalling at x=728 walking
+  home to 727. Keep the position in a float you own and round only on the way out.
+  This is the pixel-grid rule arriving from the opposite direction: there the danger
+  is a fractional value reaching the screen, here it is the screen's integer coming
+  back as truth.
 
 ## Windows — hard-won facts, same as the ones above
 
@@ -179,6 +245,23 @@ down separately rather than assuming the Mac answer transfers.
   second with a generous ±15% wander it discarded 45 of 159 genuine keystrokes. Tried at
   two window lengths, same answer both times.
 
+- **A snap gesture cannot use a modifier key, and the dwell is better anyway.**
+  `GetAsyncKeyState`, `GetKeyState` and `GetKeyboardState` are banned outright, so
+  there is no way to read Alt that both ports could share — and macOS itself moved to
+  dwell-to-tile. Make the affordance appear *only* once the snap is armed, so "no line
+  means no snap" is a fact the user can see rather than a promise. A dwell is also the
+  only design where brushing an edge on the way past is naturally distinct from
+  meaning it.
+- **`CallNtPowerInformation(SystemExecutionState)` is the `IOPMCopyAssertionsStatus`
+  counterpart** and needs no privilege. `powercfg /requests`, the obvious thing to
+  reach for, needs admin. The full-screen half is much cheaper here than on macOS —
+  the foreground window's rect answers it in three calls, against enumerating every
+  window on screen — so this port polls it inline and that one does not.
+- **Compare a candidate full-screen window against `rcMonitor`, not `rcWork`.** This
+  is the one place the usual advice inverts: real full screen covers the taskbar and a
+  merely maximised window does not, and that difference is the entire reason a
+  maximised terminal is not mistaken for a film. Everywhere the cat is *placed*, it is
+  still `rcWork`.
 - **The cat is always running, so an install that defers to a running copy never runs.**
   Windows refuses to replace a running executable, and a desktop pet is running by
   definition — so at the one moment installing matters, the file on disk is locked.
