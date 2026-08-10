@@ -732,9 +732,10 @@ internal static class PeekDemo
               + $"on a {atlas.Canvas:F0} canvas");
         Check("the two edges show the same amount of cat", Math.Abs(shownR - shownL) < 0.01, "");
 
-        // Where the edge falls across the pose. The paws are placed short of the neck
-        // on purpose: paws further out than the skull cannot both be shown and be
-        // tucked, and that dilemma is what every cut tried before this one hit.
+        // Where the edge falls across the pose. It has to fall across the PAWS and
+        // nothing else — that is the whole cut. A paw with its wrist under the edge is
+        // a paw out from under a blanket; a head with its jaw under the edge is a
+        // bisected head, which is what every front-facing cut before this one was.
         double seenTo = t.InkR.MinX + t.RevealPx;    // right park: 0..seenTo on screen
         double seenFrom = t.InkL.MaxX - t.RevealPx;  // left park: seenFrom.. on screen
         Check("right park: both eyes clear the edge",
@@ -744,19 +745,34 @@ internal static class PeekDemo
         Check("left park: both eyes clear the edge",
               Lo("peek_l_eye_l", out double eyeLL) && eyeLL >= seenFrom
               && Lo("peek_l_eye_r", out double eyeRL) && eyeRL >= seenFrom, "");
-        Check("right park: both paws clear the edge",
-              Hi("peek_r_paw_a", out double pawAR) && pawAR <= seenTo
-              && Hi("peek_r_paw_b", out double pawBR) && pawBR <= seenTo,
-              "the paws out from under the blanket are half the idea; cutting one is a stump");
-        Check("left park: both paws clear the edge",
-              Lo("peek_l_paw_a", out double pawAL) && pawAL >= seenFrom
-              && Lo("peek_l_paw_b", out double pawBL) && pawBL >= seenFrom, "");
-        Check("right park: the back of the skull tucks under the edge",
-              Hi("peek_r_head", out double skullR) && skullR > seenTo,
-              "with all of it on screen the cat floats beside the edge instead of "
-              + "lying behind it");
-        Check("left park: the back of the skull tucks under the edge",
-              Lo("peek_l_head", out double skullL) && skullL < seenFrom, "");
+        // Straddling, in both directions: all of a paw on screen is a paw resting
+        // beside the edge, none of it is the pose without its point, and a paw with
+        // more hidden than shown is a stump.
+        bool StraddlesR(string n) =>
+            Lo(n, out double lo) && Hi(n, out double hi)
+            && lo < seenTo && seenTo < hi && seenTo - lo > hi - seenTo;
+        bool StraddlesL(string n) =>
+            Lo(n, out double lo) && Hi(n, out double hi)
+            && lo < seenFrom && seenFrom < hi && hi - seenFrom > seenFrom - lo;
+        Check("right park: the edge cuts across both paws",
+              StraddlesR("peek_r_paw_a") && StraddlesR("peek_r_paw_b"),
+              "the paws are what comes out from under the blanket, so they are what "
+              + "it covers");
+        Check("left park: the edge cuts across both paws",
+              StraddlesL("peek_l_paw_a") && StraddlesL("peek_l_paw_b"), "");
+        Check("nothing but the paws is cut",
+              Hi("peek_r_head", out double headR) && headR <= seenTo
+              && Hi("peek_r_ear_l", out double earLR) && earLR <= seenTo
+              && Hi("peek_r_ear_r", out double earRR) && earRR <= seenTo,
+              "a jaw under the edge is a bisected cat at every width — four poses proved it");
+        // ...and the head still has to REACH the edge. It is a wide oval, so it comes
+        // within a couple of pixels of the same line and the paws bridge the rest; any
+        // further back and the cat floats beside the edge instead of lying against it.
+        Check("right park: the head comes to the edge",
+              Hi("peek_r_head", out double skullR) && seenTo - skullR <= 2,
+              $"head ends at {skullR:F0}, edge cuts at {seenTo:F0}");
+        Check("left park: the head comes to the edge",
+              Lo("peek_l_head", out double skullL) && skullL - seenFrom <= 2, "");
 
         // What the view will actually DRAW, which is a separate question from where the
         // window goes and is where a pose can fail invisibly: leave the standing cat on

@@ -222,7 +222,7 @@ A synthetic film — `caffeinate -d` plus a layer-0 window at exactly the displa
 
 ### Four poses that did not work, and why the fifth is the cat turned sideways
 
-The parked cat has been wrong four times. Recorded at length because the reason is
+The parked cat has been wrong five times. Recorded at length because the reason is
 not obvious and each round cost a full tune-ship-and-report cycle.
 
 **The first three kept the cat UPRIGHT.** Its parts already existed, so reusing them
@@ -244,25 +244,42 @@ Drawing a side-on head instead fixed the bisection and introduced a worse proble
 was no longer recognisably the same cat.
 
 **What works is the cat itself, turned 90° counter-clockwise** — its own head, ears,
-eyes and two front paws, lying against the edge with the back of the skull tucked
-under it, the screen edge standing in for a blanket. `transpose(ROTATE_90)` rather
-than `rotate`, so every pixel maps to exactly one pixel and every theme's markings
-come along unchanged. CCW specifically: it points the top of the head *into* the
-screen and leaves the neck — where the body would continue — facing the edge.
+eyes and two front paws, lying against the edge with the paws out from under it, the
+screen edge standing in for a blanket. `transpose(ROTATE_90)` rather than `rotate`,
+so every pixel maps to exactly one pixel and every theme's markings come along
+unchanged. CCW specifically: it points the top of the head *into* the screen and
+leaves the neck — where the body would continue — facing the edge.
 
-**The paws are moved before the rotation, and must land short of the neck.** "Up to
-the chin" is a statement about the standing cat and only becomes "in front of the
-neck" once it has been turned. Paws placed further out than the skull cannot both be
-shown and be tucked, and that dilemma is what every cut tried before this one ran
-into: tuck the head and you amputate a paw, show both paws and nothing is behind the
-edge at all.
+**The fifth failure was the turn done right with the paws left behind.** The head was
+rotated and the paws were carried up *and across* the standing cat, which after the
+turn hung them below the chin in mid air. That is the standing cat's own arrangement —
+head resting on paws — surviving a rotation whose whole purpose was to undo it, and it
+reads as a cat with its feet dangling rather than one lying down. The lesson is that
+rotating the parts is not the same as rotating the *pose*: any offset with a component
+across the turn axis is an unrotated fact about the standing cat smuggled through.
+
+**So the paws move along one axis only.** The standing cat's paws already sit one
+under each eye, which after the turn is exactly where a lying cat's front paws belong
+— level with the face, either side of the chin. The only freedom left is how far out
+toward the edge they slide, and the value is the largest slide that still leaves both
+eyes whole.
+
+**The edge then cuts the paws and nothing else.** That is the whole cut: a paw with
+its wrist under the edge is a paw out from under a blanket, where a head with its jaw
+under the edge is a bisected head — the failure all three upright attempts shared.
+`reveal_px: 32` leaves six of each paw's eight columns showing and buries two. The
+head is a wide oval and reaches within two pixels of the same line, so the silhouette
+still meets the edge and the paws are what touches it; there is no room for a paw to
+protrude *sideways* past a head that wide, which is why the paws are the outermost
+thing rather than something beside it.
 
 **The paws also have to draw in front of the head**, which is the one place this pose
 departs from the standing cat's draw order. Standing, the head rests on the paws and
 hiding most of each one is right. Lying down they are in front of the chin, and behind
 the head the jaw ate them: what shipped was two nubs under a face, which is the same
 symptom the very first attempt had and a completely different cause. Both facts are
-asserted now — the paws must clear the edge, and they must come after the head.
+asserted now — the edge must cut across each paw, with more of it shown than hidden,
+and the paws must come after the head.
 
 **A pose also has to stay out of measurements of the standing cat**, and the parts
 that slip through are the overheat twins. The atlas grows a `_hot` variant for

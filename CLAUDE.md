@@ -130,12 +130,24 @@ the documentation and most blog posts say.
   width, so there is no number in between "sliver" and "floating head". The fourth
   drew a side-on head from scratch, which reads as a *different animal* rather than
   this one lying down. What works is the cat rotated **90° CCW**: its own head, ears,
-  eyes and two front paws, lying against the edge with the back of the skull tucked
-  under it — the screen edge as a blanket. Lossless on a pixel grid (`transpose`, not
-  `rotate`), so every theme's markings come along for free.
-  - The paws are moved **before** the rotation, and must land *short of the neck*.
-    Paws further out than the skull cannot both be shown and be tucked, and that
-    dilemma is what every cut tried before this one ran into.
+  eyes and two front paws, lying against the edge with the paws out from under it —
+  the screen edge as a blanket. Lossless on a pixel grid (`transpose`, not `rotate`),
+  so every theme's markings come along for free.
+  - **The edge cuts the paws and nothing else.** A paw with its wrist under the edge
+    is a paw out from under a blanket; a head with its jaw under it is a bisected
+    head, which is what all three upright attempts were. So the reveal is chosen to
+    leave six of each paw's eight columns showing and bury the other two, and the
+    head — a wide oval — comes within two pixels of the same line so the silhouette
+    still meets the edge without being cut by it. Both halves are asserted, in both
+    directions: a paw fully on screen is resting *beside* the edge, and a paw with
+    more hidden than shown is a stump.
+  - The paws are moved **before** the rotation and along **one axis only**. The
+    standing cat's paws sit one under each eye, so the turn already puts them where a
+    lying cat's front paws belong — level with the face, either side of the chin —
+    and the offset only slides them out toward the edge. A cross-axis offset shipped
+    once and it left them *hanging below the chin in mid air*: that is the standing
+    cat's own head-resting-on-paws arrangement surviving a rotation meant to undo it,
+    and it reads as a cat with its feet dangling rather than one lying down.
   - **A pose part must never reach a measurement of the standing cat**, and the parts
     that slip through are the `_hot` overheat twins: the atlas grows one automatically
     for anything the coat remap touched, while `poses` names only the base parts. The

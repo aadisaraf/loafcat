@@ -647,9 +647,10 @@ extension PeekModule {
         check("the two edges show the same amount of cat",
               abs(shownR - shownL) < 0.01)
 
-        // Where the edge falls across the pose. The paws are placed short of the neck
-        // on purpose: paws further out than the skull cannot both be shown and be
-        // tucked, and that dilemma is what every cut tried before this one hit.
+        // Where the edge falls across the pose. It has to fall across the PAWS and
+        // nothing else — that is the whole cut. A paw with its wrist under the edge
+        // is a paw out from under a blanket; a head with its jaw under the edge is a
+        // bisected head, which is what every front-facing cut before this one was.
         let seenTo = iR.minX + revealPx        // right-edge park: 0..seenTo is on screen
         let seenFrom = iL.maxX - revealPx      // left-edge park: seenFrom.. is on screen
         check("right park: both eyes clear the edge",
@@ -659,18 +660,35 @@ extension PeekModule {
         check("left park: both eyes clear the edge",
               (box("peek_l_eye_l")?.lo ?? -.infinity) >= seenFrom
               && (box("peek_l_eye_r")?.lo ?? -.infinity) >= seenFrom)
-        check("right park: both paws clear the edge",
-              (box("peek_r_paw_a")?.hi ?? .infinity) <= seenTo
-              && (box("peek_r_paw_b")?.hi ?? .infinity) <= seenTo,
-              "the paws out from under the blanket are half the idea; cutting one is a stump")
-        check("left park: both paws clear the edge",
-              (box("peek_l_paw_a")?.lo ?? -.infinity) >= seenFrom
-              && (box("peek_l_paw_b")?.lo ?? -.infinity) >= seenFrom)
-        check("right park: the back of the skull tucks under the edge",
-              (box("peek_r_head")?.hi ?? 0) > seenTo,
-              "with all of it on screen the cat floats beside the edge instead of lying behind it")
-        check("left park: the back of the skull tucks under the edge",
-              (box("peek_l_head")?.lo ?? 0) < seenFrom)
+        // Straddling, in both directions: all of a paw on screen is a paw resting
+        // beside the edge, none of it is the pose without its point, and a paw with
+        // more hidden than shown is a stump.
+        func straddlesR(_ name: String) -> Bool {
+            guard let b = box(name) else { return false }
+            return b.lo < seenTo && seenTo < b.hi && (seenTo - b.lo) > (b.hi - seenTo)
+        }
+        func straddlesL(_ name: String) -> Bool {
+            guard let b = box(name) else { return false }
+            return b.lo < seenFrom && seenFrom < b.hi && (b.hi - seenFrom) > (seenFrom - b.lo)
+        }
+        check("right park: the edge cuts across both paws",
+              straddlesR("peek_r_paw_a") && straddlesR("peek_r_paw_b"),
+              "the paws are what comes out from under the blanket, so they are what it covers")
+        check("left park: the edge cuts across both paws",
+              straddlesL("peek_l_paw_a") && straddlesL("peek_l_paw_b"))
+        check("nothing but the paws is cut",
+              [box("peek_r_head"), box("peek_r_ear_l"), box("peek_r_ear_r")]
+                  .allSatisfy { ($0?.hi ?? .infinity) <= seenTo },
+              "a jaw under the edge is a bisected cat at every width — four poses proved it")
+        // ...and the head still has to REACH the edge. It is a wide oval, so it comes
+        // within a couple of pixels of the same line and the paws bridge the rest; any
+        // further back and the cat floats beside the edge instead of lying against it.
+        check("right park: the head comes to the edge",
+              seenTo - (box("peek_r_head")?.hi ?? 0) <= 2,
+              String(format: "head ends at %.0f, edge cuts at %.0f",
+                     Double(box("peek_r_head")?.hi ?? 0), Double(seenTo)))
+        check("left park: the head comes to the edge",
+              (box("peek_l_head")?.lo ?? 0) - seenFrom <= 2)
 
         // What the view will actually DRAW, which is a separate question from where
         // the window goes and is where a pose can fail invisibly: leave the standing

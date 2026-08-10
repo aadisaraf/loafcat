@@ -286,23 +286,31 @@ G = {
     # left-edge set is this one mirrored by the generator, so the art is authored
     # once and neither port ever flips anything at runtime.
     #
-    # The paws are moved BEFORE the rotation, from under the standing cat up to
-    # where a lying cat's front paws sit. Their offsets are the pose: `dy` decides
-    # how far out toward the edge they sit, `dx` how low they hang, and the two
-    # swap roles once the whole thing is turned.
+    # The paws are moved BEFORE the rotation, and they move along ONE axis only:
+    # `dy` slides them up the standing cat, which after the turn is straight out
+    # toward the edge. `dx` is zero on purpose. The standing cat's paws sit one
+    # under each eye, so the turn already puts them exactly where a lying cat's
+    # front paws belong -- level with the face, one either side of the chin -- and
+    # any `dx` is a paw sliding off its own eye.
     #
-    # They have to land short of the neck. Paws further out than the skull cannot
-    # both be shown and be tucked -- tuck the head and you amputate a paw, show
-    # both paws and nothing is behind the edge at all -- and that dilemma is what
-    # every cut tried before this one ran into.
+    # Left where the turn puts them they are 10px past the skull, entirely behind
+    # the edge; slid all the way in they cover the eyes. The value is the largest
+    # slide that still leaves both eyes whole, which is what makes the cut land
+    # across the PAWS and nothing else -- see `reveal_px`.
+    #
+    # This replaces an earlier pair of offsets that lifted the paws up the standing
+    # cat AND across it, so that after the turn they hung below the chin in mid
+    # air. That is the standing cat's own arrangement -- head resting on paws --
+    # surviving a rotation that was supposed to undo it, and it reads as a cat with
+    # its feet dangling rather than one lying down.
     #
     # Offsets keep every pixel on the canvas: `px()` silently drops anything
     # outside 0..CANVAS, and a paw shifted one column too far loses its outline on
     # that side, which reads as a chipped paw rather than as a clipped sprite.
     "peek_parts": ["ear_l", "ear_r", "head", "eye_l", "eye_r",
                    "pupil_l", "pupil_r", "face", "paw_a", "paw_b"],
-    "peek_paw_a": dict(src="paw_l", dx=-13, dy=-27),
-    "peek_paw_b": dict(src="paw_r", dx=-23, dy=-21),
+    "peek_paw_a": dict(src="paw_l", dx=0, dy=-13),
+    "peek_paw_b": dict(src="paw_r", dx=0, dy=-13),
 }
 
 # The peek pose in draw order, without the edge prefix. `peek_r_*` lies against the
@@ -1259,15 +1267,18 @@ BEHAVIOUR = {
         # read as hiding. There was no value in between, because a front-facing face
         # cut by a vertical line looks like a bisected cat at every width.
         #
-        # With the cat turned on its side the cut only has to decide where the head
-        # stops. 29 shows the whole face, both ears and both paws, and tucks the
-        # back of the skull under the edge -- which is what makes it read as a cat
-        # lying behind the edge rather than one floating beside it.
+        # With the cat turned on its side the cut has one job: fall across the
+        # PAWS. They are the only part of the pose that can be cut and still gain
+        # by it -- a paw with its wrist under the edge is a paw coming out from
+        # under a blanket, where a head with its jaw under the edge is just a
+        # bisected head, which is what the front-facing cuts above all were.
         #
-        # It is also why the paws are placed short of the neck (see `peek_paw_a`):
-        # paws further out than the skull cannot both be shown and be tucked, and
-        # every cut tried before this one ran into that.
-        "reveal_px": 29,
+        # 32 leaves six of each paw's eight columns on screen and buries the other
+        # two. The head is a wide oval and reaches within two pixels of the same
+        # line, so the silhouette still meets the edge; the paws are what touches
+        # it. Less than this and each paw is a three-pixel bump on the cheek, more
+        # and the whole pose is on screen with nothing behind the edge at all.
+        "reveal_px": 32,
         # How far into the slide the standing cat swaps for the peek pose. Late
         # enough that it happens while it is mostly off screen already, so it reads
         # as the cat getting behind the edge rather than as one cat being swapped
@@ -1278,9 +1289,9 @@ BEHAVIOUR = {
         # Close enough, in screen points, to stop easing and sit exactly.
         "settle_pt": 0.35,
         # A slow breath, applied to the whole pose. There is deliberately nothing
-        # here that moves one part of the pose against another: the head craning
-        # out and the paws coming up to the chin are drawn that way now, and a
-        # runtime offset on top would only ever pull the drawing apart.
+        # here that moves one part of the pose against another: the turn and the
+        # paws out at the edge are drawn that way now, and a runtime offset on top
+        # would only ever pull the drawing apart.
         "bob_px": 1.5,
         "bob_hz": 0.42,
         # The armed indicator. System chrome rather than cat art -- the same

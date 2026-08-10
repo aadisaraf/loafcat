@@ -294,29 +294,29 @@
     },
     "peek_r_paw_a": {
       "file": "parts/peek_r_paw_a.png",
-      "x": 12,
-      "y": 38,
+      "x": 26,
+      "y": 25,
       "w": 8,
       "h": 10
     },
     "peek_r_paw_a_hot": {
       "file": "parts/peek_r_paw_a_hot.png",
-      "x": 12,
-      "y": 38,
+      "x": 26,
+      "y": 25,
       "w": 8,
       "h": 10
     },
     "peek_r_paw_b": {
       "file": "parts/peek_r_paw_b.png",
-      "x": 18,
-      "y": 36,
+      "x": 26,
+      "y": 13,
       "w": 8,
       "h": 10
     },
     "peek_r_paw_b_hot": {
       "file": "parts/peek_r_paw_b_hot.png",
-      "x": 18,
-      "y": 36,
+      "x": 26,
+      "y": 13,
       "w": 8,
       "h": 10
     },
@@ -399,29 +399,29 @@
     },
     "peek_l_paw_a": {
       "file": "parts/peek_l_paw_a.png",
-      "x": 28,
-      "y": 38,
+      "x": 14,
+      "y": 25,
       "w": 8,
       "h": 10
     },
     "peek_l_paw_a_hot": {
       "file": "parts/peek_l_paw_a_hot.png",
-      "x": 28,
-      "y": 38,
+      "x": 14,
+      "y": 25,
       "w": 8,
       "h": 10
     },
     "peek_l_paw_b": {
       "file": "parts/peek_l_paw_b.png",
-      "x": 22,
-      "y": 36,
+      "x": 14,
+      "y": 13,
       "w": 8,
       "h": 10
     },
     "peek_l_paw_b_hot": {
       "file": "parts/peek_l_paw_b_hot.png",
-      "x": 22,
-      "y": 36,
+      "x": 14,
+      "y": 13,
       "w": 8,
       "h": 10
     }
@@ -1038,7 +1038,7 @@
       "hide_at": 0.55,
       "indicator_fade_ms": 120,
       "indicator_w_px": 3.0,
-      "reveal_px": 29,
+      "reveal_px": 32,
       "settle_pt": 0.35,
       "slide_rate": 11.0
     },
