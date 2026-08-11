@@ -146,8 +146,11 @@ enum StretchTempo: String, CaseIterable {
 ///    most irritating bug a desktop pet can have.
 /// 2. **A hang driven by HOLD TIME, not drag distance.** This is the whole trick.
 ///    Distance-driven stretch reads as a rubber band anchored to the cursor; time
-///    driven stretch reads as a warm animal slowly giving in to gravity. The cat
-///    keeps elongating while held perfectly still, and stops at ~32%.
+///    driven stretch reads as a warm animal being carried. The lift itself is the
+///    longest the cat gets while held still — it comes off the desk at
+///    `pickup_scale` times its resting droop and gathers itself back into that
+///    droop, so a cat held perfectly still is always relaxing rather than
+///    tightening.
 /// 3. **A pendulum.** Impulse comes from drag *acceleration* through a power law,
 ///    so a flick swings hard and a slow pan barely disturbs it.
 ///
@@ -175,6 +178,7 @@ final class DragModule: CatModule {
         var stretchMax: CGFloat = 1.00
         var hangRest: CGFloat = 0.34
         var hangRate: CGFloat = 6.0
+        var pickupScale: CGFloat = 2.0
         var yankSpeedRef: CGFloat = 900
         var yankAttack: CGFloat = 14
         var yankRelease: CGFloat = 3.2
@@ -215,6 +219,10 @@ final class DragModule: CatModule {
             hangRest *= feel.hangScale
             stretchMax *= feel.maxScale
             hangRate = v("hang_rate", hangRate)
+            // A multiple of the droop, so it needs no feel scaling of its own: it is
+            // applied to a `hangRest` that has already been scaled, and it can never
+            // be tuned below the value it decays into.
+            pickupScale = max(1, v("pickup_scale", pickupScale))
             yankSpeedRef = v("yank_speed_ref", yankSpeedRef)
             yankAttack = v("yank_attack", yankAttack)
             yankRelease = v("yank_release", yankRelease)
@@ -260,10 +268,11 @@ final class DragModule: CatModule {
     private var grabY: CGFloat = 30
     private var heldSeconds: CGFloat = 0
 
-    /// Gravity droop while held. Deliberately NOT a spring: a spring overshoots,
-    /// and an overshooting droop makes the cat dip below its resting length as the
-    /// yank decays, then rise back — which reads as a glitch. Exponential approach
-    /// is monotonic.
+    /// Gravity droop while held. Seeded ABOVE its resting value by the lift and
+    /// eased down to it — see `beginDrag` — so the channel is monotonic in both
+    /// directions and never crosses its own rest. Deliberately NOT a spring: a
+    /// spring overshoots, and an overshooting droop makes the cat dip below its
+    /// resting length as the yank decays, then rise back, which reads as a glitch.
     private var hang: CGFloat = 0
     private var yank: CGFloat = 0
     private var dragSpeed: CGFloat = 0
@@ -364,7 +373,17 @@ final class DragModule: CatModule {
     private func beginDrag() {
         phase = .dragging
         heldSeconds = 0
-        hang = 0
+        // The lift, not the droop. A cat picked up quickly comes off the desk longer
+        // than it will hang and gathers itself afterwards, so the gesture opens above
+        // the resting droop and eases down into it. Seeding the hang rather than
+        // adding a fourth channel keeps `hang` the floor everything else is measured
+        // against, and keeps it monotonic: it now only ever falls.
+        //
+        // `stretch` is deliberately NOT seeded with it. The drawn value still has to
+        // climb at `rise_rate`, or the lift arrives as a single-frame jump across
+        // several whole-pixel boundaries, which is a pop rather than a snap. The
+        // apex is therefore where the rise meets the fall, a little under this.
+        hang = min(t.hangRest * t.pickupScale, t.stretchMax)
         yank = 0
         dragSpeed = 0
         stretch = 0
@@ -425,20 +444,30 @@ final class DragModule: CatModule {
             // increase -- so the cat reached full stretch and stayed there for as
             // long as you held it, with no way to relax.
             //
-            //   hang  gravity. Springs to a modest resting droop and stays.
+            //   hang  the lift and then gravity. Opens long, eases down to a modest
+            //         resting droop and stays there.
             //   yank  how hard it is being thrown around right now. Rises fast,
             //         falls slower, and decays to nothing when you stop moving.
             //
-            // Together: pick it up and it droops; whip it about and it elongates;
-            // hold still and it settles back to the droop; drop it and it springs
-            // home. That is the shape the original has.
+            // Together: pick it up and it stretches, then gathers itself into a
+            // droop; whip it about and it elongates; hold still and it settles back
+            // to the droop; drop it and it springs home.
             // Smoothed, not instantaneous. A raw per-tick delta at 120Hz is mostly
             // noise, and feeding that into a whole-pixel quantiser downstream makes
             // the rendered length flicker between two values several times a second.
             let rawSpeed = hypot(moved.x, moved.y) / max(dt, 0.0001)
             dragSpeed += (rawSpeed - dragSpeed) * min(1, t.speedSmoothing * dt)
             let speed = dragSpeed
-            hang += (t.hangRest - hang) * min(1, t.hangRate * dt)
+            // Coming down off the lift, at the rate the user chose for every other
+            // unstretch — linear, because `fall_rate` is a rate and not a spring, and
+            // because an exponential here would spend most of the descent crawling
+            // the last tenth. Below rest it is the old exponential approach, which
+            // only runs for a theme that has turned the lift off (`pickup_scale` 1).
+            if hang > t.hangRest {
+                hang = max(t.hangRest, hang - t.fallRate * dt)
+            } else {
+                hang += (t.hangRest - hang) * min(1, t.hangRate * dt)
+            }
 
             let headroom = max(t.stretchMax - t.hangRest, 0)
             let yankTarget = min(speed / max(t.yankSpeedRef, 1), 1) * headroom
@@ -631,6 +660,13 @@ private final class Demo {
     private var releasedAt: CGFloat = 0
     private var lastLoud: CGFloat = 0
 
+    // The lift, which the peaks above cannot show either: the shake saturates the stretch
+    // at `stretch_max`, so `maxStretch` and `dropPx` are the same numbers whatever the
+    // pickup does. Sampled over the hold, before any shake input -- the apex, and then
+    // the droop it has gathered itself into by the end of the hold.
+    private var liftPeak: CGFloat = 0
+    private var liftRest: CGFloat = 0
+
     private let grabAt = CGPoint(x: 24, y: 36)
     private let holdSeconds: CGFloat = 0.80
     private let shakeAmp: CGFloat = 40
@@ -685,6 +721,10 @@ private final class Demo {
         // the first quiet one, because the recovery bounces and an early sample sits in
         // a trough. The settle line below is the pendulum, which is a different spring.
         if released, abs(s.stretch) > 0.02 { lastLoud = t }
+        if t < shakeStart {
+            liftPeak = max(liftPeak, s.stretch)
+            liftRest = s.stretch
+        }
         maxAngle = max(maxAngle, abs(s.angleDeg))
         maxDrop = max(maxDrop, s.dropPx)
         minSquash = min(minSquash, s.squash)
@@ -716,10 +756,11 @@ private final class Demo {
                 print("# demo: residual non-zero frames after settle: \(residualBreaches)")
                 print(String(
                     format: "# demo: peaks stretch=+%.4f/%.4f angle=%.3fdeg dropPx=%.2f "
-                          + "squash=%.4f leanPx=%.2f quietMs=%.0f",
+                          + "squash=%.4f leanPx=%.2f quietMs=%.0f lift=+%.4f->+%.4f",
                     Double(maxStretch), Double(minStretch), Double(maxAngle),
                     Double(maxDrop), Double(minSquash), Double(maxLean),
-                    Double(max(0, (lastLoud - releasedAt) * 1000))))
+                    Double(max(0, (lastLoud - releasedAt) * 1000)),
+                    Double(liftPeak), Double(liftRest)))
                 print(residualBreaches == 0
                       ? "# demo: PASS -- came to rest and stayed there"
                       : "# demo: FAIL -- still moving after settle")

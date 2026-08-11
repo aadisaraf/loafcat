@@ -173,7 +173,10 @@ public static class StretchTempoExtensions
 ///     most irritating bug a desktop pet can have.
 ///  2. **A hang driven by HOLD TIME, not drag distance.** This is the whole trick.
 ///     Distance-driven stretch reads as a rubber band anchored to the cursor;
-///     time-driven stretch reads as a warm animal slowly giving in to gravity.
+///     time-driven stretch reads as a warm animal being carried. The lift itself is
+///     the longest the cat gets while held still — it comes off the desk at
+///     `pickup_scale` times its resting droop and gathers itself back into that droop,
+///     so a cat held perfectly still is always relaxing rather than tightening.
 ///  3. **A pendulum.** Impulse comes from drag *acceleration* through a power law, so
 ///     a flick swings hard and a slow pan barely disturbs it.
 ///
@@ -199,6 +202,7 @@ public sealed class DragModule : ICatModule
         public double StretchMax = 1.00;
         public double HangRest = 0.34;
         public double HangRate = 6.0;
+        public double PickupScale = 2.0;
         public double YankSpeedRef = 900;
         public double YankAttack = 14;
         public double YankRelease = 3.2;
@@ -241,6 +245,10 @@ public sealed class DragModule : ICatModule
             HangRest *= feel.HangScale();
             StretchMax *= feel.MaxScale();
             HangRate = V("hang_rate", HangRate);
+            // A multiple of the droop, so it needs no feel scaling of its own: it is
+            // applied to a HangRest that has already been scaled, and it can never be
+            // tuned below the value it decays into.
+            PickupScale = Math.Max(1, V("pickup_scale", PickupScale));
             YankSpeedRef = V("yank_speed_ref", YankSpeedRef);
             YankAttack = V("yank_attack", YankAttack);
             YankRelease = V("yank_release", YankRelease);
@@ -288,10 +296,11 @@ public sealed class DragModule : ICatModule
     private double _grabY = 30;
     private double _heldSeconds;
 
-    /// Gravity droop while held. Deliberately NOT a spring: a spring overshoots, and an
-    /// overshooting droop makes the cat dip below its resting length as the yank
-    /// decays, then rise back — which reads as a glitch. Exponential approach is
-    /// monotonic.
+    /// Gravity droop while held. Seeded ABOVE its resting value by the lift and eased
+    /// down to it — see BeginDrag — so the channel is monotonic in both directions and
+    /// never crosses its own rest. Deliberately NOT a spring: a spring overshoots, and
+    /// an overshooting droop makes the cat dip below its resting length as the yank
+    /// decays, then rise back, which reads as a glitch.
     private double _hang;
     private double _yank;
     private double _dragSpeed;
@@ -406,7 +415,17 @@ public sealed class DragModule : ICatModule
     {
         _phase = Phase.Dragging;
         _heldSeconds = 0;
-        _hang = 0;
+        // The lift, not the droop. A cat picked up quickly comes off the desk longer
+        // than it will hang and gathers itself afterwards, so the gesture opens above
+        // the resting droop and eases down into it. Seeding the hang rather than adding
+        // a fourth channel keeps `hang` the floor everything else is measured against,
+        // and keeps it monotonic: it now only ever falls.
+        //
+        // `_stretch` is deliberately NOT seeded with it. The drawn value still has to
+        // climb at RiseRate, or the lift arrives as a single-frame jump across several
+        // whole-pixel boundaries, which is a pop rather than a snap. The apex is
+        // therefore where the rise meets the fall, a little under this.
+        _hang = Math.Min(_t.HangRest * _t.PickupScale, _t.StretchMax);
         _yank = 0;
         _dragSpeed = 0;
         _stretch = 0;
@@ -471,7 +490,8 @@ public sealed class DragModule : ICatModule
                 // increase — so the cat reached full stretch and stayed there for as
                 // long as you held it, with no way to relax.
                 //
-                //   hang  gravity. Springs to a modest resting droop and stays.
+                //   hang  the lift and then gravity. Opens long, eases down to a modest
+                //         resting droop and stays there.
                 //   yank  how hard it is being thrown around right now. Rises fast,
                 //         falls slower, and decays to nothing when you stop moving.
                 //
@@ -481,7 +501,19 @@ public sealed class DragModule : ICatModule
                 double rawSpeed = MathX.Hypot(moved.X, moved.Y) / Math.Max(dt, 0.0001);
                 _dragSpeed += (rawSpeed - _dragSpeed) * Math.Min(1, _t.SpeedSmoothing * dt);
                 double speed = _dragSpeed;
-                _hang += (_t.HangRest - _hang) * Math.Min(1, _t.HangRate * dt);
+                // Coming down off the lift, at the rate the user chose for every other
+                // unstretch — linear, because FallRate is a rate and not a spring, and
+                // because an exponential here would spend most of the descent crawling
+                // the last tenth. Below rest it is the old exponential approach, which
+                // only runs for a theme that has turned the lift off (`pickup_scale` 1).
+                if (_hang > _t.HangRest)
+                {
+                    _hang = Math.Max(_t.HangRest, _hang - _t.FallRate * dt);
+                }
+                else
+                {
+                    _hang += (_t.HangRest - _hang) * Math.Min(1, _t.HangRate * dt);
+                }
 
                 double headroom = Math.Max(_t.StretchMax - _t.HangRest, 0);
                 double yankTarget = Math.Min(speed / Math.Max(_t.YankSpeedRef, 1), 1) * headroom;
@@ -688,7 +720,14 @@ internal sealed class DragDemo
     private double _releasedAt;
     private double _lastLoud;
 
-    private void Track(DragModule.DebugState s)
+    // The lift, which the peaks above cannot show either: the shake saturates the stretch
+    // at `stretch_max`, so _maxStretch and _maxDrop are the same numbers whatever the
+    // pickup does. Sampled over the hold, before any shake input -- the apex, and then
+    // the droop it has gathered itself into by the end of the hold.
+    private double _liftPeak;
+    private double _liftRest;
+
+    private void Track(DragModule.DebugState s, double shakeStart)
     {
         _maxStretch = Math.Max(_maxStretch, s.Stretch);
         _minStretch = Math.Min(_minStretch, s.Stretch);
@@ -698,6 +737,11 @@ internal sealed class DragDemo
         // the first quiet one, because the recovery bounces and an early sample sits in
         // a trough. The settle line is the pendulum, which is a different spring.
         if (_released && Math.Abs(s.Stretch) > 0.02) _lastLoud = _t;
+        if (_t < shakeStart)
+        {
+            _liftPeak = Math.Max(_liftPeak, s.Stretch);
+            _liftRest = s.Stretch;
+        }
         _maxAngle = Math.Max(_maxAngle, Math.Abs(s.AngleDeg));
         _maxDrop = Math.Max(_maxDrop, s.DropPx);
         _minSquash = Math.Min(_minSquash, s.Squash);
@@ -708,7 +752,8 @@ internal sealed class DragDemo
         $"# demo: peaks stretch=+{_maxStretch:F4}/{_minStretch:F4} " +
         $"angle={_maxAngle:F3}deg dropPx={_maxDrop:F2} " +
         $"squash={_minSquash:F4} leanPx={_maxLean:F2} " +
-        $"quietMs={Math.Max(0, (_lastLoud - _releasedAt) * 1000):F0}";
+        $"quietMs={Math.Max(0, (_lastLoud - _releasedAt) * 1000):F0} " +
+        $"lift=+{_liftPeak:F4}->+{_liftRest:F4}";
 
     private static readonly Pt GrabAt = new(24, 36);
     private const double HoldSeconds = 0.80;
@@ -759,7 +804,7 @@ internal sealed class DragDemo
 
         if (_t < startAt) return;
         var s = m.Debug();
-        Track(s);
+        Track(s, shakeStart);
 
         // Sign first, THEN pad — which is what Swift's `%+.3f` does. Padding the
         // number and prepending the sign gives "+ 7.025" where the other build prints

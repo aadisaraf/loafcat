@@ -1078,6 +1078,17 @@ BEHAVIOUR = {
         # hangs a little instead of sitting at full stretch forever.
         "hang_rest": 0.60,
         "hang_rate": 6.0,   # exponential approach; a spring here would overshoot
+        # The lift itself, as a multiple of that resting droop. A cat picked up
+        # quickly comes off the desk longer than it will hang, and gathers itself
+        # afterwards -- so the gesture OPENS here and eases down to `hang_rest`, at
+        # `fall_rate`, which is the same rate every other relaxation of the stretch
+        # uses and therefore the one the stretch tempo preset already governs.
+        #
+        # A multiple rather than an absolute, so it cannot be tuned below the droop
+        # it decays into, and so Drag feel's `hang_scale` carries it along: springy
+        # already hangs at 1.05, and a fixed 1.2 would have made its lift invisible.
+        # 1.0 disables the overshoot without disabling the droop.
+        "pickup_scale": 2.0,
         # How hard it is being thrown around. Rises fast, relaxes slower, decays
         # to nothing when the pointer stops.
         "yank_speed_ref": 380,
