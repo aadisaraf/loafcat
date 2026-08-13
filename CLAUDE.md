@@ -193,6 +193,19 @@ the documentation and most blog posts say.
     range.** `head_lag_px` and the landing squash were both per unit of stretch against
     a ceiling of 1.75; at 5.85 the first sinks the head into its own shoulders and the
     second drives the squash negative, which draws the cat inside out.
+  - **The swing's depth must be measured down the STRETCHED cat.** Against the
+    standing cat, a 57px hang puts every part at a depth it never has while being
+    carried: the paws read 0.69 of the way down instead of 0.94 and the body reads
+    0.15, so a shaken cat sat still. Measure both ends of the torso and give the head
+    the top number and the paws the bottom one.
+  - **A lean is a SHEAR of the torso, not a translate of it.** Once the body is most
+    of the cat, sliding all of it by one number either leaves it behind the paws or
+    tears it off the head, and there is no number in between. `Rig.Transform.shearX`
+    displaces the part's bottom edge against its top, applied as a `CATransform3D`
+    shear on macOS and one addition per row in the Windows blit — both rounded to
+    whole pixels per row, because this is a staircase and never a rotation.
+  - **The pendulum's arm is how long the cat currently is**, not a constant. 14px of
+    travel was right for a 47px cat and is a 7-degree tilt on a 110px noodle.
   - Rendering the parts through the rig's own arithmetic in a throwaway script — no
     build, no screen — is how all of this was found. Do that before tuning by feel.
 - **Never read a window position back off the window as the source of truth.** The

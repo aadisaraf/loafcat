@@ -127,6 +127,11 @@ final class Rig {
     struct Transform {
         var offset = CGPoint.zero
         var scale = CGSize(width: 1, height: 1)
+        /// Horizontal pixels the part's BOTTOM edge is displaced against its top,
+        /// spread linearly down the part. A translate cannot express a whipping
+        /// noodle: the torso is most of a stretched cat, and sliding all of it by
+        /// one number either leaves it behind the paws or tears it off the head.
+        var shearX: CGFloat = 0
         var hidden = false
     }
 
@@ -364,17 +369,39 @@ final class Rig {
         // shear, never a rotation. Rotating a pixel-art layer resamples it off
         // the grid and the jaggies are unrecoverable.
         if dragLeanPx != 0 {
-            let share: CGFloat
-            if group == .shadow {
-                share = 0                       // the floor does not swing
-            } else if group == .head {
-                share = dragHeadSwingShare      // a pixel of drift, no more
-            } else {
-                let anchorY = atlas.pivot(for: name).y
-                let d = min(max((anchorY - dragGrabY) / max(hang, 0.0001), 0), 1)
-                share = d * d
+            // Depth measured down the STRETCHED cat, not the standing one. Against
+            // the standing cat a 57px hang puts every part at a depth it never has
+            // while being carried -- the paws read 0.69 of the way down instead of
+            // 0.94, and the body reads 0.15 instead of spanning nearly the whole
+            // drop -- so the shake stayed in the feet and the long middle, which is
+            // what the eye is actually watching, did not move at all.
+            let stretchedHang = max(hang * (1 + dragStretch), 0.0001)
+            func share(_ y: CGFloat) -> CGFloat {
+                let d = min(max((y - dragGrabY) / stretchedHang, 0), 1)
+                return d * d
             }
-            tr.offset.x += (dragLeanPx * share).rounded()
+            let fullDrop = dragStretch * hang
+
+            switch group {
+            case .shadow:
+                break                           // the floor does not swing
+            case .head:
+                tr.offset.x += (dragLeanPx * dragHeadSwingShare).rounded()
+            case .limb:
+                tr.offset.x += (dragLeanPx * share(atlas.pivot(for: name).y
+                                                   + fullDrop)).rounded()
+            case .torso:
+                // Both ends, and the difference between them is the shear. The top
+                // edge lands on the same number the head is using and the bottom on
+                // the same number the paws are, so the silhouette stays joined at
+                // both ends however hard it is being whipped about.
+                let top = (dragLeanPx * share(part.origin.y)).rounded()
+                let bottom = (dragLeanPx
+                              * share(part.origin.y + part.size.height + fullDrop))
+                             .rounded()
+                tr.offset.x += top
+                tr.shearX += bottom - top
+            }
         }
     }
 

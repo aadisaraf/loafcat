@@ -440,10 +440,14 @@ public sealed class CatView : IDisposable
     ///
     /// `StepX`/`StepY` are how far the source advances per device pixel — the inverse
     /// of the transform, precomputed so the blit's inner loop is two adds and a lookup.
+    /// `ShearPx` is device pixels of horizontal displacement at the BOTTOM row against
+    /// the top row, spread linearly between them. macOS gets this from a CATransform3D
+    /// shear on the layer; here it is one addition per row, which is the whole reason
+    /// the software compositor is not at a disadvantage for once.
     private readonly record struct Placement(
         int X0, int Y0, int X1, int Y1,
         double SrcX0, double SrcY0, double StepX, double StepY,
-        int SrcW, int SrcH);
+        int SrcW, int SrcH, double ShearPx = 0);
 
     private Placement Place(Atlas.Part part, Rig.Transform t, Pt pivot,
                             double originX, double originY, double sc)
@@ -457,6 +461,7 @@ public sealed class CatView : IDisposable
         double sw = t.Scale.W, sh = t.Scale.H;
         if (sw == 0) sw = 0.0001;
         if (sh == 0) sh = 0.0001;
+        double shear = t.ShearX * sc;
 
         // Pivot expressed inside the part, in logical pixels from its top-left.
         double pvx = pivot.X - part.Origin.X;
@@ -471,7 +476,7 @@ public sealed class CatView : IDisposable
         double bottom = top + h * sh;
 
         return Bounds(left, top, right, bottom, x0, y0, pvx, pvy, sw, sh,
-                      w, h, originX, originY, sc);
+                      w, h, originX, originY, sc) with { ShearPx = shear };
     }
 
     /// The same placement for something with no pivot and no scale — an overlay
@@ -536,6 +541,7 @@ public sealed class CatView : IDisposable
         }
 
         double sy = p.SrcY0;
+        int rows = p.Y1 - 1 - p.Y0;
         for (int y = p.Y0; y < p.Y1; y++, sy += p.StepY)
         {
             int iy = (int)Math.Floor(sy);
@@ -544,11 +550,18 @@ public sealed class CatView : IDisposable
             uint* row = dst + (long)y * _widthPx;
             int srcRow = iy * srcW * 4;
             double sx = p.SrcX0;
+            // Rounded per row, so the slant is a staircase of whole device pixels
+            // rather than a resample. Same reason the lean itself is rounded to whole
+            // logical pixels upstream: this is a shear, never a rotation.
+            int shift = rows <= 0 ? 0
+                : (int)Math.Round(p.ShearPx * (y - p.Y0) / rows);
 
             for (int x = p.X0; x < p.X1; x++, sx += p.StepX)
             {
                 int ix = (int)Math.Floor(sx);
                 if ((uint)ix >= (uint)limitW) continue;
+                int xd = x + shift;
+                if ((uint)xd >= (uint)_widthPx) continue;
 
                 int i = srcRow + ix * 4;
                 int a = pixels[i + 3];
@@ -570,11 +583,11 @@ public sealed class CatView : IDisposable
 
                 if (ea >= 255)
                 {
-                    row[x] = 0xFF000000u | ((uint)r << 16) | ((uint)g << 8) | b;
+                    row[xd] = 0xFF000000u | ((uint)r << 16) | ((uint)g << 8) | b;
                     continue;
                 }
 
-                uint d = row[x];
+                uint d = row[xd];
                 int inv = 255 - ea;
                 int dr = (int)((d >> 16) & 0xFF);
                 int dg = (int)((d >> 8) & 0xFF);
@@ -585,7 +598,7 @@ public sealed class CatView : IDisposable
                 uint ng = (uint)((g * ea + dg * inv + 127) / 255);
                 uint nb = (uint)((b * ea + db * inv + 127) / 255);
                 uint na = (uint)((255 * ea + da * inv + 127) / 255);
-                row[x] = (na << 24) | (nr << 16) | (ng << 8) | nb;
+                row[xd] = (na << 24) | (nr << 16) | (ng << 8) | nb;
             }
         }
     }

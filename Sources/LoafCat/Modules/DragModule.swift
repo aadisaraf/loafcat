@@ -204,7 +204,7 @@ final class DragModule: CatModule {
         var headLagPx: CGFloat = 1.5
         var headSwingShare: CGFloat = 0.08
         var shadowShrink: CGFloat = 0.65
-        var swingLengthPx: CGFloat = 14
+        var swingArmFrac: CGFloat = 0.5
         var swingMaxDeg: CGFloat = 45
         var swingImpulse: CGFloat = 0.0012
         var swingAccelCap: CGFloat = 20
@@ -257,7 +257,7 @@ final class DragModule: CatModule {
             headLagPx = v("head_lag_px", headLagPx)
             headSwingShare = v("head_swing_share", headSwingShare)
             shadowShrink = v("shadow_shrink", shadowShrink)
-            swingLengthPx = v("swing_length_px", swingLengthPx)
+            swingArmFrac = v("swing_arm_frac", swingArmFrac)
             swingMaxDeg = v("swing_max_deg", swingMaxDeg)
             swingImpulse = v("swing_impulse", swingImpulse)
             swingAccelCap = v("swing_accel_cap", swingAccelCap)
@@ -528,13 +528,18 @@ final class DragModule: CatModule {
         // The hang only ever elongates. The spring's negative excursion is the
         // landing squash instead, which is exactly what setSquash is for -- and
         // being uniform is right for an impact, where the whole cat compresses.
+        // The pendulum's arm is how long the cat currently is below the grab, so a
+        // stretched cat whips further than a compact one from the same angle. A
+        // constant here is why a 2.2x cat used to shake by seven degrees.
+        let leanPx = sin(angle) * (spanPx + max(0, stretchPx)) * t.swingArmFrac
+
         // The one place pixels become the fraction the rig works in. Dividing here
         // rather than storing a fraction is what makes a scruff-grab and a
         // rump-grab produce the same length of cat.
         v.rig.setDrag(
             stretch: max(0, stretchPx) / spanPx,
             grabY: grabY,
-            leanPx: sin(angle) * t.swingLengthPx,
+            leanPx: leanPx,
             headLagPx: t.headLagPx,
             headSwingShare: t.headSwingShare,
             shadowShrink: t.shadowShrink)
@@ -802,6 +807,6 @@ extension DragModule {
                 1 + min(0, stretchPx) * t.landingSquashPerPx,
                 angle * 180 / .pi,
                 angVel,
-                sin(angle) * t.swingLengthPx)
+                sin(angle) * (spanPx + max(0, stretchPx)) * t.swingArmFrac)
     }
 }

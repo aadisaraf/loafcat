@@ -230,7 +230,7 @@ public sealed class DragModule : ICatModule
         public double HeadLagPx = 1.5;
         public double HeadSwingShare = 0.08;
         public double ShadowShrink = 0.65;
-        public double SwingLengthPx = 14;
+        public double SwingArmFrac = 0.5;
         public double SwingMaxDeg = 45;
         public double SwingImpulse = 0.0012;
         public double SwingAccelCap = 20;
@@ -286,7 +286,7 @@ public sealed class DragModule : ICatModule
             HeadLagPx = V("head_lag_px", HeadLagPx);
             HeadSwingShare = V("head_swing_share", HeadSwingShare);
             ShadowShrink = V("shadow_shrink", ShadowShrink);
-            SwingLengthPx = V("swing_length_px", SwingLengthPx);
+            SwingArmFrac = V("swing_arm_frac", SwingArmFrac);
             SwingMaxDeg = V("swing_max_deg", SwingMaxDeg);
             SwingImpulse = V("swing_impulse", SwingImpulse);
             SwingAccelCap = V("swing_accel_cap", SwingAccelCap);
@@ -580,13 +580,19 @@ public sealed class DragModule : ICatModule
         v.Rig.SetDrag(
             stretch: Math.Max(0, _stretchPx) / _spanPx,
             grabY: _grabY,
-            leanPx: Math.Sin(_angle) * _t.SwingLengthPx,
+            leanPx: LeanPx,
             headLagPx: _t.HeadLagPx,
             headSwingShare: _t.HeadSwingShare,
             shadowShrink: _t.ShadowShrink);
         outv.Squash = 1 + Math.Min(0, _stretchPx) * _t.LandingSquashPerPx;
         return outv;
     }
+
+    /// The pendulum's arm is how long the cat currently is below the grab, so a
+    /// stretched cat whips further than a compact one from the same angle. A constant
+    /// here is why a 2.2x cat used to shake by seven degrees.
+    private double LeanPx =>
+        Math.Sin(_angle) * (_spanPx + Math.Max(0, _stretchPx)) * _t.SwingArmFrac;
 
     /// Applies this tick's pointer movement to the window and returns it.
     private Pt ConsumePointer(double? scale)
@@ -686,7 +692,7 @@ public sealed class DragModule : ICatModule
             1 + Math.Min(0, _stretchPx) * _t.LandingSquashPerPx,
             _angle * 180 / Math.PI,
             _angVel,
-            Math.Sin(_angle) * _t.SwingLengthPx);
+            LeanPx);
     }
 }
 

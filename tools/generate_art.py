@@ -38,7 +38,7 @@ CANVAS = 48  # logical pixels; rendered at integer scales only (2x/3x/4x)
 # hand -- a clipped paw is the kind of thing that looks like a bad sprite rather
 # than like a number that needed changing.
 PAD_X = 40
-PAD_Y = 96
+PAD_Y = 84
 
 # ---------------------------------------------------------------------------
 # Palette -- 16 indexed colours, locked. Every pixel must be one of these.
@@ -1096,11 +1096,11 @@ BEHAVIOUR = {
         # 67px against a 47px cat is 2.42x its own height, which is what the
         # reference behaviour does -- long enough that it reads as a different
         # animal for as long as you hold it, and it is meant to.
-        "hang_px": 67,
+        "hang_px": 57,
         # The ceiling with a shake on top. Small headroom on purpose: shaking is
         # meant to make the cat WOBBLE, not grow, and the reference does not get
         # measurably longer however hard it is thrown around.
-        "max_px": 76,
+        "max_px": 66,
         # Settings > Drag feel multiplies both of the above. Mirrored here ONLY so
         # the padding check below can be made against the loudest preset; the
         # numbers themselves live in DragModule, one per port.
@@ -1117,12 +1117,12 @@ BEHAVIOUR = {
         # Rate limits on the drawn length, in canvas px/sec. The whole gesture is a
         # ramp: the cat reaches `hang_px` in hang_px / rise_px_s and then STAYS
         # there, because a cat held up does not gather itself back in -- it dangles.
-        # 400px/s puts the 67px lift in 168ms, which is what the reference takes.
+        # 340px/s puts the 57px lift in 168ms, which is what the reference takes.
         #
         # `fall_px_s` is the way back down while still held: the shake headroom
         # relaxing after a yank, and nothing else. Letting go is the release spring
         # below, not this.
-        "rise_px_s": 400.0,
+        "rise_px_s": 340.0,
         "fall_px_s": 80.0,
         # Release spring. Authored at 60Hz as v += -0.13*x; v *= 0.78; x += v --
         # stiffness is that 0.13 expressed per second squared (0.13 * 60 * 60).
@@ -1148,9 +1148,17 @@ BEHAVIOUR = {
         "shadow_shrink": 0.65,
         # Pendulum. Angle is simulated in radians and rendered as an integer
         # horizontal shear of sin(angle) * swing_length_px.
-        "swing_length_px": 14,
+        # The pendulum's ARM, as a fraction of how long the cat currently is below
+        # the grab -- so the whip grows with the hang instead of staying at whatever
+        # was right for a 47px cat. A constant here was the reason a shaken cat sat
+        # perfectly still once it was 2.2x its own height: 14px of travel on a 110px
+        # noodle is a 7 degree tilt, and 7 degrees of anything is not a shake.
+        "swing_arm_frac": 0.65,
         "swing_max_deg": 45,
-        "swing_impulse": 0.0012,
+        # Raised with the arm: the drag-phase spring is damped hard enough that a
+        # brisk shake only ever reached 9 degrees, and 9 degrees was invisible back
+        # when the only thing that moved was a pair of 10px paws.
+        "swing_impulse": 0.0018,
         "swing_accel_cap": 20,
         "swing_vel_smoothing": 0.35,
         "swing_spring_drag": 0.018,
