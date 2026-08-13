@@ -103,14 +103,24 @@ public sealed class Rig
     {
         Head,    // head, ears, face, eyes, pupils, lids: rigid, so the face never
                  // shears apart into separate pieces
-        Soft,    // body, paws, tail: elongate to span their stretched extent
+        Torso,   // the body: the ONLY part that elongates. It bridges the whole
+                 // gap the hang opens up.
+        Limb,    // paws and tail: rigid, and carried whole to the bottom of the
+                 // stretch. They are a cat's extremities, not its length.
         Shadow,  // stays on the ground and shrinks as the cat leaves it
     }
 
+    /// Everything that is not the torso keeps its own size. An earlier version put the
+    /// paws and tail in with the body and scaled all three to span their own stretched
+    /// extent, which is wrong in a way that only shows up once the hang gets long: a
+    /// paw sits almost entirely BELOW the grab, so its extent grows faster than the
+    /// body's, and at full stretch the cat was a normal head on two enormous stilts
+    /// rather than a head, a long middle and a pair of feet.
     private static DragGroup GroupOf(string name) => name switch
     {
         "shadow" => DragGroup.Shadow,
-        "body" or "tail" or "paw_l" or "paw_r" => DragGroup.Soft,
+        "body" => DragGroup.Torso,
+        "tail" or "paw_l" or "paw_r" => DragGroup.Limb,
         _ => DragGroup.Head,
     };
 
@@ -350,11 +360,21 @@ public sealed class Rig
                 tr.Offset.Y += DragStretch * _dragHeadLagPx;
                 break;
 
-            case DragGroup.Soft:
+            case DragGroup.Limb:
+                // Carried whole, by the FULL hang rather than by its own depth: the
+                // paws and the tail belong at the bottom of the stretch, keeping the
+                // size they have when the cat is standing on them.
+                tr.Offset.Y += DragStretch * hang;
+                break;
+
+            case DragGroup.Torso:
             {
-                // Scale the part to exactly span its own stretched extent, so the
-                // torso ELONGATES to bridge the gap instead of the head and paws
-                // sliding apart and tearing the silhouette open.
+                // Scale the part to span from its own top down to where the limbs have
+                // gone, so the body ELONGATES to bridge the gap instead of the head and
+                // paws sliding apart and tearing the silhouette open. Its top is above
+                // the grab and is being supported, so only the bottom moves — and it
+                // moves with the paws, not with its own depth, or the body would end
+                // short of the feet it is supposed to reach.
                 double top = part.Origin.Y;
                 double bottom = top + part.Size.H;
                 // Snap the stretched extent to whole LOGICAL pixels before deriving
@@ -362,7 +382,7 @@ public sealed class Rig
                 // device pixels and others on one, which reads as smearing — worse the
                 // further it stretches. Quantising here keeps every row the same size.
                 double stretchedTop = MathX.Round(top + Drop(top));
-                double stretchedBottom = MathX.Round(bottom + Drop(bottom));
+                double stretchedBottom = MathX.Round(bottom + DragStretch * hang);
                 double height = Math.Max(bottom - top, 0.0001);
                 double k = Math.Max(stretchedBottom - stretchedTop, 1) / height;
 

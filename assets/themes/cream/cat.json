@@ -963,25 +963,23 @@
   "behaviour": {
     "drag": {
       "deadzone_px": 4,
-      "fall_rate": 1.8,
+      "fall_px_s": 80.0,
       "grab_max_y": 34,
       "grab_min_y": 26,
-      "hang_rate": 6.0,
-      "hang_rest": 0.6,
-      "head_lag_px": 1.5,
+      "hang_px": 67,
+      "head_lag_px": 0.45,
       "head_swing_share": 0.08,
-      "landing_squash_gain": 0.5,
+      "landing_squash_per_px": 0.013,
+      "max_px": 76,
       "pad_px": 12,
-      "pickup_scale": 2.0,
       "release_damping": 0.78,
       "release_settle_eps": 0.0001,
       "release_stiffness": 468,
       "release_velocity_gain": 0.35,
-      "rise_rate": 9.0,
+      "rise_px_s": 400.0,
       "shadow_shrink": 0.65,
       "speed_smoothing": 8.0,
       "stretch_hold_ms": 900,
-      "stretch_max": 1.75,
       "swing_accel_cap": 20,
       "swing_damping_drag": 0.86,
       "swing_damping_free": 0.962,
@@ -1082,7 +1080,7 @@
   },
   "layout": {
     "pad_x": 40,
-    "pad_y": 43
+    "pad_y": 96
   },
   "bubble": {
     "corner": 3,
@@ -1145,7 +1143,7 @@
       3
     ],
     "line_gap": 1,
-    "max_lines": 4,
+    "max_lines": 9,
     "max_width": 104,
     "min_width": 7,
     "anchor": [

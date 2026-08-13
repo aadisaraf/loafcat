@@ -31,8 +31,14 @@ CANVAS = 48  # logical pixels; rendered at integer scales only (2x/3x/4x)
 # window's centre and the cat's centre the same point, which every cursor-relative
 # calculation in the runtime already assumes, so widening the panel costs no change
 # to the tracking maths.
+#
+# PAD_Y is also the drag's headroom: a held cat hangs `drag.max_px` below its own
+# ink, and anything past the padding is sliced off by the window edge. The two are
+# checked against each other at the bottom of this file rather than kept in step by
+# hand -- a clipped paw is the kind of thing that looks like a bad sprite rather
+# than like a number that needed changing.
 PAD_X = 40
-PAD_Y = 43
+PAD_Y = 96
 
 # ---------------------------------------------------------------------------
 # Palette -- 16 indexed colours, locked. Every pixel must be one of these.
@@ -1065,6 +1071,10 @@ HOT_REMAP = {"coat_hi": "hot", "coat": "hot", "coat_sh": "hot_sh"}
 # quoted at a nominal 60fps and normalised by dt at runtime, so the 120Hz tick
 # behaves identically.
 # ---------------------------------------------------------------------------
+# The loudest Drag feel preset, from DragModule on both ports. Only used by the
+# padding check at the bottom of this file.
+DRAG_FEEL_MAX_SCALE = 1.25
+
 BEHAVIOUR = {
     "drag": {
         # A click only becomes a drag once the pointer clears this, or every
@@ -1074,21 +1084,27 @@ BEHAVIOUR = {
         "stretch_hold_ms": 900,
         # Distance that must be travelled ACROSS the head before petting counts is
         # in the "pet" block; this block is the drag.
-        # Gravity droop while held: springs here and stays, so a motionless cat
-        # hangs a little instead of sitting at full stretch forever.
-        "hang_rest": 0.60,
-        "hang_rate": 6.0,   # exponential approach; a spring here would overshoot
-        # The lift itself, as a multiple of that resting droop. A cat picked up
-        # quickly comes off the desk longer than it will hang, and gathers itself
-        # afterwards -- so the gesture OPENS here and eases down to `hang_rest`, at
-        # `fall_rate`, which is the same rate every other relaxation of the stretch
-        # uses and therefore the one the stretch tempo preset already governs.
+        # How much LONGER the held cat is, in canvas pixels of added height.
         #
-        # A multiple rather than an absolute, so it cannot be tuned below the droop
-        # it decays into, and so Drag feel's `hang_scale` carries it along: springy
-        # already hangs at 1.05, and a fixed 1.2 would have made its lift invisible.
-        # 1.0 disables the overshoot without disabling the droop.
-        "pickup_scale": 2.0,
+        # Pixels, not a multiple of "whatever happens to sit below the grab": the
+        # grab is clamped into a band (grab_min_y..grab_max_y), so a proportional
+        # figure stretches a head-grab 60% further than a rump-grab, and at these
+        # lengths that difference is the whole margin between fitting inside the
+        # window and having the paws sliced off by it. The runtime divides by the
+        # span at grab time; the number here is what the eye actually measures.
+        #
+        # 67px against a 47px cat is 2.42x its own height, which is what the
+        # reference behaviour does -- long enough that it reads as a different
+        # animal for as long as you hold it, and it is meant to.
+        "hang_px": 67,
+        # The ceiling with a shake on top. Small headroom on purpose: shaking is
+        # meant to make the cat WOBBLE, not grow, and the reference does not get
+        # measurably longer however hard it is thrown around.
+        "max_px": 76,
+        # Settings > Drag feel multiplies both of the above. Mirrored here ONLY so
+        # the padding check below can be made against the loudest preset; the
+        # numbers themselves live in DragModule, one per port.
+        # (subtle 1.00, normal 1.12, springy 1.25 -- see DragFeel.maxScale)
         # How hard it is being thrown around. Rises fast, relaxes slower, decays
         # to nothing when the pointer stops.
         "yank_speed_ref": 380,
@@ -1098,25 +1114,36 @@ BEHAVIOUR = {
         # 120Hz is noise, and the whole-pixel quantiser downstream turns noise into
         # visible flicker.
         "speed_smoothing": 8.0,
-        # Rate limits on the drawn stretch, in units/sec. The return has to be eased
-        # because the extent is snapped to whole pixels downstream, so a sudden
-        # change crosses several pixel boundaries in one frame and reads as a jump.
-        # Rising stays fast: a yank should feel instant.
-        "rise_rate": 9.0,
-        "fall_rate": 1.8,
-        "stretch_max": 1.75,
+        # Rate limits on the drawn length, in canvas px/sec. The whole gesture is a
+        # ramp: the cat reaches `hang_px` in hang_px / rise_px_s and then STAYS
+        # there, because a cat held up does not gather itself back in -- it dangles.
+        # 400px/s puts the 67px lift in 168ms, which is what the reference takes.
+        #
+        # `fall_px_s` is the way back down while still held: the shake headroom
+        # relaxing after a yank, and nothing else. Letting go is the release spring
+        # below, not this.
+        "rise_px_s": 400.0,
+        "fall_px_s": 80.0,
         # Release spring. Authored at 60Hz as v += -0.13*x; v *= 0.78; x += v --
         # stiffness is that 0.13 expressed per second squared (0.13 * 60 * 60).
         "release_stiffness": 468,
         "release_damping": 0.78,
         "release_velocity_gain": 0.35,
         "release_settle_eps": 0.0001,
-        "landing_squash_gain": 0.5,
+        # Per PIXEL of the spring's overshoot past neutral, since the whole channel
+        # is denominated in pixels now. The release spring is linear, so it
+        # undershoots in proportion to how far it was stretched -- about -34px from
+        # a full-length drag, which this turns into a squash of ~0.56.
+        "landing_squash_per_px": 0.0130,
         # The scruff. Wherever the body is grabbed, the hang is anchored into
         # this band, so a paw-grab still has a body length below it to stretch.
         "grab_min_y": 26,
         "grab_max_y": 34,
-        "head_lag_px": 1.5,
+        # Per unit of stretch, and the stretch is now a much bigger number: 1.5 was
+        # authored against a ceiling of 1.75 and would sink the head 9px into its own
+        # shoulders against the 5.8 this atlas reaches. 0.45 keeps the sink where it
+        # has always been, a couple of pixels at full length.
+        "head_lag_px": 0.45,
         "head_swing_share": 0.08,
         "shadow_shrink": 0.65,
         # Pendulum. Angle is simulated in radians and rendered as an integer
@@ -1430,6 +1457,27 @@ def crop_and_write(parts, overlays, hot_parts=None):
     # coordinates never change -- everything above is still in 0..CANVAS -- so a
     # module can keep thinking in cat space while the window is larger than the cat.
     atlas["layout"] = {"pad_x": PAD_X, "pad_y": PAD_Y}
+
+    # The drag has to fit in that margin. A held cat hangs `max_px` below its own
+    # lowest ink, and the window ends PAD_Y below the canvas -- so the check is the
+    # room below the ink against the deepest the drag can reach. Asserted rather
+    # than remembered: the failure is a paw sliced off by an invisible window edge,
+    # which reads as broken art rather than as a number two files apart from the
+    # one that moved.
+    ink_bottom = max(v["y"] + v["h"] for k, v in atlas["parts"].items()
+                     if k != "shadow")
+    room = PAD_Y + CANVAS - ink_bottom
+    # Against the LOUDEST setting, not the shipped one: Drag feel multiplies these,
+    # so checking the baseline would pass a build in which only the springy preset
+    # is broken -- and the person who chose springy is exactly the person who would
+    # never think to blame a window edge.
+    deepest = BEHAVIOUR["drag"]["max_px"] * DRAG_FEEL_MAX_SCALE
+    if deepest > room:
+        raise SystemExit(
+            f"drag.max_px {BEHAVIOUR['drag']['max_px']} x feel {DRAG_FEEL_MAX_SCALE} "
+            f"= {deepest:.0f}px exceeds the {room}px below the cat's ink "
+            f"(PAD_Y {PAD_Y} + canvas {CANVAS} - ink bottom {ink_bottom}); "
+            f"the paws would be clipped by the window edge")
 
     # A theme may drop the bubble entirely by listing "bubble" in its `hide` set;
     # the runtime then simply never shows one.

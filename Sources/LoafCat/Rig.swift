@@ -102,14 +102,24 @@ final class Rig {
     private enum DragGroup {
         case head    // head, ears, face, eyes, pupils, lids: rigid, so the face
                      // never shears apart into separate pieces
-        case soft    // body, paws, tail: elongate to span their stretched extent
+        case torso   // the body: the ONLY part that elongates. It bridges the
+                     // whole gap the hang opens up.
+        case limb    // paws and tail: rigid, and carried whole to the bottom of
+                     // the stretch. They are a cat's extremities, not its length.
         case shadow  // stays on the ground and shrinks as the cat leaves it
     }
 
+    /// Everything that is not the torso keeps its own size. An earlier version put
+    /// the paws and tail in with the body and scaled all three to span their own
+    /// stretched extent, which is wrong in a way that only shows up once the hang
+    /// gets long: a paw sits almost entirely BELOW the grab, so its extent grows
+    /// faster than the body's, and at full stretch the cat was a normal head on two
+    /// enormous stilts rather than a head, a long middle and a pair of feet.
     private static func dragGroup(_ name: String) -> DragGroup {
         switch name {
         case "shadow": return .shadow
-        case "body", "tail", "paw_l", "paw_r": return .soft
+        case "body": return .torso
+        case "tail", "paw_l", "paw_r": return .limb
         default: return .head
         }
     }
@@ -306,10 +316,19 @@ final class Rig {
             // lag is what stops it reading as bolted on.
             tr.offset.y += dragStretch * dragHeadLagPx
 
-        case .soft:
-            // Scale the part to exactly span its own stretched extent, so the
-            // torso ELONGATES to bridge the gap instead of the head and paws
-            // sliding apart and tearing the silhouette open.
+        case .limb:
+            // Carried whole, by the FULL hang rather than by its own depth: the
+            // paws and the tail belong at the bottom of the stretch, keeping the
+            // size they have when the cat is standing on them.
+            tr.offset.y += dragStretch * hang
+
+        case .torso:
+            // Scale the part to span from its own top down to where the limbs have
+            // gone, so the body ELONGATES to bridge the gap instead of the head and
+            // paws sliding apart and tearing the silhouette open. Its top is above
+            // the grab and is being supported, so only the bottom moves -- and it
+            // moves with the paws, not with its own depth, or the body would end
+            // short of the feet it is supposed to reach.
             let top = part.origin.y
             let bottom = top + part.size.height
             // Snap the stretched extent to whole LOGICAL pixels before deriving
@@ -317,7 +336,7 @@ final class Rig {
             // device pixels and others on one, which reads as smearing -- worse the
             // further it stretches. Quantising here keeps every row the same size.
             let stretchedTop = (top + drop(top)).rounded()
-            let stretchedBottom = (bottom + drop(bottom)).rounded()
+            let stretchedBottom = (bottom + dragStretch * hang).rounded()
             let height = max(bottom - top, 0.0001)
             let k = max(stretchedBottom - stretchedTop, 1) / height
 
