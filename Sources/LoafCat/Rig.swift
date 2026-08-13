@@ -102,14 +102,24 @@ final class Rig {
     private enum DragGroup {
         case head    // head, ears, face, eyes, pupils, lids: rigid, so the face
                      // never shears apart into separate pieces
-        case soft    // body, paws, tail: elongate to span their stretched extent
+        case torso   // the body: the ONLY part that elongates. It bridges the
+                     // whole gap the hang opens up.
+        case limb    // paws and tail: rigid, and carried whole to the bottom of
+                     // the stretch. They are a cat's extremities, not its length.
         case shadow  // stays on the ground and shrinks as the cat leaves it
     }
 
+    /// Everything that is not the torso keeps its own size. An earlier version put
+    /// the paws and tail in with the body and scaled all three to span their own
+    /// stretched extent, which is wrong in a way that only shows up once the hang
+    /// gets long: a paw sits almost entirely BELOW the grab, so its extent grows
+    /// faster than the body's, and at full stretch the cat was a normal head on two
+    /// enormous stilts rather than a head, a long middle and a pair of feet.
     private static func dragGroup(_ name: String) -> DragGroup {
         switch name {
         case "shadow": return .shadow
-        case "body", "tail", "paw_l", "paw_r": return .soft
+        case "body": return .torso
+        case "tail", "paw_l", "paw_r": return .limb
         default: return .head
         }
     }
@@ -117,6 +127,11 @@ final class Rig {
     struct Transform {
         var offset = CGPoint.zero
         var scale = CGSize(width: 1, height: 1)
+        /// Horizontal pixels the part's BOTTOM edge is displaced against its top,
+        /// spread linearly down the part. A translate cannot express a whipping
+        /// noodle: the torso is most of a stretched cat, and sliding all of it by
+        /// one number either leaves it behind the paws or tears it off the head.
+        var shearX: CGFloat = 0
         var hidden = false
     }
 
@@ -306,10 +321,19 @@ final class Rig {
             // lag is what stops it reading as bolted on.
             tr.offset.y += dragStretch * dragHeadLagPx
 
-        case .soft:
-            // Scale the part to exactly span its own stretched extent, so the
-            // torso ELONGATES to bridge the gap instead of the head and paws
-            // sliding apart and tearing the silhouette open.
+        case .limb:
+            // Carried whole, by the FULL hang rather than by its own depth: the
+            // paws and the tail belong at the bottom of the stretch, keeping the
+            // size they have when the cat is standing on them.
+            tr.offset.y += dragStretch * hang
+
+        case .torso:
+            // Scale the part to span from its own top down to where the limbs have
+            // gone, so the body ELONGATES to bridge the gap instead of the head and
+            // paws sliding apart and tearing the silhouette open. Its top is above
+            // the grab and is being supported, so only the bottom moves -- and it
+            // moves with the paws, not with its own depth, or the body would end
+            // short of the feet it is supposed to reach.
             let top = part.origin.y
             let bottom = top + part.size.height
             // Snap the stretched extent to whole LOGICAL pixels before deriving
@@ -317,7 +341,7 @@ final class Rig {
             // device pixels and others on one, which reads as smearing -- worse the
             // further it stretches. Quantising here keeps every row the same size.
             let stretchedTop = (top + drop(top)).rounded()
-            let stretchedBottom = (bottom + drop(bottom)).rounded()
+            let stretchedBottom = (bottom + dragStretch * hang).rounded()
             let height = max(bottom - top, 0.0001)
             let k = max(stretchedBottom - stretchedTop, 1) / height
 
@@ -345,17 +369,39 @@ final class Rig {
         // shear, never a rotation. Rotating a pixel-art layer resamples it off
         // the grid and the jaggies are unrecoverable.
         if dragLeanPx != 0 {
-            let share: CGFloat
-            if group == .shadow {
-                share = 0                       // the floor does not swing
-            } else if group == .head {
-                share = dragHeadSwingShare      // a pixel of drift, no more
-            } else {
-                let anchorY = atlas.pivot(for: name).y
-                let d = min(max((anchorY - dragGrabY) / max(hang, 0.0001), 0), 1)
-                share = d * d
+            // Depth measured down the STRETCHED cat, not the standing one. Against
+            // the standing cat a 57px hang puts every part at a depth it never has
+            // while being carried -- the paws read 0.69 of the way down instead of
+            // 0.94, and the body reads 0.15 instead of spanning nearly the whole
+            // drop -- so the shake stayed in the feet and the long middle, which is
+            // what the eye is actually watching, did not move at all.
+            let stretchedHang = max(hang * (1 + dragStretch), 0.0001)
+            func share(_ y: CGFloat) -> CGFloat {
+                let d = min(max((y - dragGrabY) / stretchedHang, 0), 1)
+                return d * d
             }
-            tr.offset.x += (dragLeanPx * share).rounded()
+            let fullDrop = dragStretch * hang
+
+            switch group {
+            case .shadow:
+                break                           // the floor does not swing
+            case .head:
+                tr.offset.x += (dragLeanPx * dragHeadSwingShare).rounded()
+            case .limb:
+                tr.offset.x += (dragLeanPx * share(atlas.pivot(for: name).y
+                                                   + fullDrop)).rounded()
+            case .torso:
+                // Both ends, and the difference between them is the shear. The top
+                // edge lands on the same number the head is using and the bottom on
+                // the same number the paws are, so the silhouette stays joined at
+                // both ends however hard it is being whipped about.
+                let top = (dragLeanPx * share(part.origin.y)).rounded()
+                let bottom = (dragLeanPx
+                              * share(part.origin.y + part.size.height + fullDrop))
+                             .rounded()
+                tr.offset.x += top
+                tr.shearX += bottom - top
+            }
         }
     }
 

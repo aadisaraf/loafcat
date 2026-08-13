@@ -14,19 +14,25 @@ enum DragFeel: String, CaseIterable {
 
     /// Multipliers on the atlas baseline rather than replacements, so a theme that
     /// retunes the feel keeps these three meaningful instead of silently drifting.
-    /// `normal` is 1.0 by definition — the shipped tuning IS the normal preset.
+    ///
+    /// Much narrower than they used to be (1.35 and 1.75), because what they scale
+    /// changed underneath them: the atlas baseline is now the full reference hang,
+    /// 2.4x the cat's own height, rather than the timid 0.6 it used to be. The old
+    /// multipliers on the new baseline would have hung the springy cat 117px below
+    /// its own paws — past the transparent margin, and therefore sliced off by the
+    /// window edge. `generate_art.py` asserts the top of this range fits.
     var hangScale: CGFloat {
         switch self {
         case .subtle: return 1.0      // the atlas baseline, untouched
-        case .normal: return 1.35
-        case .springy: return 1.75
+        case .normal: return 1.12
+        case .springy: return 1.25
         }
     }
     var maxScale: CGFloat {
         switch self {
         case .subtle: return 1.0
-        case .normal: return 1.38
-        case .springy: return 1.80
+        case .normal: return 1.12
+        case .springy: return 1.25
         }
     }
 
@@ -45,11 +51,10 @@ enum DragFeel: String, CaseIterable {
 /// are genuinely separate tastes: a big slow stretch and a small snappy one are both
 /// coherent, and one control cannot give you either.
 ///
-/// The atlas deliberately makes the gesture asymmetric — `rise_rate` 9.0 against
-/// `fall_rate` 1.8, so a yank snaps taut about five times faster than it eases back,
-/// plus `stretch_hold_ms` before it starts easing at all. That asymmetry is what makes
-/// it read as elastic rather than as a slider being dragged, so these presets scale it
-/// rather than flattening it.
+/// The atlas deliberately makes the gesture asymmetric — `rise_px_s` 400 against
+/// `fall_px_s` 80, so the cat snaps taut five times faster than it gives anything back.
+/// That asymmetry is what makes it read as elastic rather than as a slider being
+/// dragged, so these presets scale it rather than flattening it.
 ///
 /// Multipliers on the atlas baseline rather than replacements, exactly like `DragFeel`
 /// and for the same reason: a theme that retunes the drag keeps all four meaningful
@@ -77,9 +82,10 @@ enum StretchTempo: String, CaseIterable {
         }
     }
 
-    /// The onset. Barely scaled: at 9.0 the rise is already close to instant, so making
-    /// it faster is imperceptible and making it much slower loses the snap that the
-    /// whole gesture is built on.
+    /// The onset — which is now the lift itself, all 170ms of it, rather than a detail
+    /// of how a yank registers. Kept narrow deliberately: much faster and the cat
+    /// arrives at full length before the eye has followed the cursor, much slower and
+    /// the lift stops reading as a consequence of the grab.
     var riseScale: CGFloat {
         switch self {
         case .snappy: return 1.25
@@ -89,13 +95,15 @@ enum StretchTempo: String, CaseIterable {
         }
     }
 
-    /// The recovery. This is the one that is actually felt.
+    /// Giving length back WHILE STILL HELD, which now happens only when the shake
+    /// headroom relaxes — the hang itself never comes back down until you let go. The
+    /// recovery a person actually watches is `releaseDampingScale` below.
     var fallScale: CGFloat {
         switch self {
-        case .snappy: return 3.0      // fall_rate 1.8 -> 5.4
-        case .quick: return 1.8       // -> 3.24
-        case .normal: return 1.0      // -> 1.8
-        case .languid: return 0.6     // -> 1.08
+        case .snappy: return 3.0      // fall_px_s 80 -> 240
+        case .quick: return 1.8       // -> 144
+        case .normal: return 1.0      // -> 80
+        case .languid: return 0.6     // -> 48
         }
     }
 
@@ -112,7 +120,8 @@ enum StretchTempo: String, CaseIterable {
     /// The bounce after you let go, which measurement says is most of what "slow to
     /// unstretch" actually means: the cat snaps home in about 110ms and then wobbles,
     /// +0.28 at 300ms and +0.03 at 620ms, taking two seconds to be properly still.
-    /// `fall_rate` has nothing to do with that -- this spring does.
+    /// `fall_px_s` has nothing to do with that -- this spring does, and now that the
+    /// hang holds flat until release, this spring is the ONLY thing that does.
     ///
     /// Note the direction. `Spring.damping` is the fraction of velocity KEPT each
     /// frame -- `velocity *= pow(damping, h * 60)` -- so a LOWER number is a more
@@ -144,10 +153,13 @@ enum StretchTempo: String, CaseIterable {
 /// 1. **A deadzone.** A press registers only a *pending* drag. Without the 4px
 ///    threshold every click-to-pet becomes an accidental lift, which is the single
 ///    most irritating bug a desktop pet can have.
-/// 2. **A hang driven by HOLD TIME, not drag distance.** This is the whole trick.
-///    Distance-driven stretch reads as a rubber band anchored to the cursor; time
-///    driven stretch reads as a warm animal slowly giving in to gravity. The cat
-///    keeps elongating while held perfectly still, and stops at ~32%.
+/// 2. **A hang that is a LENGTH, not a rubber band.** Distance-driven stretch reads
+///    as a band anchored to the cursor. This one is a constant: lift the cat and it
+///    lengthens to `hang_px` over `hang_px / rise_px_s`, and then it stays there for
+///    as long as you hold it, however far or fast you carry it. Measured off the
+///    reference behaviour frame by frame — a flat 2.4x, no sag, no gathering back
+///    in — and it is what makes a carried cat read as dangling rather than as a
+///    value easing towards something.
 /// 3. **A pendulum.** Impulse comes from drag *acceleration* through a power law,
 ///    so a flick swings hard and a slow pan barely disturbs it.
 ///
@@ -172,26 +184,27 @@ final class DragModule: CatModule {
     private struct Tuning {
         var deadzonePx: CGFloat = 4
         var stretchHoldMs: CGFloat = 900
-        var stretchMax: CGFloat = 1.00
-        var hangRest: CGFloat = 0.34
-        var hangRate: CGFloat = 6.0
+        // Lengths, in canvas pixels of added height. See the atlas on why these are
+        // pixels and not multiples of the span below the grab.
+        var maxPx: CGFloat = 76
+        var hangPx: CGFloat = 67
         var yankSpeedRef: CGFloat = 900
         var yankAttack: CGFloat = 14
         var yankRelease: CGFloat = 3.2
         var speedSmoothing: CGFloat = 8.0
-        var riseRate: CGFloat = 9.0
-        var fallRate: CGFloat = 1.8
+        var risePxS: CGFloat = 400
+        var fallPxS: CGFloat = 80
         var releaseStiffness: CGFloat = 468
         var releaseDamping: CGFloat = 0.78
         var releaseVelocityGain: CGFloat = 0.35
         var releaseSettleEps: CGFloat = 0.0001
-        var landingSquashGain: CGFloat = 0.5
+        var landingSquashPerPx: CGFloat = 0.0130
         var grabMinY: CGFloat = 26
         var grabMaxY: CGFloat = 34
         var headLagPx: CGFloat = 1.5
         var headSwingShare: CGFloat = 0.08
         var shadowShrink: CGFloat = 0.65
-        var swingLengthPx: CGFloat = 14
+        var swingArmFrac: CGFloat = 0.5
         var swingMaxDeg: CGFloat = 45
         var swingImpulse: CGFloat = 0.0012
         var swingAccelCap: CGFloat = 20
@@ -209,21 +222,27 @@ final class DragModule: CatModule {
             func v(_ k: String, _ d: CGFloat) -> CGFloat { a.tune("drag", k, d) }
             deadzonePx = v("deadzone_px", deadzonePx)
             stretchHoldMs = v("stretch_hold_ms", stretchHoldMs)
-            stretchMax = v("stretch_max", stretchMax)
-            hangRest = v("hang_rest", hangRest)
+            maxPx = v("max_px", maxPx)
+            hangPx = v("hang_px", hangPx)
             let feel = DragFeel.current
-            hangRest *= feel.hangScale
-            stretchMax *= feel.maxScale
-            hangRate = v("hang_rate", hangRate)
+            hangPx *= feel.hangScale
+            maxPx *= feel.maxScale
+            // Nothing may hang past the transparent margin, because the window ends
+            // there and a paw across that line is simply gone. The generator asserts
+            // it for the themes shipped here; this is the same guarantee for a
+            // community theme, which nothing in this build gets to check first.
+            let room = CGFloat(a.layout.padY) + a.canvas - DragModule.inkBottom(a)
+            maxPx = min(maxPx, max(room, 1))
+            hangPx = min(hangPx, maxPx)
             yankSpeedRef = v("yank_speed_ref", yankSpeedRef)
             yankAttack = v("yank_attack", yankAttack)
             yankRelease = v("yank_release", yankRelease)
             speedSmoothing = v("speed_smoothing", speedSmoothing)
-            riseRate = v("rise_rate", riseRate)
-            fallRate = v("fall_rate", fallRate)
+            risePxS = v("rise_px_s", risePxS)
+            fallPxS = v("fall_px_s", fallPxS)
             let tempo = StretchTempo.current
-            riseRate *= tempo.riseScale
-            fallRate *= tempo.fallScale
+            risePxS *= tempo.riseScale
+            fallPxS *= tempo.fallScale
             stretchHoldMs *= tempo.holdScale
             releaseStiffness = v("release_stiffness", releaseStiffness)
             releaseDamping = v("release_damping", releaseDamping)
@@ -232,13 +251,13 @@ final class DragModule: CatModule {
             releaseDamping = max(0.35, min(releaseDamping * tempo.releaseDampingScale, 0.97))
             releaseVelocityGain = v("release_velocity_gain", releaseVelocityGain)
             releaseSettleEps = v("release_settle_eps", releaseSettleEps)
-            landingSquashGain = v("landing_squash_gain", landingSquashGain)
+            landingSquashPerPx = v("landing_squash_per_px", landingSquashPerPx)
             grabMinY = v("grab_min_y", grabMinY)
             grabMaxY = v("grab_max_y", grabMaxY)
             headLagPx = v("head_lag_px", headLagPx)
             headSwingShare = v("head_swing_share", headSwingShare)
             shadowShrink = v("shadow_shrink", shadowShrink)
-            swingLengthPx = v("swing_length_px", swingLengthPx)
+            swingArmFrac = v("swing_arm_frac", swingArmFrac)
             swingMaxDeg = v("swing_max_deg", swingMaxDeg)
             swingImpulse = v("swing_impulse", swingImpulse)
             swingAccelCap = v("swing_accel_cap", swingAccelCap)
@@ -260,16 +279,18 @@ final class DragModule: CatModule {
     private var grabY: CGFloat = 30
     private var heldSeconds: CGFloat = 0
 
-    /// Gravity droop while held. Deliberately NOT a spring: a spring overshoots,
-    /// and an overshooting droop makes the cat dip below its resting length as the
-    /// yank decays, then rise back — which reads as a glitch. Exponential approach
-    /// is monotonic.
-    private var hang: CGFloat = 0
     private var yank: CGFloat = 0
     private var dragSpeed: CGFloat = 0
 
     // --- hang ---------------------------------------------------------------
-    private var stretch: CGFloat = 0
+    /// How much longer the cat is than it is standing up, in canvas pixels. The
+    /// whole simulation runs in this unit and converts once, at the very end, into
+    /// the fraction the rig wants — which is why the length no longer depends on
+    /// where along the scruff the cat happened to be grabbed.
+    private var stretchPx: CGFloat = 0
+    /// Canvas pixels between the grab and the lowest ink, fixed for the gesture.
+    /// The divisor for that conversion, and nothing else.
+    private var spanPx: CGFloat = 13
     /// Only runs after release. While held, the stretch is a pure function of how
     /// long the cat has hung, so a spring would just fight the hold curve.
     private var release = Spring(stiffness: 468, damping: 0.78)
@@ -310,7 +331,7 @@ final class DragModule: CatModule {
     }
 
     /// Bottom of the cat's ink, from the atlas. The hang is measured against it.
-    private func inkBottom(_ atlas: Atlas) -> CGFloat {
+    fileprivate static func inkBottom(_ atlas: Atlas) -> CGFloat {
         var bottom: CGFloat = 0
         for (name, p) in atlas.standing where name != "shadow" {
             bottom = max(bottom, p.origin.y + p.size.height)
@@ -336,6 +357,7 @@ final class DragModule: CatModule {
         // real lift happens at the neck -- and it guarantees there is always body
         // below the anchor to stretch, which a grab on the paws would not.
         grabY = min(max(point.y, t.grabMinY), t.grabMaxY)
+        spanPx = max(DragModule.inkBottom(v.atlas) - grabY, 1)
         return true
     }
 
@@ -364,10 +386,9 @@ final class DragModule: CatModule {
     private func beginDrag() {
         phase = .dragging
         heldSeconds = 0
-        hang = 0
         yank = 0
         dragSpeed = 0
-        stretch = 0
+        stretchPx = 0
         angle = 0
         angVel = 0
         smoothedVel = 0
@@ -380,8 +401,8 @@ final class DragModule: CatModule {
         // Overshoot rather than snap: launch the spring inward at a speed set by
         // how far it was stretched, so it boings past neutral into a compression
         // and back. Gain is per 60Hz frame; Spring integrates per second.
-        release.value = stretch
-        release.velocity = -stretch * t.releaseVelocityGain * 60
+        release.value = stretchPx
+        release.velocity = -stretchPx * t.releaseVelocityGain * 60
     }
 
     // MARK: - Tick
@@ -421,45 +442,48 @@ final class DragModule: CatModule {
             heldSeconds += dt
             let moved = consumePointer(ctx)
 
-            // Two components, because a single hold-time ramp could only ever
-            // increase -- so the cat reached full stretch and stayed there for as
-            // long as you held it, with no way to relax.
+            // Two channels:
             //
-            //   hang  gravity. Springs to a modest resting droop and stays.
-            //   yank  how hard it is being thrown around right now. Rises fast,
-            //         falls slower, and decays to nothing when you stop moving.
+            //   hangPx  a constant. A cat held up by the scruff dangles at its full
+            //           length for as long as you hold it -- it does not gather
+            //           itself back in, and it does not sag further either. The
+            //           reference behaviour holds a flat 2.4x for the whole drag,
+            //           measured frame by frame, and this is that flat line.
+            //   yank    how hard it is being thrown around right now. Rises fast,
+            //           falls slower, and decays to nothing when you stop moving.
             //
-            // Together: pick it up and it droops; whip it about and it elongates;
-            // hold still and it settles back to the droop; drop it and it springs
-            // home. That is the shape the original has.
+            // Together: pick it up and it lengthens over `hang_px / rise_px_s` and
+            // stays; whip it about and it gains a little more; drop it and the
+            // release spring brings it home. Everything the eye reads as "slowly
+            // unstretching" happens after the release, not during the drag.
+            //
             // Smoothed, not instantaneous. A raw per-tick delta at 120Hz is mostly
             // noise, and feeding that into a whole-pixel quantiser downstream makes
             // the rendered length flicker between two values several times a second.
             let rawSpeed = hypot(moved.x, moved.y) / max(dt, 0.0001)
             dragSpeed += (rawSpeed - dragSpeed) * min(1, t.speedSmoothing * dt)
             let speed = dragSpeed
-            hang += (t.hangRest - hang) * min(1, t.hangRate * dt)
 
-            let headroom = max(t.stretchMax - t.hangRest, 0)
+            let headroom = max(t.maxPx - t.hangPx, 0)
             let yankTarget = min(speed / max(t.yankSpeedRef, 1), 1) * headroom
             // Asymmetric: a yank must register on the frame it happens, but
             // relaxing slowly is what makes it read as weight rather than a snap.
             let rate = yankTarget > yank ? t.yankAttack : t.yankRelease
             yank += (yankTarget - yank) * min(1, rate * dt)
 
-            // The floor is the hang, explicitly. `hang + yank` alone can dip below
-            // the settled hang height, because hang is still RISING from zero while
-            // yank is already falling -- so the cat shrinks past where gravity
-            // holds it and then climbs back. Gravity does not let go.
-            let target = max(min(hang + yank, t.stretchMax), hang)
+            // No `max(..., hang)` floor any more, and none needed: the hang is a
+            // constant rather than something still climbing out of zero, so the sum
+            // cannot dip beneath it and the cat cannot shrink mid-carry.
+            let target = min(t.hangPx + yank, t.maxPx)
 
             // Rate-limit what is actually drawn. Downstream the extent is snapped
             // to whole logical pixels, so an abrupt change in the target crosses
             // several pixel boundaries in one frame and reads as a jump rather than
-            // a settle. Rising is allowed to be much faster: a yank should feel
-            // instant, only the return needs to be eased.
-            let limit = (target > stretch ? t.riseRate : t.fallRate) * dt
-            stretch += max(-limit, min(limit, target - stretch))
+            // a settle. This limiter IS the lift: the target is at full length from
+            // the first frame of the drag, and `rise_px_s` is what makes getting
+            // there take the 170ms it should.
+            let limit = (target > stretchPx ? t.risePxS : t.fallPxS) * dt
+            stretchPx += max(-limit, min(limit, target - stretchPx))
 
             // Sideways-ness is expressed as LEAN by the pendulum below, never as a
             // change of shape. An earlier version split the pull into horizontal
@@ -485,17 +509,16 @@ final class DragModule: CatModule {
                abs(release.velocity) < t.releaseSettleEps * 60 {
                 release.snap(to: 0)
             }
-            stretch = release.value
+            stretchPx = release.value
             // The horizontal channel rides the same spring so the cat cannot land
             // still elongated sideways.
             yank = 0
-            hang = 0
             _ = consumePointer(nil)
             stepSwing(dt: dt, f: f, pointerDX: 0, dragging: false)
 
             if release.value == 0, release.velocity == 0, angle == 0, angVel == 0 {
                 phase = .idle
-                stretch = 0
+                stretchPx = 0
                 v.rig.clearDrag()
                 setPad(0)
                 return .none
@@ -505,14 +528,22 @@ final class DragModule: CatModule {
         // The hang only ever elongates. The spring's negative excursion is the
         // landing squash instead, which is exactly what setSquash is for -- and
         // being uniform is right for an impact, where the whole cat compresses.
+        // The pendulum's arm is how long the cat currently is below the grab, so a
+        // stretched cat whips further than a compact one from the same angle. A
+        // constant here is why a 2.2x cat used to shake by seven degrees.
+        let leanPx = sin(angle) * (spanPx + max(0, stretchPx)) * t.swingArmFrac
+
+        // The one place pixels become the fraction the rig works in. Dividing here
+        // rather than storing a fraction is what makes a scruff-grab and a
+        // rump-grab produce the same length of cat.
         v.rig.setDrag(
-            stretch: max(0, stretch),
+            stretch: max(0, stretchPx) / spanPx,
             grabY: grabY,
-            leanPx: sin(angle) * t.swingLengthPx,
+            leanPx: leanPx,
             headLagPx: t.headLagPx,
             headSwingShare: t.headSwingShare,
             shadowShrink: t.shadowShrink)
-        out.squash = 1 + min(0, stretch) * t.landingSquashGain
+        out.squash = 1 + min(0, stretchPx) * t.landingSquashPerPx
         return out
     }
 
@@ -631,6 +662,18 @@ private final class Demo {
     private var releasedAt: CGFloat = 0
     private var lastLoud: CGFloat = 0
 
+    // The lift: how long the cat gets on being picked up, and how long that takes.
+    // Neither is visible in the peaks above, because the shake saturates the length at
+    // `max_px` whatever the pickup does -- so without these two the demo would print
+    // an identical PASS for a build that had lost the lift entirely.
+    //
+    // `liftPx` is the plateau at the end of the hold; `liftMs` is how long it took to
+    // stop climbing. A plateau is exactly what makes the second measurable: the lift
+    // is done at the last frame that still moved.
+    private var liftPx: CGFloat = 0
+    private var liftMovedAt: CGFloat = 0
+    private var liftPrev: CGFloat = -1
+
     private let grabAt = CGPoint(x: 24, y: 36)
     private let holdSeconds: CGFloat = 0.80
     private let shakeAmp: CGFloat = 40
@@ -685,6 +728,11 @@ private final class Demo {
         // the first quiet one, because the recovery bounces and an early sample sits in
         // a trough. The settle line below is the pendulum, which is a different spring.
         if released, abs(s.stretch) > 0.02 { lastLoud = t }
+        if t < shakeStart {
+            if abs(s.dropPx - liftPrev) > 0.05 { liftMovedAt = t }
+            liftPrev = s.dropPx
+            liftPx = s.dropPx
+        }
         maxAngle = max(maxAngle, abs(s.angleDeg))
         maxDrop = max(maxDrop, s.dropPx)
         minSquash = min(minSquash, s.squash)
@@ -716,10 +764,11 @@ private final class Demo {
                 print("# demo: residual non-zero frames after settle: \(residualBreaches)")
                 print(String(
                     format: "# demo: peaks stretch=+%.4f/%.4f angle=%.3fdeg dropPx=%.2f "
-                          + "squash=%.4f leanPx=%.2f quietMs=%.0f",
+                          + "squash=%.4f leanPx=%.2f quietMs=%.0f liftPx=%.2f liftMs=%.0f",
                     Double(maxStretch), Double(minStretch), Double(maxAngle),
                     Double(maxDrop), Double(minSquash), Double(maxLean),
-                    Double(max(0, (lastLoud - releasedAt) * 1000))))
+                    Double(max(0, (lastLoud - releasedAt) * 1000)),
+                    Double(liftPx), Double(max(0, (liftMovedAt - breakAt) * 1000))))
                 print(residualBreaches == 0
                       ? "# demo: PASS -- came to rest and stayed there"
                       : "# demo: FAIL -- still moving after settle")
@@ -751,14 +800,13 @@ extension DragModule {
         case .settling: name = "rel"
         }
         let hold = min(1, heldSeconds * 1000 / max(t.stretchHoldMs, 1))
-        let bottom = view.map { inkBottom($0.atlas) } ?? 47
         return (name,
                 phase == .dragging ? hold : 0,
-                stretch,
-                max(0, stretch) * max(0, bottom - grabY),
-                1 + min(0, stretch) * t.landingSquashGain,
+                stretchPx / spanPx,
+                max(0, stretchPx),
+                1 + min(0, stretchPx) * t.landingSquashPerPx,
                 angle * 180 / .pi,
                 angVel,
-                sin(angle) * t.swingLengthPx)
+                sin(angle) * (spanPx + max(0, stretchPx)) * t.swingArmFrac)
     }
 }
