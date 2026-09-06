@@ -196,6 +196,15 @@ against a `typing` gate of 2.5, so the kneading reaction never fired at all). On
 unit, two opposite symptoms, and the friend who reported it could only describe the
 second half.
 
+The credit lands on the PRESS, not the release. Either edge gives the same total --
+the pairing is what matters -- but a release cannot be observed until the finger comes
+back up, so crediting there put the first keystroke of every burst 158ms behind the
+macOS build's 0. That is long enough to see: the kneading gate is a rate over a 1.5s
+window, so the whole reaction starts late and the cat looks like it noticed you typing
+after you stopped. Measured at 167ms on the release and 83ms on the press, with the
+count unchanged at 2, 3, 5, 8 and 12 characters a second. `--selftest` asserts
+the timing now as well as the count; the two came apart once and nothing caught it.
+
 Runs are what fix it. Events within `KeyGap` of one another are one run; a run over
 `RunCap` is a device and is written off; a settled run is paired press-to-release, so
 `Keys` counts key *downs* and is finally in the same unit as the number

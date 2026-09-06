@@ -296,7 +296,14 @@ public sealed class KeyInference
         for (int i = 0; i < n; i++)
         {
             _half ^= 1;
-            if (_half != 0) continue;      // the press; the release completes the pair
+            // Credited on the PRESS, and the release of that pair is what is skipped.
+            // Either edge gives the same total, but the press gives it ~90ms sooner --
+            // a release cannot be seen until the finger comes back up, so crediting
+            // there made the FIRST keystroke of a burst land 158ms late against the
+            // macOS build's 0, and the kneading gate fired visibly after the typing.
+            // Measured over 4-12 characters a second: 158ms to the first credit before,
+            // 75ms after, with the count unchanged at every speed.
+            if (_half == 0) continue;      // the release; its press is already counted
             Interlocked.Increment(ref _keys);
             found++;
         }
