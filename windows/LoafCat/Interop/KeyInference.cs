@@ -30,32 +30,70 @@ namespace LoafCat.Interop;
 /// banned regardless. So the inference is no longer "not the mouse, therefore a key" but
 /// "not the mouse, AND shaped like something a person did" — see `Resolve`. Both shape
 /// tests are about the timing of the stream, which is all this class is ever told.
+///
+/// -------------------------------------------------------------------------------
+/// A KEYSTROKE IS TWO INPUT EVENTS, AND ASSUMING IT WAS ONE BROKE REAL TYPING
+/// -------------------------------------------------------------------------------
+/// `GetLastInputInfo` is reset by a key going DOWN and again by it coming back UP.
+/// Every constant here was originally set as though a character produced one event,
+/// and both of them then read a real hand as a machine:
+///
+///   * the isolation test wanted 25ms of silence on BOTH sides of an event. A key's
+///     release and the next key's press routinely land closer than that — they
+///     overlap outright once anyone types with rollover — and a single tight pair
+///     used to disqualify both halves of it.
+///   * the sustained-rate backstop wrote off any stream above 22 events a second.
+///     Fifteen characters a second, which is roughly the sustained human record and
+///     above `overheat.kps_max`, is *thirty* events a second — so typing quickly was
+///     itself the thing that convinced this class a device was chattering.
+///
+/// Replayed against press-and-release streams from 3 to 18 characters a second, the
+/// original counted 2.00 of every character below 8 (a gentle typist held the cat at
+/// full overheat) and 0.02 to 0.09 above 12 (a quick one never made it knead at all).
+/// That is the bug this file was reported with, and it is Windows-only because macOS
+/// is handed a count of key-DOWN events and has nothing to infer.
+///
+/// So events are no longer judged one at a time. They are grouped into RUNS — see
+/// `Resolve` — a run is credited or written off whole, and two credited events make
+/// one keystroke, because that is what a key press is.
 public sealed class KeyInference
 {
-    /// The closest together two keystrokes can be and still be two keystrokes.
+    /// Where one RUN of input ends and the next begins.
     ///
     /// A device reporting on its own schedule lands on the `GetTickCount` grid, so its
-    /// ticks arrive ~15.6ms apart — or one poll apart, ~8.3ms, when something else on the
-    /// machine has raised the timer resolution to 1ms, which Chrome and most games do.
-    /// Human typing is nowhere near either: 25ms between keys is 40 a second, roughly
-    /// twice the fastest sustained typing ever recorded, and well past `overheat.kps_max`.
+    /// events arrive ~15.6ms apart — or one poll apart, ~8.3ms, when something else on
+    /// the machine has raised the timer resolution to 1ms, which Chrome and most games
+    /// do. So every event such a device produces is inside this gap of the last one,
+    /// and the whole stream is a single run that never ends.
     ///
-    /// This is checked in BOTH directions, which is only possible because a verdict is
-    /// already deferred by `ResolveAfter` — 50ms is longer than this gap, so by the time
-    /// anything is ruled on, its successor has already arrived and can be looked at.
-    ///
-    /// Measured against jittered typing from 3 to 18 keys a second, at +-15% and +-30%
-    /// wander, 40 seeds each: worst case one keystroke lost in a hundred. Widening it to
-    /// 40ms would close more of the band below, and starts eating real ones.
+    /// A hand produces runs too — a key's press and its release are one run whenever
+    /// the hold is short, and so are two keys pressed with rollover — but a hand's runs
+    /// are SHORT and they stop. That is the difference `RunCap` measures, and grouping
+    /// first is what stopped a tight pair from disqualifying both halves of itself.
     public const double KeyGap = 0.025;
 
-    /// The backstop, for a stream slow enough to pass `KeyGap` and still not be a person:
-    /// keystrokes per second, sustained across `ChatterWindow`, that nobody reaches.
+    /// The most input events one uninterrupted run can hold and still be a hand.
     ///
-    /// Sustained records are around 14-15 characters a second and `overheat.kps_max` is
-    /// 14, so this leaves the whole of real typing — including the part that is supposed
-    /// to redden the cat — comfortably below it.
-    public const double HumanMaxKps = 22;
+    /// Five events inside consecutive sub-25ms gaps is 50 events a second sustained
+    /// across the run — 25 characters a second, well past anything a person does even
+    /// in a burst. Anything at or above ~40Hz is therefore closed outright and on its
+    /// fifth event, which is what keeps a resting touchpad worth exactly zero
+    /// keystrokes rather than one burst of them.
+    ///
+    /// Measured at 3: it starts eating a genuinely fast hand (0.80 of characters at 18
+    /// a second, against 0.95 at 4). At 6 it lets a hypothetical 40Hz device through
+    /// for longer without buying a fast hand anything.
+    public const int RunCap = 4;
+
+    /// The backstop, for a stream slow enough to pass `RunCap` and still not be a
+    /// person: INPUT EVENTS per second, sustained across `ChatterWindow`, that nobody
+    /// reaches.
+    ///
+    /// Events, not keystrokes, and that is the correction: 22 keystrokes a second is
+    /// past any sustained human record and well past `overheat.kps_max`, but each of
+    /// them is a press AND a release, so it is 44 events a second here. Reading the
+    /// same number as events is what wrote off every quick typist as a machine.
+    public const double HumanMaxInputs = 44;
     public const double ChatterWindow = 1.0;
 
     /// How long a stream stays written off after it stops looking inhuman. Long enough
@@ -64,8 +102,8 @@ public sealed class KeyInference
     public const double ChatterHold = 2.0;
 
     // A third test was written and thrown away, and it is worth saying why so nobody
-    // adds it back. Between roughly 3 and 22 reports a second, an idle device is inside
-    // human typing range and spaced too far apart to trip `KeyGap`, so neither test above
+    // adds it back. Between roughly 3 and 44 reports a second, an idle device is inside
+    // human typing range and spaced too far apart to form a run, so neither test above
     // can reach it. Evenness looks like the answer — a clock repeats its interval exactly
     // and hands never do — but this stream has already been through an 8.3ms poll, and
     // that quantisation destroys the very jitter the test needs: at 18 keys a second with
@@ -73,10 +111,13 @@ public sealed class KeyInference
     // perfectly even. Measured, it discarded 45 of 159 genuine keystrokes across 24 gaps.
     // Two runs of it, at two window lengths, said the same thing.
     //
-    // So that band is left open, deliberately. Nothing is known to sit in it: every device
-    // that reports while idle — touchpad, controller, pen, mouse — runs at 60Hz or faster,
-    // and anything above 64Hz lands on the GetTickCount grid, which `KeyGap` closes
-    // outright. A slower one would need a real report to fix properly, not a guess here.
+    // So that band is left open, deliberately, and it is WIDER than it used to be: it
+    // ends at 44 events a second rather than 22, because a person typing at the sustained
+    // human record produces 30 and there is no way to tell that apart from a device
+    // reporting 30 times a second. Nothing is known to sit in the band either way: every
+    // device that reports while idle — touchpad, controller, pen, mouse — runs at 60Hz or
+    // faster, and anything at 40Hz or above forms a run, which `RunCap` closes outright.
+    // A slower one would need a real report to fix properly, not a guess here.
 
     /// How long to wait before ruling on an observed input tick.
     ///
@@ -121,11 +162,22 @@ public sealed class KeyInference
     private long _keys;
     private double _lastKeyAt;
 
+    // The run being accumulated: how many events are in it, and when the last of them
+    // arrived. A run is credited or written off whole — see `SettleRun`.
+    private int _run;
+    private double _runLastAt = double.NegativeInfinity;
+
+    /// Half a keystroke. A key going down and coming back up are two input events and
+    /// one keystroke, so credited events are counted in pairs — which is what puts
+    /// `Keys` in the same unit as the key-DOWN count the macOS build is handed, and
+    /// therefore what lets one set of `overheat` numbers in cat.json mean the same
+    /// thing on both platforms.
+    private int _half;
+
     // The stream of input the mouse could not account for, whether or not it was
     // believed. Recorded even while it is being written off, so the rate test keeps
     // seeing a chattering device for as long as it chatters.
     private readonly Queue<double> _unexplained = new();
-    private double _lastUnexplainedAt = double.NegativeInfinity;
     private double _chatterUntil = double.NegativeInfinity;
     private long _ignored;
 
@@ -166,6 +218,11 @@ public sealed class KeyInference
 
     /// Rules on everything old enough to rule on. Returns how many keystrokes it has
     /// just become sure of, which is only ever used by the test.
+    ///
+    /// Events are grouped into runs on the way through and judged a run at a time. That
+    /// grouping is the whole correction: judged one at a time, a key's release and the
+    /// next key's press disqualified each other for being 10ms apart, and a hand typing
+    /// at any speed worth reacting to went unseen.
     public int Resolve(double now)
     {
         _lastResolveAt = now;
@@ -179,36 +236,74 @@ public sealed class KeyInference
             // account for it. Record it before deciding anything: the rate test has to
             // watch a chattering device for as long as it chatters, including through
             // the hold in which nothing it produces is being believed.
-            double sincePrevious = p.At - _lastUnexplainedAt;
-            _lastUnexplainedAt = p.At;
             _unexplained.Enqueue(p.At);
             while (_unexplained.Count > 0 && p.At - _unexplained.Peek() > ChatterWindow)
                 _unexplained.Dequeue();
 
-            if (_unexplained.Count / ChatterWindow > HumanMaxKps)
+            if (_unexplained.Count / ChatterWindow > HumanMaxInputs)
                 _chatterUntil = p.At + ChatterHold;
 
-            // One: is it on its own? A device reporting on a schedule always has a
-            // neighbour within one tick of the system clock. The successor is knowable
-            // because this verdict was already held back for longer than the gap.
-            double untilNext = _pending.Count > 0
-                ? _pending.Peek().At - p.At
-                : double.PositiveInfinity;
-            bool isolated = sincePrevious >= KeyGap && untilNext >= KeyGap;
+            // A gap this size ends whatever run came before, so settle that one first —
+            // while `_runLastAt` still describes it.
+            if (p.At - _runLastAt >= KeyGap) found += SettleRun();
+            _runLastAt = p.At;
 
-            // Two: is the stream it belongs to one a person could produce at all?
-            bool chattering = p.At < _chatterUntil;
-
-            if (!isolated || chattering)
+            // The stream this belongs to is not one a person could produce at all.
+            if (p.At < _chatterUntil)
             {
                 Interlocked.Increment(ref _ignored);
+                _run = 0;
                 continue;
             }
 
+            _run++;
+            // A run this long is a device reporting on a schedule. Settled here rather
+            // than waiting for a gap that is never coming, so a continuous device costs
+            // one verdict at its fifth event instead of one per event for ever.
+            if (_run > RunCap) found += SettleRun();
+        }
+
+        // A run is over once nothing has followed it for `KeyGap` — measured against the
+        // RESOLVE HORIZON and not against `now`, because everything between the two is
+        // still waiting to be ruled on and could yet extend it. Without this the last
+        // keystroke of a burst would sit in an unsettled run until the next one arrived,
+        // which for the last keystroke of all is for ever.
+        if (_run > 0 && now - ResolveAfter - _runLastAt >= KeyGap) found += SettleRun();
+        return found;
+    }
+
+    /// Credits or writes off the run that has just ended, and starts a new one.
+    ///
+    /// Whole runs, never single events: a run is either something a hand did — at most
+    /// `RunCap` events, then a pause — or a device reporting on a schedule, and there is
+    /// nothing in between to split down the middle.
+    private int SettleRun()
+    {
+        int n = _run;
+        _run = 0;
+        if (n == 0) return 0;
+
+        if (n > RunCap)
+        {
+            Interlocked.Add(ref _ignored, n);
+            // Written off, and the stream it belongs to with it. A device that produced
+            // one run this long is producing the next one already.
+            _chatterUntil = Math.Max(_chatterUntil, _runLastAt + ChatterHold);
+            return 0;
+        }
+
+        int found = 0;
+        for (int i = 0; i < n; i++)
+        {
+            _half ^= 1;
+            if (_half != 0) continue;      // the press; the release completes the pair
             Interlocked.Increment(ref _keys);
-            _lastKeyAt = p.At;
             found++;
         }
+        // Every credited event moves this, not only the ones that completed a pair:
+        // "seconds since the last key" is what releases the kneading pose, and holding
+        // it back by half a keystroke would make the paws stutter at the end of a word.
+        _lastKeyAt = _runLastAt;
         return found;
     }
 

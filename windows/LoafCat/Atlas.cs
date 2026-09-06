@@ -254,6 +254,15 @@ public sealed class Atlas
     public IEnumerable<KeyValuePair<string, Part>> Standing =>
         Parts.Where(kv => !PosedParts.Contains(kv.Key));
 
+    /// The standing cat's parts in DRAW order — `Order` with the poses taken out.
+    ///
+    /// Anything drawing the cat's default appearance wants this. `Order` is every part
+    /// the theme ships, poses included, and a pose is a second drawing of the whole
+    /// animal: walk `Order` unfiltered and the picture gets a peek cat lying against an
+    /// edge beside the standing one, which is what the theme picker and the installer
+    /// window both showed.
+    public IEnumerable<string> StandingOrder => Order.Where(n => !PosedParts.Contains(n));
+
     /// Eye geometry, needed for pupil tracking. `MaxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     public sealed class EyeInfo

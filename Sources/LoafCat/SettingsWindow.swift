@@ -487,9 +487,9 @@ final class WellnessPane: SettingsPane {
     override func populate() {
         stack.addArrangedSubview(heading("Breaks"))
         stretchPopup = minutesPopup(
-            WellnessSettings.stretchOptions, action: #selector(changeIntervals))
+            WellnessSettings.stretchOptions, action: #selector(changeInterval))
         hydrationPopup = minutesPopup(
-            WellnessSettings.hydrationOptions, action: #selector(changeIntervals))
+            WellnessSettings.hydrationOptions, action: #selector(changeInterval))
         stack.addArrangedSubview(row("Stretch break", stretchPopup))
         stack.addArrangedSubview(row("Hydration", hydrationPopup))
         stack.addArrangedSubview(button("Stretch now", #selector(stretchNow)))
@@ -497,11 +497,11 @@ final class WellnessPane: SettingsPane {
         stack.addArrangedSubview(divider())
         stack.addArrangedSubview(heading("Pomodoro"))
         focusPopup = minutesPopup(
-            WellnessSettings.focusOptions, action: #selector(changeIntervals))
+            WellnessSettings.focusOptions, action: #selector(changeInterval))
         breakPopup = minutesPopup(
-            WellnessSettings.breakOptions, action: #selector(changeIntervals))
+            WellnessSettings.breakOptions, action: #selector(changeInterval))
         roundsPopup = minutesPopup(
-            WellnessSettings.roundOptions, unit: "", action: #selector(changeIntervals))
+            WellnessSettings.roundOptions, unit: "", action: #selector(changeInterval))
         stack.addArrangedSubview(row("Focus", focusPopup))
         stack.addArrangedSubview(row("Break", breakPopup))
         stack.addArrangedSubview(row("Rounds", roundsPopup))
@@ -557,13 +557,25 @@ final class WellnessPane: SettingsPane {
         note.stringValue = s.pinnedNote
     }
 
-    @objc private func changeIntervals(_ sender: Any?) {
-        guard let s = suite?.settings else { return }
-        if let v = value(of: stretchPopup) { s.stretchMinutes = v }
-        if let v = value(of: hydrationPopup) { s.hydrationMinutes = v }
-        if let v = value(of: focusPopup) { s.focusMinutes = v }
-        if let v = value(of: breakPopup) { s.breakMinutes = v }
-        if let v = value(of: roundsPopup) { s.rounds = v }
+    /// Writes the ONE popup that changed, and never the other four.
+    ///
+    /// This used to write all five, which is how "off by default" stops being true.
+    /// A popup shows the stored value *or the default*, so writing them all turns
+    /// whatever the defaults happened to be that day into stored values — and from
+    /// then on a changed default cannot reach that user. Changing the hydration
+    /// interval once was enough to pin the stretch break on for ever, and the stretch
+    /// break is the one setting where that matters most: it magnifies the cat to the
+    /// height of the screen, so a stale 30 arrives as the app apparently doing it by
+    /// itself. `wellness.stretchMinutes` defaulted to 30 in v0.1.0 and to 0 since.
+    @objc private func changeInterval(_ sender: Any?) {
+        guard let s = suite?.settings, let v = value(of: sender) else { return }
+        let popup = sender as? NSPopUpButton
+        if popup === stretchPopup { s.stretchMinutes = v }
+        else if popup === hydrationPopup { s.hydrationMinutes = v }
+        else if popup === focusPopup { s.focusMinutes = v }
+        else if popup === breakPopup { s.breakMinutes = v }
+        else if popup === roundsPopup { s.rounds = v }
+        else { return }
         suite?.settingsChanged()
     }
 
