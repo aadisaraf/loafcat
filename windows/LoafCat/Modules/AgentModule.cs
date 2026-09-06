@@ -430,10 +430,16 @@ public sealed class AgentEndpoint
                 return;
             }
 
+            // Logged, unlike the malformed requests above: past the token gate this can
+            // only have come from our own hook script, so a body that will not parse is
+            // a transport bug and not a stray probe. It was one, too — Windows
+            // PowerShell handed curl the JSON with its quotes unescaped and the app
+            // rejected every event of every session in silence, which is what made a
+            // broken transport look like a feature that did nothing.
             JsonObject? obj;
             try { obj = JsonNode.Parse(req.Body) as JsonObject; }
-            catch (JsonException) { Respond(stream, 400, "Bad Request"); return; }
-            if (obj is null) { Respond(stream, 400, "Bad Request"); return; }
+            catch (JsonException) { Reject(stream, 400, "Bad Request"); return; }
+            if (obj is null) { Reject(stream, 400, "Bad Request"); return; }
 
             // Only these five keys are ever read. Truncated because they end up as
             // dictionary keys and there is no reason for any of them to be long.

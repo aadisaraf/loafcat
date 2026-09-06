@@ -335,6 +335,18 @@ Also: `Stop` does **not** fire on user interrupt (Esc), so anything driven by `S
 alone needs an idle-timeout backstop or the cat gets stuck looking busy. Exit code 1
 does *not* block; only exit 2 does.
 
+**Windows PowerShell does not escape the double quotes inside a native command's
+argument, so a JSON body may only ever reach `curl.exe` on stdin.** Handed
+`--data '{"event":"Stop"}'` on the command line, the C runtime's own parsing eats every
+quote and curl posts `{event:Stop}`; the endpoint rejects it as malformed and every
+reaction the cat has to Claude stops — identically for every event, in every session,
+in silence, which is why it read as the feature being broken rather than the
+transport. `--data-binary '@-'` with the body piped in has no quoting to get wrong on
+any PowerShell. `loafcat-hook.sh` was never affected, which is exactly why this only
+ever showed up on Windows. The malformed-body path in `AgentModule` is logged for the
+same reason: past the bearer token it can only be our own hook, so a body that will
+not parse is a transport bug and worth a line.
+
 ## Updates — the one place that runs downloaded code
 
 `Updater.swift` / `Updater.cs` check GitHub a few times a day, and this is the only

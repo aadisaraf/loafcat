@@ -104,15 +104,28 @@ try {
     # to a proxy host instead of to the loopback listener two inches away.
     # Content-Type is not decoration: the app requires application/json precisely
     # because it forces a CORS preflight that a hostile web page cannot satisfy.
+    #
+    # THE BODY GOES IN ON STDIN, NEVER AS AN ARGUMENT. Windows PowerShell does not
+    # escape the double quotes inside a native command's argument, so a JSON literal
+    # handed to curl.exe on the command line arrives with every quote eaten by the C
+    # runtime's own parsing: `{"event":"Stop"}` becomes `{event:Stop}`, the app rejects
+    # it as malformed, and every reaction the cat has to Claude silently stops. That is
+    # what shipped — the bash hook is unaffected, so it only ever failed on Windows, and
+    # it failed identically for every event, which is why it looked like the feature
+    # rather than the transport. `--data-binary '@-'` reads the body from stdin, where
+    # there is no quoting to get wrong on any PowerShell.
+    #
+    # `$OutputEncoding` is ASCII on Windows PowerShell, which is fine and is the second
+    # reason Format-Safe exists: every field is already reduced to ASCII above.
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     if ($curl) {
-        & $curl.Source --silent --output NUL `
+        $body | & $curl.Source --silent --output NUL `
             --noproxy '*' `
             --connect-timeout 0.2 --max-time 0.5 `
             --request POST `
             --header "Authorization: Bearer $token" `
             --header 'Content-Type: application/json' `
-            --data-binary $body `
+            --data-binary '@-' `
             "http://127.0.0.1:$port/agent-state" 2>$null
     } else {
         # Windows 10 before 1803. One second, and still fire-and-forget.

@@ -330,6 +330,17 @@ is kept on both sides anyway, so the two files still read as translations.
 - **The hook script is PowerShell**, because a `.sh` will not run natively. Same
   contract: `exit 0` unconditionally, sub-second network timeouts, nothing on stdout,
   and a silent no-op when loafcat is not running.
+- **The JSON body reaches `curl.exe` on stdin, never as an argument.** Windows
+  PowerShell does not escape the double quotes inside a native command's argument, so
+  `--data '{"event":"Stop"}'` is re-parsed by the C runtime and posted as
+  `{event:Stop}`. The endpoint rejected it, so *every* Claude Code reaction — thinking,
+  done, waiting — silently did nothing, in every session, on every event, which is why
+  it looked like the feature rather than the transport. `loafcat-hook.sh` was never
+  affected: this is a Windows-only failure of a file that is otherwise a straight
+  translation. `--data-binary '@-'` with the body piped in has no quoting to get wrong
+  on any PowerShell, and the malformed-body path in `AgentModule` now logs — past the
+  bearer token the only thing that can reach it is our own hook, so an unparseable body
+  is a transport bug and worth a line.
 - **Two dead functions were not ported.** `MessageModule.promptForReminder` and
   `promptForNote` are `NSAlert` dialogs left over from when the menu bar owned those
   settings; nothing calls them on macOS any more.
