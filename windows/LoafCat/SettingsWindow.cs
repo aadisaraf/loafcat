@@ -542,8 +542,10 @@ internal sealed class WellnessPane(ISettingsHost host) : SettingsPane(host)
         Add(Heading("Breaks"));
         _stretch = MinutesBox(WellnessSettings.StretchOptions);
         _hydration = MinutesBox(WellnessSettings.HydrationOptions);
-        _stretch.SelectedIndexChanged += (_, _) => ChangeIntervals();
-        _hydration.SelectedIndexChanged += (_, _) => ChangeIntervals();
+        _stretch.SelectedIndexChanged += (_, _) =>
+            ChangeInterval(_stretch, (s, v) => s.StretchMinutes = v);
+        _hydration.SelectedIndexChanged += (_, _) =>
+            ChangeInterval(_hydration, (s, v) => s.HydrationMinutes = v);
         Add(Row("Stretch break", _stretch));
         Add(Row("Hydration", _hydration));
         Add(MakeButton("Stretch now", () => Suite?.StretchNow()));
@@ -553,9 +555,12 @@ internal sealed class WellnessPane(ISettingsHost host) : SettingsPane(host)
         _focus = MinutesBox(WellnessSettings.FocusOptions);
         _break = MinutesBox(WellnessSettings.BreakOptions);
         _rounds = MinutesBox(WellnessSettings.RoundOptions, unit: "");
-        _focus.SelectedIndexChanged += (_, _) => ChangeIntervals();
-        _break.SelectedIndexChanged += (_, _) => ChangeIntervals();
-        _rounds.SelectedIndexChanged += (_, _) => ChangeIntervals();
+        _focus.SelectedIndexChanged += (_, _) =>
+            ChangeInterval(_focus, (s, v) => s.FocusMinutes = v);
+        _break.SelectedIndexChanged += (_, _) =>
+            ChangeInterval(_break, (s, v) => s.BreakMinutes = v);
+        _rounds.SelectedIndexChanged += (_, _) =>
+            ChangeInterval(_rounds, (s, v) => s.Rounds = v);
         Add(Row("Focus", _focus));
         Add(Row("Break", _break));
         Add(Row("Rounds", _rounds));
@@ -646,14 +651,21 @@ internal sealed class WellnessPane(ISettingsHost host) : SettingsPane(host)
         }
     }
 
-    private void ChangeIntervals()
+    /// Writes the ONE box that changed, and never the other four.
+    ///
+    /// This used to write all five, which is how "off by default" stops being true.
+    /// A box shows the stored value *or the default*, so writing them all turns
+    /// whatever the defaults happened to be that day into stored values — and from
+    /// then on a changed default cannot reach that user. Changing the hydration
+    /// interval once was enough to pin the stretch break on for ever, and the stretch
+    /// break is the one setting where that matters most: it magnifies the cat to the
+    /// height of the screen, so a stale 30 arrives as the app apparently doing it by
+    /// itself. `wellness.stretchMinutes` defaulted to 30 in v0.1.0 and to 0 since.
+    private void ChangeInterval(ComboBox box, Action<WellnessSettings, int> apply)
     {
         if (_updating || Suite?.Settings is not { } s) return;
-        if (ValueOf(_stretch) is { } a) s.StretchMinutes = a;
-        if (ValueOf(_hydration) is { } b) s.HydrationMinutes = b;
-        if (ValueOf(_focus) is { } c) s.FocusMinutes = c;
-        if (ValueOf(_break) is { } d) s.BreakMinutes = d;
-        if (ValueOf(_rounds) is { } e) s.Rounds = e;
+        if (ValueOf(box) is not { } v) return;
+        apply(s, v);
         Suite?.SettingsChanged();
     }
 
