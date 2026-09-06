@@ -153,6 +153,13 @@ public static class SelfTest
         Check("...and faster than anyone sustains", Typing(0.055, 40, 3.0) == 40,
               $"{Typing(0.055, 40, 3.0)} of 40 keystrokes at eighteen a second");
 
+        // Every check above is about the count. This one is about when it arrives:
+        // the cat has to react to typing while it is still happening.
+        Check("...and the first keystroke is credited promptly",
+              TypingLatency(0.16) < 0.12,
+              $"{TypingLatency(0.16) * 1000:0} ms from key-down to credit "
+              + "— 158 ms when the pair was credited on the release");
+
         // Suppression has to end when the device does, or one controller left plugged in
         // would switch the cat's typing reactions off for the rest of the session.
         {
@@ -254,6 +261,34 @@ public static class SelfTest
             k.Resolve(now);
         }
         return k.Keys;
+    }
+
+    /// How long after the first key goes DOWN the first keystroke is credited.
+    ///
+    /// The count being right says nothing about WHEN it arrives, and the two came
+    /// apart once already: crediting the release rather than the press put every burst
+    /// 158ms late, which reads as the cat noticing your typing only once you have
+    /// stopped. `NaN` if nothing was ever credited.
+    private static double TypingLatency(double gap, double hold = 0.09,
+                                        double seconds = 2.0)
+    {
+        var events = new List<double>();
+        for (int n = 0; n < 12; n++) { events.Add(n * gap); events.Add(n * gap + hold); }
+        events.Sort();
+
+        var k = new KeyInference(0);
+        double dt = 1.0 / 120.0;
+        int next = 0;
+        for (int i = 0; i < (int)(seconds * 120); i++)
+        {
+            double now = i * dt;
+            bool any = false;
+            while (next < events.Count && events[next] <= now) { next++; any = true; }
+            if (any) k.NoteInput((uint)(now * 1000), now);
+            k.Resolve(now);
+            if (k.Keys > 0) return now;   // the first press is at t = 0
+        }
+        return double.NaN;
     }
 
     /// Whether loafcat will be findable by typing its name.
