@@ -537,12 +537,52 @@ public static class SelfTest
         CatStage.Shared.Pose = null;
         view.Compose();
 
+        CheckThumbnail(theme, atlas);
         CheckIntegerMagnification(theme, atlas);
         CheckDuplicateFrames(theme, atlas);
     }
 
     /// Opaque pixels on the composed surface. The cat is the only thing drawn into it,
     /// so this is "how much cat is there" without needing to know what shape it is.
+    private static void CheckThumbnail(string theme, Atlas atlas)
+    {
+        var standing = atlas.Standing.Select(kv => kv.Value).ToList();
+        if (standing.Count == 0 || atlas.PosedParts.Count == 0) return;
+
+        double left = standing.Min(p => p.Origin.X);
+        double top = standing.Min(p => p.Origin.Y);
+        double right = standing.Max(p => p.Origin.X + p.Size.W);
+        double bottom = standing.Max(p => p.Origin.Y + p.Size.H);
+
+        // Not disposed here: the thumbnail is cached and handed out again, so
+        // `ThemeThumbnail.Clear()` at the bottom is what owns it.
+        var thumb = ThemeThumbnail.Image(theme, 1);
+        if (thumb is null)
+        {
+            Check($"{theme}: thumbnail renders", false, "no image");
+            return;
+        }
+
+        int stray = 0, ink = 0;
+        for (int y = 0; y < thumb.Height; y++)
+        {
+            for (int x = 0; x < thumb.Width; x++)
+            {
+                if (thumb.GetPixel(x, y).A <= 40) continue;
+                ink++;
+                if (x < left || x >= right || y < top || y >= bottom) stray++;
+            }
+        }
+
+        Check($"{theme}: thumbnail draws the cat", ink > (int)atlas.Canvas,
+            $"{ink} opaque px");
+        Check($"{theme}: thumbnail is the standing cat alone", stray == 0,
+            $"{stray} opaque px outside the standing cat's "
+            + $"{(int)left},{(int)top}-{(int)right},{(int)bottom} box — that is a pose, "
+            + "which is a second cat");
+        ThemeThumbnail.Clear();
+    }
+
     private static int OpaqueCount(CatView view)
     {
         int n = 0;

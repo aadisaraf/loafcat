@@ -271,7 +271,10 @@ public static class ThemeThumbnail
 
         int side = (int)atlas.Canvas;
         var canvas = new PixelBitmap(side, side);
-        foreach (string name in atlas.Order)
+        // `StandingOrder` and not `Order`: a pose is a whole second drawing of the cat,
+        // so the unfiltered order paints the peek cat lying against its edge next to the
+        // standing one. The thumbnail is the DEFAULT pose — the standing cat alone.
+        foreach (string name in atlas.StandingOrder)
         {
             // Lids are the blink frame, not the default pose.
             if (name.StartsWith("lid_", StringComparison.Ordinal)) continue;

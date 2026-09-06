@@ -230,6 +230,17 @@ struct Atlas {
         parts.filter { !posedParts.contains($0.key) }
     }
 
+    /// The standing cat's parts in DRAW order — `order` with the poses taken out.
+    ///
+    /// Anything drawing the cat's default appearance wants this. `order` is every
+    /// part the theme ships, poses included, and a pose is a second drawing of the
+    /// whole animal: walk `order` unfiltered and the picture gets a peek cat lying
+    /// against an edge beside the standing one, which is what the theme picker and
+    /// the installer window both showed.
+    var standingOrder: [String] {
+        order.filter { !posedParts.contains($0) }
+    }
+
     /// Eye geometry, needed for pupil tracking. `maxOffset` is how far a pupil may
     /// travel from centre before it would clip out of the sclera.
     struct Eye {

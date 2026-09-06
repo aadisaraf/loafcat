@@ -712,6 +712,17 @@ extension PeekModule {
         check("the two facings are never drawn together",
               drawn(Self.poseName(.left)).isDisjoint(with: peeking))
 
+        // The same rule, for everything that draws the cat OUTSIDE the panel: the
+        // theme picker's thumbnail and the installer window composite the atlas
+        // directly, so they walk the draw order too — and walking it unfiltered puts a
+        // second cat in the picture, this one lying against its edge beside the
+        // standing one. It shipped that way in Settings and on the install screen.
+        check("the thumbnail's draw order is the standing cat alone",
+              Set(atlas.standingOrder).isDisjoint(with: atlas.posedParts)
+              && atlas.standingOrder.contains("head")
+              && atlas.standingOrder.contains("body"),
+              "\(atlas.standingOrder.count) of \(atlas.order.count) parts")
+
         // 7. THE WHOLE MODULE, driven through a synthetic drag.
         //
         // Everything above tests a piece in isolation — the arm decision, the parked

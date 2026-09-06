@@ -330,6 +330,10 @@ been checking are asserted mechanically instead.
   disagreeing by 40ms, must produce zero inferred keystrokes — and typing on a still
   mouse must still be counted exactly. Nobody can move a mouse on a CI runner, so it is
   replayed. The logic is deliberately split out of the P/Invoke so that it can be.
+- **the theme picker's thumbnail is the standing cat alone.** Every opaque pixel it
+  draws falls inside the standing cat's own bounding box, so a pose — a whole second
+  drawing of the animal — cannot appear beside it. It did, in Settings and on the
+  install screen, because both walked the atlas draw order unfiltered.
 - the byte offset the hook reads `MSLLHOOKSTRUCT.time` from still matches the struct
 - an unchanged frame is recognised as unchanged and never sent to the compositor twice.
   How often that happens for a genuinely idle cat is *reported* rather than asserted —

@@ -103,7 +103,11 @@ enum ThemeThumbnail {
         // exists to keep crisp into a grey haze.
         ctx.interpolationQuality = .none
 
-        for name in atlas.order {
+        // `atlas.order` is every part the theme ships, poses included, and a pose is a
+        // whole second drawing of the cat rather than a rearrangement of this one — so
+        // walking it unfiltered paints the peek cat lying against its edge next to the
+        // standing one. The thumbnail is the DEFAULT pose: the standing cat alone.
+        for name in atlas.standingOrder {
             // Lids are the blink frame, not the default pose.
             guard !name.hasPrefix("lid_"), let part = atlas.parts[name] else { continue }
             // The atlas measures from the top-left, y-down; CGContext is y-up.
