@@ -155,17 +155,22 @@ So the inference is no longer "not the mouse, therefore a key" but "not the mous
 shaped like something a person did". Two shape tests, both about timing, which is all
 this code is ever told:
 
-3. **Isolation.** A keystroke has nothing else within 25ms either side of it. A device
-   reporting on its own schedule always has a neighbour one `GetTickCount` step away —
-   15.6ms, or 8.3ms on a machine where something has raised the timer resolution to 1ms,
-   which Chrome and most games do. Checked in *both* directions, which is only possible
+3. **Isolation.** A *run* of input — everything within 25ms of the event before it —
+   has nothing either side of it. A device reporting on its own schedule never stops,
+   so its neighbour is always one `GetTickCount` step away — 15.6ms, or 8.3ms on a
+   machine where something has raised the timer resolution to 1ms, which Chrome and
+   most games do — and the run never ends. A run longer than four events is therefore
+   not a hand, and is written off. Checked in *both* directions, which is only possible
    because the 50ms deferral above already holds the verdict longer than the gap: by the
    time anything is ruled on, its successor has arrived and can be looked at. That
-   deferral is load-bearing twice over.
+   deferral is load-bearing twice over — and the end of a run is measured against the
+   *resolve horizon* rather than against `now`, or a run is settled every poll and the
+   test never fires at all.
 4. **A sustained-rate backstop**, for a stream slow enough to pass the gap test: nothing
-   above 22 keys a second across a full second is a person. `overheat.kps_max` is 14, so
-   the whole of real typing — including the part that is meant to redden the cat — is
-   below it.
+   above 44 input *events* a second across a full second is a person. That is 22
+   keystrokes — see below for why the unit is events — against an `overheat.kps_max` of
+   14, so the whole of real typing, including the part that is meant to redden the cat,
+   is well below it.
 
 Measured, five seconds each:
 
@@ -174,12 +179,37 @@ Measured, five seconds each:
 | 8.4ms (a 1ms system timer) | 594 | **0** |
 | 15.6ms (the `GetTickCount` grid) | 319 | **0** |
 | 20ms | 249 | **0** |
-| 33ms | 151 | 22, then written off |
+| 33ms | 151 | 74, then written off |
 
 …against jittered typing from 3 to 18 keys a second at ±15% and ±30% wander, 40 seeds
 each: worst case **one keystroke lost in a hundred**.
 
-A third test was written and thrown away. Between roughly 3 and 22 reports a second an
+**Then it went wrong a third time, and this one was in the counting rather than the
+filtering.** Every measurement above modelled a keystroke as *one* input event. It is
+two: `GetLastInputInfo` moves on the press and again on the release, so a test for "a
+lone event with 25ms of quiet on both sides" describes a keystroke only while the hand
+is slow enough that the release is isolated too. Modelled against real press/release
+pairs the inference broke in both directions at once — below about 8 characters a
+second it counted every character **twice** (2.00x, so gentle typing pinned the cat at
+full overheat and never let go), and above 12 it counted **2–9% of them** (kps ≈ 1.1
+against a `typing` gate of 2.5, so the kneading reaction never fired at all). One wrong
+unit, two opposite symptoms, and the friend who reported it could only describe the
+second half.
+
+Runs are what fix it. Events within `KeyGap` of one another are one run; a run over
+`RunCap` is a device and is written off; a settled run is paired press-to-release, so
+`Keys` counts key *downs* and is finally in the same unit as the number
+`CGEventSource.counterForEventType` hands the macOS build. Exact at 5, 10, 14 and 18
+characters a second.
+
+That is also why the backstop counts events and not keystrokes. A person typing at the
+sustained human record produces 30 input events a second and is indistinguishable from a
+30Hz device, so the band has to be twice as wide as it looks. Nothing real is given up:
+every device that reports while idle runs at 60Hz or more, which forms one unbroken run
+and is closed by `RunCap` rather than by the rate — 0 phantoms at 8.4ms and 15.6ms,
+unchanged.
+
+A third test was written and thrown away. Between roughly 3 and 44 reports a second an
 idle device is inside human range *and* spaced too far apart to trip the gap test, so
 neither test above reaches it. Evenness looks like the answer — a clock repeats its
 interval exactly and hands never do — but the stream has already been through an 8.3ms
@@ -330,6 +360,10 @@ been checking are asserted mechanically instead.
   disagreeing by 40ms, must produce zero inferred keystrokes — and typing on a still
   mouse must still be counted exactly. Nobody can move a mouse on a CI runner, so it is
   replayed. The logic is deliberately split out of the P/Invoke so that it can be.
+- **typing is counted exactly, at four speeds, from press/release pairs.** 5, 10, 14 and
+  18 characters a second, each key held 90ms, all counted to the key. This is the check
+  that the previous design passed only because it was fed one event per keystroke; it
+  now replays both edges, which is what the operating system actually reports.
 - **the theme picker's thumbnail is the standing cat alone.** Every opaque pixel it
   draws falls inside the standing cat's own bounding box, so a pose — a whole second
   drawing of the animal — cannot appear beside it. It did, in Settings and on the

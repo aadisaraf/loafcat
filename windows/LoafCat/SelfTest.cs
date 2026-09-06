@@ -111,28 +111,47 @@ public static class SelfTest
             IdleChatter(spacingMs: 8.4) == 0,
             $"{IdleChatter(spacingMs: 8.4)} phantom keystroke(s) with a 1ms system timer");
 
-        // And at 50 a second, which is the slowest a device can report and still be
-        // closed outright by the gap test.
-        Check("...and at the edge of what the gap test reaches",
-            IdleChatter(spacingMs: 20) == 0,
+        // And at 50 a second, which is the slowest a device can report and still form
+        // an unbroken run. One event of it lands on the far side of a poll boundary and
+        // starts a run of its own; a single keystroke in five seconds is 0.2 a second
+        // against a kneading gate of 2.5, so it is below anything the cat can see.
+        Check("...and at the edge of what the run test reaches",
+            IdleChatter(spacingMs: 20) <= 1,
             $"{IdleChatter(spacingMs: 20)} phantom keystroke(s) from a 50Hz stream");
 
-        // Slow enough to look isolated, still far faster than a person: caught by the
-        // sustained-rate backstop rather than by the gap test. One burst gets through
-        // before there is enough evidence to write the stream off, which is the cost of
-        // not delaying every real keystroke by a full second to be sure of it. Measured
-        // at 22; asserted loosely because the exact figure is a property of the window
-        // length, and the thing that matters is that it is a burst and not a stream.
-        Check("a slower inhuman stream is written off after one burst",
-            IdleChatter(spacingMs: 33) < 30,
-            $"{IdleChatter(spacingMs: 33)} in 5s, against 151 unfiltered");
+        // Slow enough to leave a gap between every pair of events, and therefore only
+        // reachable by the sustained-rate backstop. That backstop now sits at 44 input
+        // events a second rather than 22, because a keystroke is a press AND a release
+        // and 22 keystrokes a second is 44 events — so a 30Hz device is inside the band
+        // this class deliberately leaves open, exactly as a person typing at fifteen
+        // characters a second is. They are the same stream; nothing here can tell them
+        // apart, and the note above `KeyGap` says so at length.
+        //
+        // Asserted anyway, because "it is in the open band" and "it is unbounded" are
+        // different claims: 151 unfiltered events become 74 keystrokes and not 151.
+        Check("a 30Hz device is halved but not written off",
+            IdleChatter(spacingMs: 33) < 90,
+            $"{IdleChatter(spacingMs: 33)} in 5s, against 151 unfiltered — the open band");
 
         // The other direction, which is the failure that would make all of it pointless:
-        // conservative is only acceptable if actual typing still registers.
+        // conservative is only acceptable if actual typing still registers. Every one of
+        // these presses a key AND releases it, which is what a keyboard does and what
+        // these tests used to leave out. Modelling one event per character is what hid
+        // the bug this whole rewrite is about: judged one at a time, a release and the
+        // next press disqualified each other for being 10ms apart, and above ten
+        // characters a second between 91% and 98% of real typing was thrown away.
         Check("typing on a still mouse is counted exactly", Typing(0.1, 20, 3.0) == 20,
               $"{Typing(0.1, 20, 3.0)} of 20 keystrokes at ten a second");
         Check("...and at a gentler pace", Typing(0.2, 25, 6.0) == 25,
               $"{Typing(0.2, 25, 6.0)} of 25 keystrokes at five a second");
+        // The two that used to fail, and the reason this file was reported as broken:
+        // fourteen characters a second is `overheat.kps_max`, so a cat that cannot see
+        // it cannot reach the state the art was drawn for.
+        Check("...and at the pace that is supposed to redden the cat",
+              Typing(0.07, 30, 3.0) == 30,
+              $"{Typing(0.07, 30, 3.0)} of 30 keystrokes at fourteen a second");
+        Check("...and faster than anyone sustains", Typing(0.055, 40, 3.0) == 40,
+              $"{Typing(0.055, 40, 3.0)} of 40 keystrokes at eighteen a second");
 
         // Suppression has to end when the device does, or one controller left plugged in
         // would switch the cat's typing reactions off for the rest of the session.
@@ -141,7 +160,8 @@ public static class SelfTest
             double dt = 1.0 / 120.0;
             int typed = 0;
             double nextKey = 5.0;
-            for (int i = 0; i < 1200; i++)     // ten seconds
+            double? release = null;
+            for (int i = 0; i < 1260; i++)     // ten and a half seconds
             {
                 double now = i * dt;
                 // Two seconds of chatter, then three seconds of nothing, then typing.
@@ -149,17 +169,25 @@ public static class SelfTest
                 {
                     k.NoteInput((uint)(now * 1000), now);
                 }
+                else if (release is { } up && now >= up)
+                {
+                    k.NoteInput((uint)(now * 1000), now);
+                    release = null;
+                }
                 else if (typed < 25 && now >= nextKey)
                 {
                     k.NoteInput((uint)(now * 1000), now);
                     typed++;
+                    release = now + 0.09;      // a key is held for a moment, then let go
                     nextKey = now + 0.2;
                 }
                 k.Resolve(now);
             }
             // 25 keys in the five seconds after it stops. Exact rather than approximate:
             // the hold is 2s and the typing starts 3s after the last chatter, so nothing
-            // about this is meant to be near a boundary.
+            // about this is meant to be near a boundary. The loop runs half a second past
+            // the last release so the final run has a gap after it to be settled by —
+            // a run is only over once nothing has followed it for `KeyGap`.
             Check("typing works again once the device stops", k.Keys == 25,
                   $"{k.Keys} of 25 keystrokes after the chatter ended, {k.Ignored} ignored");
         }
@@ -190,21 +218,39 @@ public static class SelfTest
     }
 
     /// `count` keystrokes `gap` seconds apart, on a still mouse, over `seconds`.
-    private static long Typing(double gap, int count, double seconds)
+    ///
+    /// Each one is TWO input events — the key going down and the key coming back up,
+    /// both of which reset `GetLastInputInfo`. Modelling a character as one event is
+    /// what let the original inference pass this test while failing on a real keyboard:
+    /// once the hold and the gap to the next key are comparable, the release and the
+    /// following press land inside `KeyGap` of each other, and judged individually they
+    /// used to cancel out.
+    private static long Typing(double gap, int count, double seconds, double hold = 0.09)
     {
+        // Presses on a schedule, each release one hold later, INTERLEAVED — a release
+        // must never be allowed to postpone the next press. Past about twelve characters
+        // a second the hold outlasts the gap and a hand genuinely is still holding one
+        // key as it presses the next, and that overlap is exactly the shape whose two
+        // halves used to cancel each other out.
+        var events = new List<double>();
+        for (int n = 0; n < count; n++)
+        {
+            events.Add(n * gap);
+            events.Add(n * gap + hold);
+        }
+        events.Sort();
+
         var k = new KeyInference(0);
         double dt = 1.0 / 120.0;
-        int injected = 0;
-        double nextKey = 0;
+        int next = 0;
         for (int i = 0; i < (int)(seconds * 120); i++)
         {
             double now = i * dt;
-            if (injected < count && now >= nextKey)
-            {
-                k.NoteInput((uint)(now * 1000), now);
-                injected++;
-                nextKey = now + gap;
-            }
+            // `GetLastInputInfo` reports one tick per poll, so everything inside the
+            // same 8.3ms frame is indistinguishable from a single event.
+            bool any = false;
+            while (next < events.Count && events[next] <= now) { next++; any = true; }
+            if (any) k.NoteInput((uint)(now * 1000), now);
             k.Resolve(now);
         }
         return k.Keys;
@@ -542,8 +588,18 @@ public static class SelfTest
         CheckDuplicateFrames(theme, atlas);
     }
 
-    /// Opaque pixels on the composed surface. The cat is the only thing drawn into it,
-    /// so this is "how much cat is there" without needing to know what shape it is.
+    /// The theme picker's thumbnail, checked on its pixels rather than on its plan.
+    ///
+    /// `atlas.Order` is every part a theme ships, poses included, and a pose is a
+    /// second drawing of the WHOLE cat rather than a rearrangement of this one — so a
+    /// thumbnail that walked the raw order drew the peek cat lying against its edge
+    /// beside the standing one. It shipped that way, in Settings and in the installer
+    /// window, and nothing about it is visible from a build log.
+    ///
+    /// Asserted against the standing cat's own bounding box rather than against a
+    /// second composite, so the check does not simply re-run the code it is checking.
+    /// Both poses reach outside that box by construction — each is parked against the
+    /// screen edge it peeks round — so ink outside it is a pose and nothing else.
     private static void CheckThumbnail(string theme, Atlas atlas)
     {
         var standing = atlas.Standing.Select(kv => kv.Value).ToList();
@@ -583,6 +639,8 @@ public static class SelfTest
         ThemeThumbnail.Clear();
     }
 
+    /// Opaque pixels on the composed surface. The cat is the only thing drawn into it,
+    /// so this is "how much cat is there" without needing to know what shape it is.
     private static int OpaqueCount(CatView view)
     {
         int n = 0;

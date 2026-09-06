@@ -245,6 +245,28 @@ down separately rather than assuming the Mac answer transfers.
   second with a generous ±15% wander it discarded 45 of 159 genuine keystrokes. Tried at
   two window lengths, same answer both times.
 
+- **A keystroke is TWO input events, and treating each one as a keystroke broke real
+  typing in both directions at once.** `GetLastInputInfo` moves on the press *and* on
+  the release, so isolation — "a lone event with 25ms of quiet either side" — describes
+  a keystroke only while the hand is slow enough that the release is also isolated.
+  Measured against a Python model of the inference: below about 8 characters a second
+  every character was counted **twice** (2.00x, so gentle typing pinned the cat at full
+  overheat), and above 12 it counted **2–9% of them** (kps ≈ 1.1 against a `typing`
+  gate of 2.5, so the kneading reaction never fired at all). Both halves came from the
+  same wrong unit. What works is to count *runs*: events within `KeyGap` of each other
+  are one uninterrupted run, a run of more than `RunCap` events is not a hand and is
+  written off, and a settled run is paired press-to-release so `Keys` ends up in the
+  same unit as the key-DOWN count `CGEventSource.counterForEventType` hands the macOS
+  build. Exact at 5, 10, 14 and 18 characters a second.
+
+- **The device band that follows is deliberately twice as wide, and it has to be.** A
+  person typing at the sustained human record produces 30 input events a second, which
+  is indistinguishable from a 30Hz device — so the rate limit is 44 *events* a second
+  and not 22 keystrokes. Nothing real is lost: every device that reports while idle
+  runs at 60Hz or more, forms one unbroken run, and is closed outright by `RunCap`
+  rather than by the rate limit. Measured 0 phantom keystrokes at 8.4ms and 15.6ms,
+  unchanged from before.
+
 - **A snap gesture cannot use a modifier key, and the dwell is better anyway.**
   `GetAsyncKeyState`, `GetKeyState` and `GetKeyboardState` are banned outright, so
   there is no way to read Alt that both ports could share — and macOS itself moved to
