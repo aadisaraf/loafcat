@@ -23,19 +23,26 @@ public static class DragFeelExtensions
 
     /// Multipliers on the atlas baseline rather than replacements, so a theme that
     /// retunes the feel keeps these three meaningful instead of silently drifting.
+    ///
+    /// Much narrower than they used to be (1.35 and 1.75), because what they scale
+    /// changed underneath them: the atlas baseline is now the full reference hang, 2.4x
+    /// the cat's own height, rather than the timid 0.6 it used to be. The old
+    /// multipliers on the new baseline would have hung the springy cat 117px below its
+    /// own paws — past the transparent margin, and therefore sliced off by the window
+    /// edge. generate_art.py asserts the top of this range fits.
     public static double HangScale(this DragFeel f) => f switch
     {
         DragFeel.Subtle => 1.0,      // the atlas baseline, untouched
-        DragFeel.Normal => 1.35,
-        DragFeel.Springy => 1.75,
+        DragFeel.Normal => 1.12,
+        DragFeel.Springy => 1.25,
         _ => 1.0,
     };
 
     public static double MaxScale(this DragFeel f) => f switch
     {
         DragFeel.Subtle => 1.0,
-        DragFeel.Normal => 1.38,
-        DragFeel.Springy => 1.80,
+        DragFeel.Normal => 1.12,
+        DragFeel.Springy => 1.25,
         _ => 1.0,
     };
 
@@ -61,11 +68,10 @@ public static class DragFeelExtensions
 /// are genuinely separate tastes: a big slow stretch and a small snappy one are both
 /// coherent, and one control cannot give you either.
 ///
-/// The atlas deliberately makes the gesture asymmetric — `rise_rate` 9.0 against
-/// `fall_rate` 1.8, so a yank snaps taut about five times faster than it eases back,
-/// plus `stretch_hold_ms` before it starts easing at all. That asymmetry is what makes
-/// it read as elastic rather than as a slider being dragged, so these presets scale it
-/// rather than flattening it.
+/// The atlas deliberately makes the gesture asymmetric — `rise_px_s` 400 against
+/// `fall_px_s` 80, so the cat snaps taut five times faster than it gives anything back.
+/// That asymmetry is what makes it read as elastic rather than as a slider being
+/// dragged, so these presets scale it rather than flattening it.
 public enum StretchTempo
 {
     Snappy,
@@ -100,9 +106,10 @@ public static class StretchTempoExtensions
     /// meaningful instead of silently drifting. Normal is 1.0 by definition — the
     /// shipped tuning IS the normal preset.
 
-    /// The onset. Barely scaled: at 9.0 the rise is already close to instant, so making
-    /// it faster is imperceptible and making it much slower loses the snap the whole
-    /// gesture is built on.
+    /// The onset — which is now the lift itself, all 170ms of it, rather than a detail of
+    /// how a yank registers. Kept narrow deliberately: much faster and the cat arrives at
+    /// full length before the eye has followed the cursor, much slower and the lift stops
+    /// reading as a consequence of the grab.
     public static double RiseScale(this StretchTempo t) => t switch
     {
         StretchTempo.Snappy => 1.25,
@@ -112,13 +119,15 @@ public static class StretchTempoExtensions
         _ => 1.0,
     };
 
-    /// The recovery. This is the one that is actually felt.
+    /// Giving length back WHILE STILL HELD, which now happens only when the shake
+    /// headroom relaxes — the hang itself never comes back down until you let go. The
+    /// recovery a person actually watches is ReleaseDampingScale below.
     public static double FallScale(this StretchTempo t) => t switch
     {
-        StretchTempo.Snappy => 3.0,      // fall_rate 1.8 -> 5.4
-        StretchTempo.Quick => 1.8,       // -> 3.24
-        StretchTempo.Normal => 1.0,      // -> 1.8
-        StretchTempo.Languid => 0.6,     // -> 1.08
+        StretchTempo.Snappy => 3.0,      // fall_px_s 80 -> 240
+        StretchTempo.Quick => 1.8,       // -> 144
+        StretchTempo.Normal => 1.0,      // -> 80
+        StretchTempo.Languid => 0.6,     // -> 48
         _ => 1.0,
     };
 
@@ -135,7 +144,8 @@ public static class StretchTempoExtensions
     /// The bounce after you let go, which measurement says is most of what "slow to
     /// unstretch" actually means: the cat snaps home in about 110ms and then wobbles,
     /// +0.28 at 300ms and +0.03 at 620ms, taking two seconds to be properly still.
-    /// fall_rate has nothing to do with that -- this spring does.
+    /// fall_px_s has nothing to do with that -- this spring does, and now that the hang
+    /// holds flat until release, this spring is the ONLY thing that does.
     ///
     /// Note the direction. Spring.Damping is the fraction of velocity KEPT each frame
     /// -- velocity *= pow(damping, h * 60) -- so a LOWER number is a more damped spring
@@ -171,9 +181,13 @@ public static class StretchTempoExtensions
 ///  1. **A deadzone.** A press registers only a *pending* drag. Without the 4px
 ///     threshold every click-to-pet becomes an accidental lift, which is the single
 ///     most irritating bug a desktop pet can have.
-///  2. **A hang driven by HOLD TIME, not drag distance.** This is the whole trick.
-///     Distance-driven stretch reads as a rubber band anchored to the cursor;
-///     time-driven stretch reads as a warm animal slowly giving in to gravity.
+///  2. **A hang that is a LENGTH, not a rubber band.** Distance-driven stretch reads
+///     as a band anchored to the cursor. This one is a constant: lift the cat and it
+///     lengthens to `hang_px` over `hang_px / rise_px_s`, and then it stays there for as
+///     long as you hold it, however far or fast you carry it. Measured off the reference
+///     behaviour frame by frame — a flat 2.4x, no sag, no gathering back in — and it is
+///     what makes a carried cat read as dangling rather than as a value easing towards
+///     something.
 ///  3. **A pendulum.** Impulse comes from drag *acceleration* through a power law, so
 ///     a flick swings hard and a slow pan barely disturbs it.
 ///
@@ -196,26 +210,27 @@ public sealed class DragModule : ICatModule
     {
         public double DeadzonePx = 4;
         public double StretchHoldMs = 900;
-        public double StretchMax = 1.00;
-        public double HangRest = 0.34;
-        public double HangRate = 6.0;
+        // Lengths, in canvas pixels of added height. See the atlas on why these are
+        // pixels and not multiples of the span below the grab.
+        public double MaxPx = 76;
+        public double HangPx = 67;
         public double YankSpeedRef = 900;
         public double YankAttack = 14;
         public double YankRelease = 3.2;
         public double SpeedSmoothing = 8.0;
-        public double RiseRate = 9.0;
-        public double FallRate = 1.8;
+        public double RisePxS = 400;
+        public double FallPxS = 80;
         public double ReleaseStiffness = 468;
         public double ReleaseDamping = 0.78;
         public double ReleaseVelocityGain = 0.35;
         public double ReleaseSettleEps = 0.0001;
-        public double LandingSquashGain = 0.5;
+        public double LandingSquashPerPx = 0.0130;
         public double GrabMinY = 26;
         public double GrabMaxY = 34;
         public double HeadLagPx = 1.5;
         public double HeadSwingShare = 0.08;
         public double ShadowShrink = 0.65;
-        public double SwingLengthPx = 14;
+        public double SwingArmFrac = 0.5;
         public double SwingMaxDeg = 45;
         public double SwingImpulse = 0.0012;
         public double SwingAccelCap = 20;
@@ -235,21 +250,27 @@ public sealed class DragModule : ICatModule
             double V(string k, double d) => a.Tune("drag", k, d);
             DeadzonePx = V("deadzone_px", DeadzonePx);
             StretchHoldMs = V("stretch_hold_ms", StretchHoldMs);
-            StretchMax = V("stretch_max", StretchMax);
-            HangRest = V("hang_rest", HangRest);
+            MaxPx = V("max_px", MaxPx);
+            HangPx = V("hang_px", HangPx);
             var feel = DragFeelExtensions.Current;
-            HangRest *= feel.HangScale();
-            StretchMax *= feel.MaxScale();
-            HangRate = V("hang_rate", HangRate);
+            HangPx *= feel.HangScale();
+            MaxPx *= feel.MaxScale();
+            // Nothing may hang past the transparent margin, because the window ends
+            // there and a paw across that line is simply gone. The generator asserts it
+            // for the themes shipped here; this is the same guarantee for a community
+            // theme, which nothing in this build gets to check first.
+            double room = a.Layout.PadY + a.Canvas - InkBottom(a);
+            MaxPx = Math.Min(MaxPx, Math.Max(room, 1));
+            HangPx = Math.Min(HangPx, MaxPx);
             YankSpeedRef = V("yank_speed_ref", YankSpeedRef);
             YankAttack = V("yank_attack", YankAttack);
             YankRelease = V("yank_release", YankRelease);
             SpeedSmoothing = V("speed_smoothing", SpeedSmoothing);
-            RiseRate = V("rise_rate", RiseRate);
-            FallRate = V("fall_rate", FallRate);
+            RisePxS = V("rise_px_s", RisePxS);
+            FallPxS = V("fall_px_s", FallPxS);
             var tempo = StretchTempoExtensions.Current;
-            RiseRate *= tempo.RiseScale();
-            FallRate *= tempo.FallScale();
+            RisePxS *= tempo.RiseScale();
+            FallPxS *= tempo.FallScale();
             StretchHoldMs *= tempo.HoldScale();
             ReleaseStiffness = V("release_stiffness", ReleaseStiffness);
             ReleaseDamping = V("release_damping", ReleaseDamping);
@@ -259,13 +280,13 @@ public sealed class DragModule : ICatModule
                 Math.Min(ReleaseDamping * tempo.ReleaseDampingScale(), 0.97));
             ReleaseVelocityGain = V("release_velocity_gain", ReleaseVelocityGain);
             ReleaseSettleEps = V("release_settle_eps", ReleaseSettleEps);
-            LandingSquashGain = V("landing_squash_gain", LandingSquashGain);
+            LandingSquashPerPx = V("landing_squash_per_px", LandingSquashPerPx);
             GrabMinY = V("grab_min_y", GrabMinY);
             GrabMaxY = V("grab_max_y", GrabMaxY);
             HeadLagPx = V("head_lag_px", HeadLagPx);
             HeadSwingShare = V("head_swing_share", HeadSwingShare);
             ShadowShrink = V("shadow_shrink", ShadowShrink);
-            SwingLengthPx = V("swing_length_px", SwingLengthPx);
+            SwingArmFrac = V("swing_arm_frac", SwingArmFrac);
             SwingMaxDeg = V("swing_max_deg", SwingMaxDeg);
             SwingImpulse = V("swing_impulse", SwingImpulse);
             SwingAccelCap = V("swing_accel_cap", SwingAccelCap);
@@ -288,16 +309,18 @@ public sealed class DragModule : ICatModule
     private double _grabY = 30;
     private double _heldSeconds;
 
-    /// Gravity droop while held. Deliberately NOT a spring: a spring overshoots, and an
-    /// overshooting droop makes the cat dip below its resting length as the yank
-    /// decays, then rise back — which reads as a glitch. Exponential approach is
-    /// monotonic.
-    private double _hang;
     private double _yank;
     private double _dragSpeed;
 
     // --- hang ---------------------------------------------------------------
-    private double _stretch;
+    /// How much longer the cat is than it is standing up, in canvas pixels. The whole
+    /// simulation runs in this unit and converts once, at the very end, into the
+    /// fraction the rig wants — which is why the length no longer depends on where
+    /// along the scruff the cat happened to be grabbed.
+    private double _stretchPx;
+    /// Canvas pixels between the grab and the lowest ink, fixed for the gesture. The
+    /// divisor for that conversion, and nothing else.
+    private double _spanPx = 13;
     /// Only runs after release. While held, the stretch is a pure function of how long
     /// the cat has hung, so a spring would just fight the hold curve.
     private Spring _release = new(468, 0.78);
@@ -374,6 +397,7 @@ public sealed class DragModule : ICatModule
         // lift happens at the neck — and it guarantees there is always body below the
         // anchor to stretch, which a grab on the paws would not.
         _grabY = MathX.Clamp(point.Y, _t.GrabMinY, _t.GrabMaxY);
+        _spanPx = Math.Max(InkBottom(v.Atlas) - _grabY, 1);
         return true;
     }
 
@@ -406,10 +430,9 @@ public sealed class DragModule : ICatModule
     {
         _phase = Phase.Dragging;
         _heldSeconds = 0;
-        _hang = 0;
         _yank = 0;
         _dragSpeed = 0;
-        _stretch = 0;
+        _stretchPx = 0;
         _angle = 0;
         _angVel = 0;
         _smoothedVel = 0;
@@ -422,8 +445,8 @@ public sealed class DragModule : ICatModule
         // Overshoot rather than snap: launch the spring inward at a speed set by how far
         // it was stretched, so it boings past neutral into a compression and back. Gain
         // is per 60Hz frame; Spring integrates per second.
-        _release.Value = _stretch;
-        _release.Velocity = -_stretch * _t.ReleaseVelocityGain * 60;
+        _release.Value = _stretchPx;
+        _release.Velocity = -_stretchPx * _t.ReleaseVelocityGain * 60;
     }
 
     // MARK: - Tick
@@ -467,13 +490,20 @@ public sealed class DragModule : ICatModule
                 _heldSeconds += dt;
                 var moved = ConsumePointer(ctx.Scale);
 
-                // Two components, because a single hold-time ramp could only ever
-                // increase — so the cat reached full stretch and stayed there for as
-                // long as you held it, with no way to relax.
+                // Two channels:
                 //
-                //   hang  gravity. Springs to a modest resting droop and stays.
-                //   yank  how hard it is being thrown around right now. Rises fast,
-                //         falls slower, and decays to nothing when you stop moving.
+                //   hangPx  a constant. A cat held up by the scruff dangles at its full
+                //           length for as long as you hold it — it does not gather
+                //           itself back in, and it does not sag further either. The
+                //           reference behaviour holds a flat 2.4x for the whole drag,
+                //           measured frame by frame, and this is that flat line.
+                //   yank    how hard it is being thrown around right now. Rises fast,
+                //           falls slower, and decays to nothing when you stop moving.
+                //
+                // Together: pick it up and it lengthens over `hang_px / rise_px_s` and
+                // stays; whip it about and it gains a little more; drop it and the
+                // release spring brings it home. Everything the eye reads as "slowly
+                // unstretching" happens after the release, not during the drag.
                 //
                 // Smoothed, not instantaneous. A raw per-tick delta at 120Hz is mostly
                 // noise, and feeding that into a whole-pixel quantiser downstream makes
@@ -481,26 +511,27 @@ public sealed class DragModule : ICatModule
                 double rawSpeed = MathX.Hypot(moved.X, moved.Y) / Math.Max(dt, 0.0001);
                 _dragSpeed += (rawSpeed - _dragSpeed) * Math.Min(1, _t.SpeedSmoothing * dt);
                 double speed = _dragSpeed;
-                _hang += (_t.HangRest - _hang) * Math.Min(1, _t.HangRate * dt);
 
-                double headroom = Math.Max(_t.StretchMax - _t.HangRest, 0);
+                double headroom = Math.Max(_t.MaxPx - _t.HangPx, 0);
                 double yankTarget = Math.Min(speed / Math.Max(_t.YankSpeedRef, 1), 1) * headroom;
                 // Asymmetric: a yank must register on the frame it happens, but relaxing
                 // slowly is what makes it read as weight rather than a snap.
                 double rate = yankTarget > _yank ? _t.YankAttack : _t.YankRelease;
                 _yank += (yankTarget - _yank) * Math.Min(1, rate * dt);
 
-                // The floor is the hang, explicitly. `hang + yank` alone can dip below
-                // the settled hang height, because hang is still RISING from zero while
-                // yank is already falling — so the cat shrinks past where gravity holds
-                // it and then climbs back. Gravity does not let go.
-                double target = Math.Max(Math.Min(_hang + _yank, _t.StretchMax), _hang);
+                // No `Max(..., hang)` floor any more, and none needed: the hang is a
+                // constant rather than something still climbing out of zero, so the sum
+                // cannot dip beneath it and the cat cannot shrink mid-carry.
+                double target = Math.Min(_t.HangPx + _yank, _t.MaxPx);
 
                 // Rate-limit what is actually drawn. Downstream the extent is snapped to
                 // whole logical pixels, so an abrupt change in the target crosses several
                 // pixel boundaries in one frame and reads as a jump rather than a settle.
-                double limit = (target > _stretch ? _t.RiseRate : _t.FallRate) * dt;
-                _stretch += MathX.Clamp(target - _stretch, -limit, limit);
+                // This limiter IS the lift: the target is at full length from the first
+                // frame of the drag, and RisePxS is what makes getting there take the
+                // 170ms it should.
+                double limit = (target > _stretchPx ? _t.RisePxS : _t.FallPxS) * dt;
+                _stretchPx += MathX.Clamp(target - _stretchPx, -limit, limit);
 
                 StepSwing(dt, f, moved.X, dragging: true);
 
@@ -524,16 +555,15 @@ public sealed class DragModule : ICatModule
                 {
                     _release.Snap(0);
                 }
-                _stretch = _release.Value;
+                _stretchPx = _release.Value;
                 _yank = 0;
-                _hang = 0;
                 ConsumePointer(null);
                 StepSwing(dt, f, 0, dragging: false);
 
                 if (_release.Value == 0 && _release.Velocity == 0 && _angle == 0 && _angVel == 0)
                 {
                     _phase = Phase.Idle;
-                    _stretch = 0;
+                    _stretchPx = 0;
                     v.Rig.ClearDrag();
                     return ModuleOutput.None;
                 }
@@ -544,16 +574,25 @@ public sealed class DragModule : ICatModule
         // The hang only ever elongates. The spring's negative excursion is the landing
         // squash instead, which is exactly what SetSquash is for — and being uniform is
         // right for an impact, where the whole cat compresses.
+        // The one place pixels become the fraction the rig works in. Dividing here
+        // rather than storing a fraction is what makes a scruff-grab and a rump-grab
+        // produce the same length of cat.
         v.Rig.SetDrag(
-            stretch: Math.Max(0, _stretch),
+            stretch: Math.Max(0, _stretchPx) / _spanPx,
             grabY: _grabY,
-            leanPx: Math.Sin(_angle) * _t.SwingLengthPx,
+            leanPx: LeanPx,
             headLagPx: _t.HeadLagPx,
             headSwingShare: _t.HeadSwingShare,
             shadowShrink: _t.ShadowShrink);
-        outv.Squash = 1 + Math.Min(0, _stretch) * _t.LandingSquashGain;
+        outv.Squash = 1 + Math.Min(0, _stretchPx) * _t.LandingSquashPerPx;
         return outv;
     }
+
+    /// The pendulum's arm is how long the cat currently is below the grab, so a
+    /// stretched cat whips further than a compact one from the same angle. A constant
+    /// here is why a 2.2x cat used to shake by seven degrees.
+    private double LeanPx =>
+        Math.Sin(_angle) * (_spanPx + Math.Max(0, _stretchPx)) * _t.SwingArmFrac;
 
     /// Applies this tick's pointer movement to the window and returns it.
     private Pt ConsumePointer(double? scale)
@@ -645,16 +684,15 @@ public sealed class DragModule : ICatModule
             _ => "?",
         };
         double hold = Math.Min(1, _heldSeconds * 1000 / Math.Max(_t.StretchHoldMs, 1));
-        double bottom = View is { } v ? InkBottom(v.Atlas) : 47;
         return new DebugState(
             name,
             _phase == Phase.Dragging ? hold : 0,
-            _stretch,
-            Math.Max(0, _stretch) * Math.Max(0, bottom - _grabY),
-            1 + Math.Min(0, _stretch) * _t.LandingSquashGain,
+            _stretchPx / _spanPx,
+            Math.Max(0, _stretchPx),
+            1 + Math.Min(0, _stretchPx) * _t.LandingSquashPerPx,
             _angle * 180 / Math.PI,
             _angVel,
-            Math.Sin(_angle) * _t.SwingLengthPx);
+            LeanPx);
     }
 }
 
@@ -688,7 +726,18 @@ internal sealed class DragDemo
     private double _releasedAt;
     private double _lastLoud;
 
-    private void Track(DragModule.DebugState s)
+    // The lift: how long the cat gets on being picked up, and how long that takes.
+    // Neither is visible in the peaks above, because the shake saturates the length at
+    // `max_px` whatever the pickup does -- so without these two the demo would print an
+    // identical PASS for a build that had lost the lift entirely.
+    //
+    // _liftPx is the plateau at the end of the hold; _liftMovedAt dates the last frame
+    // that was still climbing. A plateau is exactly what makes the second measurable.
+    private double _liftPx;
+    private double _liftMovedAt;
+    private double _liftPrev = -1;
+
+    private void Track(DragModule.DebugState s, double shakeStart)
     {
         _maxStretch = Math.Max(_maxStretch, s.Stretch);
         _minStretch = Math.Min(_minStretch, s.Stretch);
@@ -698,6 +747,12 @@ internal sealed class DragDemo
         // the first quiet one, because the recovery bounces and an early sample sits in
         // a trough. The settle line is the pendulum, which is a different spring.
         if (_released && Math.Abs(s.Stretch) > 0.02) _lastLoud = _t;
+        if (_t < shakeStart)
+        {
+            if (Math.Abs(s.DropPx - _liftPrev) > 0.05) _liftMovedAt = _t;
+            _liftPrev = s.DropPx;
+            _liftPx = s.DropPx;
+        }
         _maxAngle = Math.Max(_maxAngle, Math.Abs(s.AngleDeg));
         _maxDrop = Math.Max(_maxDrop, s.DropPx);
         _minSquash = Math.Min(_minSquash, s.Squash);
@@ -708,9 +763,12 @@ internal sealed class DragDemo
         $"# demo: peaks stretch=+{_maxStretch:F4}/{_minStretch:F4} " +
         $"angle={_maxAngle:F3}deg dropPx={_maxDrop:F2} " +
         $"squash={_minSquash:F4} leanPx={_maxLean:F2} " +
-        $"quietMs={Math.Max(0, (_lastLoud - _releasedAt) * 1000):F0}";
+        $"quietMs={Math.Max(0, (_lastLoud - _releasedAt) * 1000):F0} " +
+        $"liftPx={_liftPx:F2} liftMs={Math.Max(0, (_liftMovedAt - BreakAt) * 1000):F0}";
 
     private static readonly Pt GrabAt = new(24, 36);
+    private const double StartAt = 0.10;
+    private const double BreakAt = StartAt + 0.02;
     private const double HoldSeconds = 0.80;
     private const double ShakeAmp = 40;
     private const double ShakePeriod = 0.30;
@@ -720,8 +778,8 @@ internal sealed class DragDemo
     public void Advance(DragModule m, in TickContext ctx)
     {
         double dt = ctx.Dt;
-        const double startAt = 0.10;
-        const double breakAt = startAt + 0.02;
+        const double startAt = StartAt;
+        const double breakAt = BreakAt;
         double shakeStart = breakAt + HoldSeconds;
         double shakeEnd = shakeStart + ShakePeriod * ShakeCycles;
 
@@ -759,7 +817,7 @@ internal sealed class DragDemo
 
         if (_t < startAt) return;
         var s = m.Debug();
-        Track(s);
+        Track(s, shakeStart);
 
         // Sign first, THEN pad — which is what Swift's `%+.3f` does. Padding the
         // number and prepending the sign gives "+ 7.025" where the other build prints

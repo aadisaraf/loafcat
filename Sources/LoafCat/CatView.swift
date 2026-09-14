@@ -476,7 +476,7 @@ final class CatView: NSView {
 
             l.position = containerPosition(for: part, offset: t.offset)
 
-            if t.scale.width != 1 || t.scale.height != 1 {
+            if t.scale.width != 1 || t.scale.height != 1 || t.shearX != 0 {
                 let pivot = atlas.pivot(for: name)
                 let px = (pivot.x - part.origin.x) * scale
                 let py = (part.origin.y + part.size.height - pivot.y) * scale
@@ -484,6 +484,22 @@ final class CatView: NSView {
                 m = CATransform3DTranslate(m, px, py, 0)
                 m = CATransform3DScale(m, t.scale.width, t.scale.height, 1)
                 m = CATransform3DTranslate(m, -px, -py, 0)
+                if t.shearX != 0 {
+                    // Applied BEFORE the scale — concat left-multiplies, and these
+                    // are row vectors — which costs nothing and keeps the arithmetic
+                    // in the part's own unscaled height. A vertical scale does not
+                    // touch x, so the bottom edge still lands exactly `shearX` away
+                    // whatever the torso has been stretched to.
+                    //
+                    // `anchorPoint` is zero and the container is y-up, so layer-local
+                    // y = 0 is the part's BOTTOM. The top is therefore the fixed end.
+                    let h = part.size.height * scale
+                    let s = t.shearX * scale
+                    var shear = CATransform3DIdentity
+                    shear.m21 = -s / max(h, 0.0001)
+                    shear.m41 = s
+                    m = CATransform3DConcat(shear, m)
+                }
                 l.transform = m
             } else if !CATransform3DIsIdentity(l.transform) {
                 l.transform = CATransform3DIdentity

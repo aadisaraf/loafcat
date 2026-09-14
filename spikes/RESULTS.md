@@ -336,3 +336,76 @@ Windows goes one further and counts opaque pixels on the composed surface: a pos
 draw *something*, and must draw *less* than the standing cat. A pose that is not
 smaller is the standing cat still being drawn underneath it.
 
+
+## S8 — What "stretches like mochi" actually measures
+
+Four rounds of tuning the drag by feel produced a cat that stretched by 8px on being
+picked up and then, briefly, 22px on a hard shake. Measuring the reference behaviour
+frame by frame — a 60fps capture, thresholding the outline and taking the silhouette's
+bounding box per frame — says every one of those rounds was tuning the wrong things.
+
+### Result: **2.42x, in 170ms, and then flat**
+
+One clean lift, sampled at 30fps against a standing height of 200px:
+
+```
+t=5.267  H= 197   1.00x   standing
+t=5.300  H= 222   1.11x   the lift starts
+t=5.367  H= 323   1.61x
+t=5.433  H= 436   2.18x
+t=5.467  H= 485   2.42x   full length, 167ms after it started
+t=5.500 .. 5.800  485     2.42x, every frame, for as long as it is held
+t=5.833  H= 394   1.97x   let go
+t=5.967  H= 205   1.02x   home, 134ms later
+```
+
+Three things, and we had all three wrong:
+
+- **Length.** 2.42x the cat's own height. Ours was 1.13x held and 1.48x at the very
+  top of a shake, which is not a stretched cat, it is a cat with slightly long legs.
+- **Shape.** The *torso* is the whole of the elongation. The head keeps its size, and
+  so do the paws and the tail — they are simply further away.
+- **What happens while you hold it.** Nothing. It is flat to the pixel across every
+  hold in the clip. The design note that used to justify the two-channel hang —
+  "a single hold-time ramp could only ever increase, so the cat reached full stretch
+  and stayed there for as long as you held it, with no way to relax" — described the
+  reference behaviour exactly, and treated it as the bug.
+
+### The stilts
+
+Scaling a part to span its own stretched extent is right for the body and wrong for
+everything else, and the error is invisible until the hang gets long. A part's scale
+factor works out as `(h + drop(bottom) - drop(top)) / h`, so it grows fastest for the
+parts sitting furthest *below* the grab — which is the paws. At the shipped 1.75
+ceiling the paws scaled 2.75x against the body's 2.1x and nobody noticed. At the
+length the reference actually uses they scale 6.9x against 4.7x, and the cat is a
+normal head standing on two enormous stilts, with a torso that has barely moved.
+
+So the paws and the tail are carried whole, by the full hang, and the body alone
+stretches to bridge the gap down to them. Rendering the parts through the rig's own
+arithmetic offline — no build, no screen — is what made this obvious in about a
+minute; the numbers had all looked reasonable.
+
+### Pixels, not multiples
+
+The grab is clamped into a band (`grab_min_y`..`grab_max_y`), so a stretch expressed
+as a multiple of "whatever sits below the grab" is 60% longer for a head-grab than for
+a rump-grab: 21px of span against 13px. At the old ceiling that was a 14px difference
+nobody could see. At 67px it is the difference between fitting inside the window and
+having the paws sliced off by an edge that is invisible until they cross it.
+
+So the whole simulation is denominated in canvas pixels of added height and converts
+to the rig's fraction exactly once, on the way out. `dropPx` in `--demo-drag` is
+therefore now the state variable itself rather than a derived readout, and the demo
+reports `liftPx` and `liftMs` — the plateau, and how long the climb to it took —
+because every existing peak saturates at `max_px` and would print an identical PASS
+for a build that had lost the lift completely.
+
+### A gain is authored against a ceiling
+
+Two constants quietly changed meaning when the ceiling moved from 1.75 to 5.85, both
+because they were per-unit-of-stretch: `head_lag_px` 1.5 would have sunk the head 9px
+into its own shoulders, and `landing_squash_gain` 0.5 would have driven the squash
+*negative*, which is a cat drawn inside out. Neither is a number anyone would think to
+check when changing a different number. Anything multiplied by a channel is only
+meaningful alongside that channel's range.

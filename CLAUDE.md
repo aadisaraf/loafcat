@@ -166,6 +166,48 @@ the documentation and most blog posts say.
     or the two ports gain one more thing to disagree about.
   - The check that guards it asserts the *turn*: a rotated part's box is its standing
     box with the sides swapped (`standing 30x22, lying 22x30`).
+- **A dragged cat is 2.42x its own height, gets there in 170ms, and then holds that
+  exactly flat until you let go.** Measured off the reference behaviour frame by frame
+  and written up in `spikes/RESULTS.md`, S8. Four rounds of tuning this by feel got
+  every part of it wrong, in ways arithmetic could not have caught.
+  - **Nothing relaxes while the cat is held.** The hang is a constant, not a curve.
+    The two-channel version that eased back toward a "resting droop" was justified in
+    a comment that described the reference behaviour — "the cat reached full stretch
+    and stayed there for as long as you held it" — and called it the bug.
+  - **Only the torso may elongate; the paws and tail are carried whole.** Scaling each
+    part to span its own stretched extent grows a part in proportion to how far *below*
+    the grab it sits, so the paws stretch fastest of anything. Harmless at the old
+    1.75 ceiling, and at the real length it turns the cat into a normal head standing
+    on two enormous stilts with a torso that has hardly moved.
+  - **The length is in canvas pixels, never a multiple of the span below the grab.**
+    The grab is clamped into a band, so a proportional figure is 60% longer for a
+    head-grab than a rump-grab (21px of span against 13px). At these lengths that
+    difference is the whole margin between fitting in the window and losing the paws.
+  - **`layout.pad_y` is the drag's headroom.** A held cat hangs `drag.max_px` below its
+    own ink and the window ends at the padding, so anything past it is silently sliced
+    off. `generate_art.py` fails the build if `max_px` times the loudest Drag feel
+    exceeds the room, and the module clamps again at runtime for a theme it has never
+    seen. Checking the *shipped* preset instead of the loudest one passes a build in
+    which only springy is broken.
+  - **Renormalise anything authored as a gain when the channel it multiplies changes
+    range.** `head_lag_px` and the landing squash were both per unit of stretch against
+    a ceiling of 1.75; at 5.85 the first sinks the head into its own shoulders and the
+    second drives the squash negative, which draws the cat inside out.
+  - **The swing's depth must be measured down the STRETCHED cat.** Against the
+    standing cat, a 57px hang puts every part at a depth it never has while being
+    carried: the paws read 0.69 of the way down instead of 0.94 and the body reads
+    0.15, so a shaken cat sat still. Measure both ends of the torso and give the head
+    the top number and the paws the bottom one.
+  - **A lean is a SHEAR of the torso, not a translate of it.** Once the body is most
+    of the cat, sliding all of it by one number either leaves it behind the paws or
+    tears it off the head, and there is no number in between. `Rig.Transform.shearX`
+    displaces the part's bottom edge against its top, applied as a `CATransform3D`
+    shear on macOS and one addition per row in the Windows blit — both rounded to
+    whole pixels per row, because this is a staircase and never a rotation.
+  - **The pendulum's arm is how long the cat currently is**, not a constant. 14px of
+    travel was right for a 47px cat and is a 7-degree tilt on a 110px noodle.
+  - Rendering the parts through the rig's own arithmetic in a throwaway script — no
+    build, no screen — is how all of this was found. Do that before tuning by feel.
 - **Never read a window position back off the window as the source of truth.** The
   window server quantises it. An exponential ease toward a target takes smaller and
   smaller steps, so once they fall under the quantum they round away faster than they

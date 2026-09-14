@@ -103,14 +103,24 @@ public sealed class Rig
     {
         Head,    // head, ears, face, eyes, pupils, lids: rigid, so the face never
                  // shears apart into separate pieces
-        Soft,    // body, paws, tail: elongate to span their stretched extent
+        Torso,   // the body: the ONLY part that elongates. It bridges the whole
+                 // gap the hang opens up.
+        Limb,    // paws and tail: rigid, and carried whole to the bottom of the
+                 // stretch. They are a cat's extremities, not its length.
         Shadow,  // stays on the ground and shrinks as the cat leaves it
     }
 
+    /// Everything that is not the torso keeps its own size. An earlier version put the
+    /// paws and tail in with the body and scaled all three to span their own stretched
+    /// extent, which is wrong in a way that only shows up once the hang gets long: a
+    /// paw sits almost entirely BELOW the grab, so its extent grows faster than the
+    /// body's, and at full stretch the cat was a normal head on two enormous stilts
+    /// rather than a head, a long middle and a pair of feet.
     private static DragGroup GroupOf(string name) => name switch
     {
         "shadow" => DragGroup.Shadow,
-        "body" or "tail" or "paw_l" or "paw_r" => DragGroup.Soft,
+        "body" => DragGroup.Torso,
+        "tail" or "paw_l" or "paw_r" => DragGroup.Limb,
         _ => DragGroup.Head,
     };
 
@@ -118,6 +128,11 @@ public sealed class Rig
     {
         public Pt Offset = Pt.Zero;
         public Sz Scale = Sz.One;
+        /// Horizontal pixels the part's BOTTOM edge is displaced against its top, spread
+        /// linearly down the part. A translate cannot express a whipping noodle: the
+        /// torso is most of a stretched cat, and sliding all of it by one number either
+        /// leaves it behind the paws or tears it off the head.
+        public double ShearX = 0;
         public bool Hidden = false;
     }
 
@@ -350,11 +365,21 @@ public sealed class Rig
                 tr.Offset.Y += DragStretch * _dragHeadLagPx;
                 break;
 
-            case DragGroup.Soft:
+            case DragGroup.Limb:
+                // Carried whole, by the FULL hang rather than by its own depth: the
+                // paws and the tail belong at the bottom of the stretch, keeping the
+                // size they have when the cat is standing on them.
+                tr.Offset.Y += DragStretch * hang;
+                break;
+
+            case DragGroup.Torso:
             {
-                // Scale the part to exactly span its own stretched extent, so the
-                // torso ELONGATES to bridge the gap instead of the head and paws
-                // sliding apart and tearing the silhouette open.
+                // Scale the part to span from its own top down to where the limbs have
+                // gone, so the body ELONGATES to bridge the gap instead of the head and
+                // paws sliding apart and tearing the silhouette open. Its top is above
+                // the grab and is being supported, so only the bottom moves — and it
+                // moves with the paws, not with its own depth, or the body would end
+                // short of the feet it is supposed to reach.
                 double top = part.Origin.Y;
                 double bottom = top + part.Size.H;
                 // Snap the stretched extent to whole LOGICAL pixels before deriving
@@ -362,7 +387,7 @@ public sealed class Rig
                 // device pixels and others on one, which reads as smearing — worse the
                 // further it stretches. Quantising here keeps every row the same size.
                 double stretchedTop = MathX.Round(top + Drop(top));
-                double stretchedBottom = MathX.Round(bottom + Drop(bottom));
+                double stretchedBottom = MathX.Round(bottom + DragStretch * hang);
                 double height = Math.Max(bottom - top, 0.0001);
                 double k = Math.Max(stretchedBottom - stretchedTop, 1) / height;
 
@@ -394,22 +419,45 @@ public sealed class Rig
         // the jaggies are unrecoverable.
         if (_dragLeanPx != 0)
         {
-            double share;
-            if (group == DragGroup.Shadow)
+            // Depth measured down the STRETCHED cat, not the standing one. Against the
+            // standing cat a 57px hang puts every part at a depth it never has while
+            // being carried — the paws read 0.69 of the way down instead of 0.94, and
+            // the body reads 0.15 instead of spanning nearly the whole drop — so the
+            // shake stayed in the feet and the long middle, which is what the eye is
+            // actually watching, did not move at all.
+            double stretchedHang = Math.Max(hang * (1 + DragStretch), 0.0001);
+            double Share(double y)
             {
-                share = 0;                       // the floor does not swing
+                double d = MathX.Clamp((y - _dragGrabY) / stretchedHang, 0, 1);
+                return d * d;
             }
-            else if (group == DragGroup.Head)
+            double fullDrop = DragStretch * hang;
+
+            switch (group)
             {
-                share = _dragHeadSwingShare;     // a pixel of drift, no more
+                case DragGroup.Shadow:
+                    break;                       // the floor does not swing
+                case DragGroup.Head:
+                    tr.Offset.X += MathX.Round(_dragLeanPx * _dragHeadSwingShare);
+                    break;
+                case DragGroup.Limb:
+                    tr.Offset.X +=
+                        MathX.Round(_dragLeanPx * Share(Atlas.Pivot(name).Y + fullDrop));
+                    break;
+                case DragGroup.Torso:
+                {
+                    // Both ends, and the difference between them is the shear. The top
+                    // edge lands on the same number the head is using and the bottom on
+                    // the same number the paws are, so the silhouette stays joined at
+                    // both ends however hard it is being whipped about.
+                    double top = MathX.Round(_dragLeanPx * Share(part.Origin.Y));
+                    double bottom = MathX.Round(
+                        _dragLeanPx * Share(part.Origin.Y + part.Size.H + fullDrop));
+                    tr.Offset.X += top;
+                    tr.ShearX += bottom - top;
+                    break;
+                }
             }
-            else
-            {
-                double anchorY = Atlas.Pivot(name).Y;
-                double d = MathX.Clamp((anchorY - _dragGrabY) / Math.Max(hang, 0.0001), 0, 1);
-                share = d * d;
-            }
-            tr.Offset.X += MathX.Round(_dragLeanPx * share);
         }
     }
 
