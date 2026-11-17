@@ -7,9 +7,19 @@ description: >
 runs:
   using: composite
   steps:
+    # Python is pinned for the same reason Pillow is. Pillow ships wheels only for
+    # the Pythons that existed when it was released; on a runner image whose
+    # python3 is newer than that, pip quietly BUILDS it from source against
+    # whatever zlib the image has, and every PNG comes out with the same pixels
+    # and different bytes -- which fails the byte-for-byte assets check on a PR
+    # that touched no art. Match the Python the committed assets were made with.
+    - uses: actions/setup-python@v5
+      id: py
+      with:
+        python-version: "3.12"
     - shell: bash
       run: |
-        python3 -m venv "$RUNNER_TEMP/art-venv"
+        "${{ steps.py.outputs.python-path }}" -m venv "$RUNNER_TEMP/art-venv"
         "$RUNNER_TEMP/art-venv/bin/python" -m pip install --quiet --upgrade pip
         # Pinned deliberately: the assets check is byte-for-byte, so an unpinned
         # image library makes "reproducible" a claim about whatever version pip
