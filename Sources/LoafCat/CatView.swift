@@ -150,6 +150,9 @@ final class CatView: NSView {
     private func buildLayers() {
         for name in atlas.order {
             guard let part = atlas.parts[name] else { continue }
+            // An overlay that lives beneath this part goes in first: draw order is
+            // sublayer order, so this is the whole of "under".
+            addOverlaySlots { $0.under == name }
             let l = addLayer(for: part)
             layers[name] = l
 
@@ -186,11 +189,18 @@ final class CatView: NSView {
                 tintLayers.append(tint)
             }
         }
-        // Overlays last: draw order is sublayer order, and steam, hearts or a
-        // thought bubble sliding behind an ear would look like a rendering fault.
-        // Sorted so the layer order is the same on every launch, and preallocated
-        // to the sprite's slot count so an overlay never allocates inside a frame.
-        for (name, overlay) in atlas.overlays.sorted(by: { $0.key < $1.key }) {
+        // Every other overlay last: draw order is sublayer order, and steam,
+        // hearts or a thought bubble sliding behind an ear would look like a
+        // rendering fault.
+        addOverlaySlots { $0.under == nil }
+    }
+
+    /// Adds the layers for every overlay `matching`. Sorted so the layer order is
+    /// the same on every launch, and preallocated to the sprite's slot count so an
+    /// overlay never allocates inside a frame.
+    private func addOverlaySlots(matching: (Atlas.Overlay) -> Bool) {
+        for (name, overlay) in atlas.overlays.sorted(by: { $0.key < $1.key })
+        where matching(overlay) {
             overlaySlots[name] = (0..<overlay.slots).map { _ in
                 let l = addLayer(for: overlay.part)
                 l.isHidden = true
@@ -526,7 +536,10 @@ final class CatView: NSView {
 
             let l = slots[i]
             let a = min(max(inst.alpha, 0), 1)
-            l.isHidden = a < 0.004
+            // Beneath a part means only while that part is drawn. Read off the
+            // part's own layer, which `render` has already settled this frame.
+            let partGone = overlay.under.map { layers[$0]?.isHidden ?? true } ?? false
+            l.isHidden = a < 0.004 || partGone
             guard !l.isHidden else { continue }
             l.opacity = Float(a)
 
