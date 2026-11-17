@@ -134,6 +134,19 @@ THEMES = {
     },
 }
 
+# Private themes. A `themes_local.py` beside this script, if there is one, adds to
+# THEMES with exactly the same keys as above. Git ignores it, so a cat you want on
+# your own machine and nowhere else -- a lookalike of somebody else's character,
+# say, which this repository must never carry -- has somewhere to live. Ignore the
+# art it generates the same way, in .git/info/exclude, so even its NAME stays off
+# the repository: `assets/themes/<name>/`.
+_LOCAL_THEMES = os.path.join(HERE, "themes_local.py")
+if os.path.exists(_LOCAL_THEMES):
+    _ns = {}
+    with open(_LOCAL_THEMES) as _f:
+        exec(compile(_f.read(), _LOCAL_THEMES, "exec"), _ns)
+    THEMES.update(_ns.get("THEMES", {}))
+
 # Set per theme; a tuxedo cat's white paws are markings, not lighting.
 WHITE_PARTS: set = set()
 FLAT = False
