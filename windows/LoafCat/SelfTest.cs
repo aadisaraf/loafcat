@@ -364,8 +364,9 @@ public static class SelfTest
         Check("a test run never installs anything",
             SelfInstall.Plan(["--portable"]) == InstallPlan.None
                 && SelfInstall.Plan(["--demo-drag"]) == InstallPlan.None
-                && SelfInstall.Plan(["--demo-peek"]) == InstallPlan.None,
-            "--portable, --demo-drag and --demo-peek all opt out");
+                && SelfInstall.Plan(["--demo-peek"]) == InstallPlan.None
+                && SelfInstall.Plan(["--demo-typing"]) == InstallPlan.None,
+            "--portable and every --demo-* opt out");
     }
 
     /// The edge-snap gesture, which nobody on a CI runner can perform by hand.
@@ -618,6 +619,7 @@ public static class SelfTest
         CatStage.Shared.Pose = null;
         view.Compose();
 
+        CheckKeysUnderPaws(theme, atlas, view);
         CheckThumbnail(theme, atlas);
         CheckIntegerMagnification(theme, atlas);
         CheckDuplicateFrames(theme, atlas);
@@ -672,6 +674,68 @@ public static class SelfTest
             + $"{(int)left},{(int)top}-{(int)right},{(int)bottom} box — that is a pose, "
             + "which is a second cat");
         ThemeThumbnail.Clear();
+    }
+
+    /// The typing keys, the one overlay drawn BENEATH part of the cat, checked on the
+    /// composed surface. Two ways for it to go wrong without anything in a build log
+    /// showing it: the key drawn on top of the paw it is meant to be under, and the
+    /// key left floating in mid air when a pose has taken the paws away.
+    ///
+    /// The first is asserted by counting. The left key overlaps the resting left paw
+    /// by most of its width, so posting it can change at most the part of it the paw
+    /// does not cover. Drawn ON TOP it changes all of it.
+    private static void CheckKeysUnderPaws(string theme, Atlas atlas, CatView view)
+    {
+        if (!atlas.Overlays.TryGetValue("key_l", out var key))
+        {
+            Log.Line($"  ..  {theme}: no typing keys in this theme (allowed)");
+            return;
+        }
+        Check($"{theme}: the keys live under the paws", key.Under == "paw_l",
+            $"under = {key.Under ?? "nothing"}");
+
+        var stage = CatStage.Shared;
+        uint[] Frame()
+        {
+            view.Compose();
+            var px = new uint[view.WidthPx * view.HeightPx];
+            for (int y = 0; y < view.HeightPx; y++)
+                for (int x = 0; x < view.WidthPx; x++)
+                    px[y * view.WidthPx + x] = view.PixelAt(x, y);
+            return px;
+        }
+        int Differ(uint[] a, uint[] b) => a.Zip(b).Count(p => p.First != p.Second);
+
+        stage.Overlays.Clear();
+        var bare = Frame();
+        stage.Overlays.Add(new OverlayInstance("key_l", Pt.Zero, 1));
+        var keyed = Frame();
+
+        double sc = view.EffectiveScale;
+        int keyArea = 0;
+        var img = key.Part.Image;
+        for (int i = 3; i < img.Pixels.Length; i += 4) if (img.Pixels[i] > 0) keyArea++;
+        keyArea = (int)(keyArea * sc * sc);
+        int changed = Differ(bare, keyed);
+        Check($"{theme}: a posted key is drawn", changed > 0, $"{changed} device px changed");
+        Check($"{theme}: the paw stands in front of its key", changed < keyArea * 0.8,
+            $"{changed} of the key's {keyArea} device px show — all of them would mean "
+            + "the key is on top of the paw");
+
+        // A pose replaces the cat, paws included, so the keys must go with them.
+        foreach (string pose in atlas.Poses.Keys)
+        {
+            stage.Pose = pose;
+            stage.Overlays.Clear();
+            var posed = Frame();
+            stage.Overlays.Add(new OverlayInstance("key_l", Pt.Zero, 1));
+            int stray = Differ(posed, Frame());
+            Check($"{theme}: {pose} takes the keys away", stray == 0,
+                $"{stray} device px of key with no paw to stand on");
+        }
+        stage.Pose = null;
+        stage.Overlays.Clear();
+        view.Compose();
     }
 
     /// Opaque pixels on the composed surface. The cat is the only thing drawn into it,

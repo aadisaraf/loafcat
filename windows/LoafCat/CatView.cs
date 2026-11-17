@@ -325,9 +325,10 @@ public sealed class CatView : IDisposable
 
     /// Composes this frame into the DIB. Called once per tick.
     ///
-    /// Draw order matches the macOS layer tree exactly: for each body part, the part,
-    /// then its tint wash, then its overheat coat; then every overlay sprite; then the
-    /// aux bitmaps (bubble, countdown plate), which sit above everything.
+    /// Draw order matches the macOS layer tree exactly: for each body part, any
+    /// overlay that lives `under` it, then the part, then its tint wash, then its
+    /// overheat coat; then every other overlay sprite; then the aux bitmaps (bubble,
+    /// countdown plate), which sit above everything.
     public unsafe void Compose()
     {
         if (_bits == IntPtr.Zero) return;
@@ -357,6 +358,11 @@ public sealed class CatView : IDisposable
             // a visible red body floating where it was would be quite a bug.
             if (t.Hidden || OutOfPose(name, showing, pose, Atlas.PosedParts)) continue;
 
+            // After the visibility test on purpose: beneath a part means only while
+            // that part is drawn, which is what takes the keys away with the paws when
+            // a pose replaces the cat.
+            ComposeOverlays(buf, originX, originY, sc, under: name);
+
             var pivot = Atlas.Pivot(name);
             var placement = Place(part, t, pivot, originX, originY, sc);
 
@@ -379,7 +385,7 @@ public sealed class CatView : IDisposable
             }
         }
 
-        ComposeOverlays(buf, originX, originY, sc);
+        ComposeOverlays(buf, originX, originY, sc, under: null);
 
         if (!_auxHidden)
         {
@@ -400,7 +406,12 @@ public sealed class CatView : IDisposable
     /// and the agent's status glyphs, which name a body part to `follow` in the atlas
     /// and so drift with the head turn instead of sitting rigidly in the corner. Which
     /// of the two a sprite is, is data rather than a branch here.
-    private unsafe void ComposeOverlays(uint* buf, double originX, double originY, double sc)
+    ///
+    /// Called once per body part with that part's name, for the overlays that live
+    /// beneath it, and once at the end with `null` for everything else — so each
+    /// sprite is drawn by exactly one of the calls.
+    private unsafe void ComposeOverlays(uint* buf, double originX, double originY, double sc,
+                                        string? under)
     {
         var stage = CatStage.Shared;
         if (stage.Overlays.Count == 0) return;
@@ -409,6 +420,7 @@ public sealed class CatView : IDisposable
         foreach (var inst in stage.Overlays)
         {
             if (!Atlas.Overlays.TryGetValue(inst.Part, out var overlay)) continue;
+            if (overlay.Under != under) continue;
 
             used ??= [];
             used.TryGetValue(inst.Part, out int i);
@@ -655,6 +667,16 @@ public sealed class CatView : IDisposable
         {
             Win32.ReleaseDC(IntPtr.Zero, screenDc);
         }
+    }
+
+    /// The whole composed pixel at a client point, premultiplied BGRA, for the
+    /// self-test's draw-order checks — which need to know WHAT is on top, not only
+    /// that something is.
+    public unsafe uint PixelAt(int x, int y)
+    {
+        if (_bits == IntPtr.Zero) return 0;
+        if ((uint)x >= (uint)_widthPx || (uint)y >= (uint)_heightPx) return 0;
+        return ((uint*)_bits)[(long)y * _widthPx + x];
     }
 
     /// The composed alpha at a client point, for the self-test. This is what the

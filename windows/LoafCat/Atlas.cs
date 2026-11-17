@@ -138,6 +138,13 @@ public sealed class Atlas
         /// the corner; steam and hearts carry their own motion and follow nothing.
         /// Named in `cat.json`, so which is which is not a decision made in code.
         public string? Follow { get; init; }
+        /// The body part this sprite is drawn immediately BENEATH, if any, instead of
+        /// above the whole cat — the typing keys, which the paws stand on. Such a
+        /// sprite is also drawn only while that part is: a pose that replaces the cat
+        /// takes the keys away with the paws. Resolved at load against `Order`, so a
+        /// name the theme does not draw degrades to an ordinary overlay rather than to
+        /// one that is never shown.
+        public string? Under { get; init; }
     }
     public required Dictionary<string, Overlay> Overlays { get; init; }
 
@@ -340,6 +347,9 @@ public sealed class Atlas
                             Part = LoadPart(p.Name, p.Value, dir),
                             Slots = Math.Max(Json.Int(p.Value, "slots", 1), 1),
                             Follow = Json.Str(p.Value, "follow"),
+                            Under = Json.Str(p.Value, "under") is { } u
+                                    && order.Contains(u) && parts.ContainsKey(u)
+                                ? u : null,
                         };
                     }
                 }

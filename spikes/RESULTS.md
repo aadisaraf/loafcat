@@ -336,3 +336,40 @@ Windows goes one further and counts opaque pixels on the composed surface: a pos
 draw *something*, and must draw *less* than the standing cat. A pose that is not
 smaller is the standing cat still being drawn underneath it.
 
+
+## S9 — What the typing reference actually draws
+
+**Question:** the cat already kneaded on thin air while you type. The reference puts
+keys under it. What exactly does it draw, and when?
+
+Observed by watching the reference's public demo, written down in words, and drawn
+from scratch here — nothing was saved, traced or sampled:
+
+- **Keys only while typing.** The idle cat has none. They are there for the whole
+  burst and gone when it ends, with no fade either way; a half-transparent keycap
+  would read as a ghost.
+- **Two of them, one per front paw.** Chunky keycaps side by side, each about half
+  the cat's width: a light top face, a darker skirt, the same outline as the cat.
+  They sit *in front of* the cat's lower body, and the paws stand *on* them.
+- **They alternate.** The key under the paw that is down is pressed; the other is up.
+  That alternation is the whole read — two keys that never moved would be a cat
+  standing on two grey bricks.
+
+### What carried over, and what did not
+
+Our kneading already lifts one paw at a time, so the alternation came free: a paw
+lifted less than `key_down_below_px` is on its key and the key is down. The keys are
+an overlay rather than a pose — the reference re-poses the whole cat, and a new pose
+here would be new art for every theme — with one new property, `under`, so they draw
+between the body and the paws instead of above the cat.
+
+The first drawing was too small: 11px keys under 10px paws, with the paws covering
+almost the whole top face, read as **a pair of grey slippers**. What fixed it was the
+strip of key *in front of* the paw. The paws now stand on the back of a 5-row top
+face with two rows showing in front of them, and that is the part that says
+"keyboard". How far the paws rise to get there (`key_rest_px`) is measured off the
+paw and key art by the generator, not typed in.
+
+The body bob is taken back out of the paws while the keys are up. It is the body
+rocking; a paw that rose with it floated a pixel off a key it was meant to be holding
+down.

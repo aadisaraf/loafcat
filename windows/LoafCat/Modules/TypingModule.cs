@@ -79,6 +79,14 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
     private double _attack = 0.1;
     private double _decay = 0.1;
 
+    /// Whether this theme draws the two keys at all. A theme generated before they
+    /// existed still kneads exactly as it always did, on thin air.
+    private bool _hasKeys;
+    private double _keyShowAt = 1;
+    private double _keyRest;
+    private double _keyTravel;
+    private double _keyDownBelow;
+
     private double _kpsMin;
     private double _kpsSpan = 1;
     private double _curve = 1;
@@ -100,6 +108,12 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
     private double _heat;
     private double _steamPhase;
 
+    /// `--demo-typing` types for the module, so the keys and the overheat can be
+    /// watched — and screenshotted — with nobody at the keyboard. Only the RATE is
+    /// faked; everything downstream of it is the real module.
+    private readonly bool _demo = Environment.GetCommandLineArgs().Contains("--demo-typing");
+    private double _demoClock;
+
     public void Retune(Atlas atlas)
     {
         var b = atlas.Behaviour;
@@ -116,6 +130,18 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
         _squashDepth = b.F("typing.squash");
         _attack = Math.Max(b.F("typing.attack"), 0.001);
         _decay = Math.Max(b.F("typing.decay"), 0.001);
+
+        // Checked before the constants are read, so an older theme with no keys does
+        // not complain about four numbers it was never going to use.
+        _hasKeys = new[] { "key_l", "key_l_down", "key_r", "key_r_down" }
+            .All(atlas.Overlays.ContainsKey);
+        if (_hasKeys)
+        {
+            _keyShowAt = b.F("typing.key_show_at");
+            _keyRest = b.F("typing.key_rest_px");
+            _keyTravel = b.F("typing.key_travel_px");
+            _keyDownBelow = b.F("typing.key_down_below_px");
+        }
 
         // Read after the atlas, exactly like the drag presets: the theme's numbers are
         // the baseline and the preference scales them.
@@ -147,13 +173,18 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
         var stage = CatStage.Shared;
         var outv = new ModuleOutput();
 
+        double keysPerSecond = ctx.KeysPerSecond;
+        double secondsSinceKey = ctx.SecondsSinceKey;
+        if (_demo) (keysPerSecond, secondsSinceKey) = DemoInput(ctx.Dt);
+
         // --- the gate -------------------------------------------------------
-        if (ctx.KeysPerSecond >= _gateKps) _kneading = true;
-        if (_kneading && ctx.SecondsSinceKey > _releaseDelay) _kneading = false;
+        if (keysPerSecond >= _gateKps) _kneading = true;
+        if (_kneading && secondsSinceKey > _releaseDelay) _kneading = false;
 
         // Ease the amplitude rather than the pose: snapping the paws to zero mid
         // stroke reads as a dropped frame, and easing the phase instead would make the
         // strokes slow down, which reads as the cat getting tired.
+        bool keysShown = false;
         double tau = _kneading ? _attack : _decay;
         _amp += ((_kneading ? 1 : 0) - _amp) * (1 - Math.Exp(-ctx.Dt / tau));
 
@@ -180,8 +211,15 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
                 stage.PawOffsetR.X += reach;
             }
             // The body rocks at twice the stroke rate, once per paw.
-            outv.Offset.Y = -Math.Abs(Math.Sin(_phase * Math.PI)) * _bodyBob * _amp;
+            double bob = -Math.Abs(Math.Sin(_phase * Math.PI)) * _bodyBob * _amp;
+            outv.Offset.Y = bob;
             outv.Squash = 1 - Math.Abs(Math.Sin(_phase * Math.PI)) * _squashDepth * _amp;
+
+            if (_hasKeys && _amp >= _keyShowAt)
+            {
+                keysShown = true;
+                PlaceKeys(left ? lift : 0, left ? 0 : lift, bob);
+            }
         }
         else
         {
@@ -191,7 +229,7 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
         // --- heat -----------------------------------------------------------
         // Continuous, never a binary state: zero below kps_min so ordinary typing can
         // never redden the cat, 1 at kps_max, curved in between.
-        double t = MathX.Clamp((ctx.KeysPerSecond - _kpsMin) / _kpsSpan, 0, 1);
+        double t = MathX.Clamp((keysPerSecond - _kpsMin) / _kpsSpan, 0, 1);
         double target = Math.Pow(t, _curve);
         // The ease is quoted per frame at a nominal 60fps; normalising by dt makes the
         // 120Hz tick ramp at the same wall-clock rate instead of twice as fast.
@@ -220,6 +258,43 @@ public sealed class TypingModule : ICatModule, IAtlasTuned
         else if (_kneading) outv.State = CatState.Kneading;
 
         stage.Metric("knead", _kneading ? 1 : 0);
+        if (!keysShown) stage.Metric("keys", -1);
         return outv;
+    }
+
+    /// Two keys under the front paws while the cat types, the paws standing on them,
+    /// and whichever paw is down holding its key down.
+    ///
+    /// The reference does this as a pose — the cat plants a paw on each of two
+    /// keycaps and they go down alternately under it — so the keys arrive all at once
+    /// and the paws step up onto them on the same frame. See `spikes/RESULTS.md`, S9.
+    private void PlaceKeys(double liftL, double liftR, double bob)
+    {
+        var stage = CatStage.Shared;
+        bool downL = liftL < _keyDownBelow;
+        bool downR = liftR < _keyDownBelow;
+        // Up onto the key, less the key's own travel while it is held down. The bob is
+        // taken back out of the paws: it is the BODY rocking, and a paw that rose with
+        // it would float off a key it is meant to be pressing.
+        stage.PawOffsetL.Y -= _keyRest - (downL ? _keyTravel : 0) + bob;
+        stage.PawOffsetR.Y -= _keyRest - (downR ? _keyTravel : 0) + bob;
+        stage.Overlays.Add(new OverlayInstance(downL ? "key_l_down" : "key_l", Pt.Zero, 1));
+        stage.Overlays.Add(new OverlayInstance(downR ? "key_r_down" : "key_r", Pt.Zero, 1));
+        // Which keys are down, as a two-bit number, for `--debug-state`: 1 left,
+        // 2 right, -1 no keys at all. The cheapest way to compare the alternation
+        // across ports.
+        stage.Metric("keys", (downL ? 1 : 0) + (downR ? 2 : 0));
+    }
+
+    /// A fixed 12-second script: three seconds idle, five of steady typing, four of
+    /// typing fast enough to steam. A test harness, not tuning — which is why these
+    /// numbers are the one thing in this file that is not read from `cat.json`.
+    private (double Kps, double SinceKey) DemoInput(double dt)
+    {
+        _demoClock += dt;
+        double t = _demoClock % 12;
+        if (t < 3) return (0, t + 10);
+        double kps = t < 8 ? 5 : 10;
+        return (kps, t % (1 / kps));
     }
 }

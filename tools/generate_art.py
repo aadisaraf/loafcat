@@ -68,6 +68,12 @@ PALETTE = {
     "bubble_text":  (58, 44, 51, 255),
     # Wellness: the calm tint the coat eases toward during a stretch break.
     "calm":       (127, 199, 154, 255), # #7FC79A
+    # The two keys the cat types on. Neutral greys rather than anything off the
+    # coat ramp, so on every theme they read as an OBJECT under the cat -- a cream
+    # key under a cream paw is a paw with a growth on it.
+    "key_top":    (236, 233, 240, 255), # #ECE9F0 -- the face the paw lands on
+    "key_side":   (170, 166, 182, 255), # #AAA6B6 -- the skirt
+    "key_sh":     (128, 122, 142, 255), # #807A8E -- skirt's bottom row, shaded themes
 }
 
 
@@ -355,6 +361,24 @@ OVERLAY_G = {
     # glyph in the set -- it is the one the user has to act on.
     "alert": (43, 2),
 
+    # The two keys the cat types on while you type, one under each front paw.
+    #
+    # Seen from the front and a little above, as a keyboard is from a chair: a
+    # light top face inset one pixel either side, with the skirt below it and
+    # down both flanks. Pressing one moves the top face down by `travel` and
+    # shortens the skirt by the same amount, so the bottom edge stays on the desk
+    # -- a key that sank whole would read as the key falling, not being pressed.
+    #
+    # The paws stand on the BACK of the top face, leaving `front_rows` of it
+    # showing in front of them. With the paw covering the whole face the keys read
+    # as a pair of grey slippers; it is the strip of key in front of the paw that
+    # says "keyboard". How far the paws are raised to get there is derived from
+    # this and the paw art, in `key_behaviour`, never typed in.
+    #
+    # Centred a pixel OUTSIDE each paw, so the two keys keep a 1px gap between
+    # them and read as neighbouring keys rather than one wide slab.
+    "keys": dict(centers=(17, 31), w=11, face_rows=5, skirt_rows=3, bottom=46,
+                 front_rows=2, travel=1),
 }
 
 
@@ -395,8 +419,8 @@ def build_overlays():
     """
     ov = {}
 
-    def add(name, img, slots=1, follow=None):
-        ov[name] = {"img": img, "slots": slots, "follow": follow}
+    def add(name, img, slots=1, follow=None, under=None):
+        ov[name] = {"img": img, "slots": slots, "follow": follow, "under": under}
 
     # --- thinking: an accumulating trail of dots -------------------------
     for n in (1, 2, 3):
@@ -463,8 +487,68 @@ def build_overlays():
     outline(img)
     add("heart", img, slots=3)
 
+    # --- typing: two keys, each in an up and a pressed frame ---------------
+    # The one overlay drawn BENEATH part of the cat: `under` puts it immediately
+    # below the paws in the draw order, so the paws stand on the keys and the keys
+    # stand in front of the body. It also ties the keys to the paws -- the runtime
+    # draws an `under` overlay only while that part is drawn, so a pose that
+    # replaces the cat (the peek) takes the keys away with the paws.
+    #
+    # They follow the SHADOW, which takes only the cat's sideways motion: the keys
+    # are on the desk, and the cat bobbing as it kneads must not lift them off it.
+    k = OVERLAY_G["keys"]
+    for side, cx in zip(("l", "r"), k["centers"]):
+        for suffix, travel in (("", 0), ("_down", k["travel"])):
+            add(f"key_{side}{suffix}", draw_key(cx, travel),
+                follow="shadow", under="paw_l")
 
     return ov
+
+
+def draw_key(cx, travel):
+    """One keycap, centred on `cx`, pressed down by `travel` pixels."""
+    k = OVERLAY_G["keys"]
+    img = new_layer()
+    bottom = k["bottom"]
+    skirt = k["skirt_rows"] - travel
+    top = bottom - skirt - k["face_rows"] + 1
+    x0 = cx - k["w"] // 2
+    x1 = x0 + k["w"] - 1
+    for y in range(top, bottom + 1):
+        for x in range(x0, x1 + 1):
+            if y < top + k["face_rows"] and x0 < x < x1:
+                c = "key_top"
+            elif y == bottom and not FLAT:
+                c = "key_sh"
+            else:
+                c = "key_side"
+            px(img, x, y, c)
+    outline(img)
+    return img
+
+
+def key_behaviour(parts):
+    """How far the paws are raised to stand on the keys, derived from the art.
+
+    The paws stand on the back of the top face with `front_rows` of it showing in
+    front, so the lift is the paw's own bottom edge minus that row. Computed here
+    from the drawn paw and the drawn key rather than authored, so redrawing either
+    cannot leave the paws floating above the keys or sunk into them.
+    """
+    k = OVERLAY_G["keys"]
+    bottoms = {parts[p].getbbox()[3] - 1 for p in ("paw_l", "paw_r")}
+    assert len(bottoms) == 1, f"paws end on different rows: {bottoms}"
+    paw_bottom = bottoms.pop()
+    face_bottom = k["bottom"] - k["skirt_rows"]          # last top-face row, key up
+    rest = paw_bottom - (face_bottom - k["front_rows"])
+    assert rest > 0, f"keys sit below the paws, rest={rest}"
+    assert k["front_rows"] < k["face_rows"], "a paw in front of its key, not on it"
+    # The outline is baked one pixel outside the fill, so two keys need w + 2 of
+    # spacing to avoid sharing a column. Sharing one reads as a single wide slab.
+    a, b = k["centers"]
+    assert b - a >= k["w"] + 3, f"keys touch: centres {a},{b} at width {k['w']}"
+    assert k["bottom"] + 1 < CANVAS, "the key's outline would fall off the canvas"
+    return {"key_rest_px": rest, "key_travel_px": k["travel"]}
 
 
 # Which glyph sequence plays for which agent state, and how fast. Timing lives
@@ -1142,6 +1226,14 @@ BEHAVIOUR = {
         "squash": 0.03,
         "attack": 0.10,          # seconds to reach full amplitude
         "decay": 0.16,           # seconds to fall back out of it
+        # The keys appear once the knead is this far in, all at once rather than
+        # faded: a half-transparent keycap reads as a ghost, and the paws step up
+        # onto them on the same frame, which is what makes it read as a pose.
+        "key_show_at": 0.5,
+        # A paw lifted less than this is on its key, and the key is down.
+        "key_down_below_px": 0.5,
+        # `key_rest_px` and `key_travel_px` are measured off the art by
+        # `key_behaviour` and land here at generation time.
     },
 
     # --- overheat -----------------------------------------------------------
@@ -1373,6 +1465,11 @@ def crop_and_write(parts, overlays, hot_parts=None):
         entry["slots"] = spec["slots"]
         if spec["follow"]:
             entry["follow"] = spec["follow"]
+        # Only when the part it hides beneath survived this theme's `hide` set; a
+        # runtime asked to draw under a part it has never heard of would draw
+        # nothing at all.
+        if spec.get("under") and spec["under"] in atlas["parts"]:
+            entry["under"] = spec["under"]
         ov_parts[name] = entry
     atlas["overlays"] = {"parts": ov_parts, "anims": OVERLAY_ANIMS}
     atlas["anim"] = ANIM
@@ -1526,6 +1623,59 @@ def composite(parts, names=None, scale=1):
     return out
 
 
+def composite_under(parts, img, under, shift=None):
+    """The standing cat with `img` slotted in immediately beneath `under`, the way
+    the runtime draws an `under` overlay. `shift` moves named parts (dx, dy)."""
+    out = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+    for name in ORDER:
+        if name.startswith(("lid_", "peek_")) or name not in parts:
+            continue
+        if name in HIDDEN:
+            continue
+        if name == under and img is not None:
+            out.alpha_composite(img)
+        # paste() takes a negative offset where alpha_composite() will not.
+        layer = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        layer.paste(parts[name], (shift or {}).get(name, (0, 0)), parts[name])
+        out.alpha_composite(layer)
+    return out
+
+
+def preview_typing(parts, overlays):
+    """The typing pose at four instants of a stroke, through the same arithmetic
+    `TypingModule` uses: idle; both paws down; the left paw lifted; the right.
+
+    A second implementation of the module on purpose, like `preview_bubble`: if
+    this and the app disagree, the sheet is what shows it.
+    """
+    t = BEHAVIOUR["typing"]
+    rest, travel = t["key_rest_px"], t["key_travel_px"]
+    lift = round(t["paw_lift"])
+
+    def frame(lift_l, lift_r):
+        keys = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        shift = {}
+        for side, paw, lifted in (("l", "paw_l", lift_l), ("r", "paw_r", lift_r)):
+            down = lifted < t["key_down_below_px"]
+            keys.alpha_composite(overlays[f"key_{side}" + ("_down" if down else "")]["img"])
+            shift[paw] = (0, -(rest - (travel if down else 0)) - lifted)
+        return composite_under(parts, keys, "paw_l", shift)
+
+    frames = [composite_under(parts, None, None), frame(0, 0), frame(lift, 0),
+              frame(0, lift)]
+    s, gap = 6, 12
+    w = len(frames) * (CANVAS * s + gap) + gap
+    sheet = Image.new("RGBA", (w, CANVAS * s * 2 + gap * 3), (250, 250, 250, 255))
+    for i, f in enumerate(frames):
+        big = f.resize((CANVAS * s, CANVAS * s), Image.NEAREST)
+        x = gap + i * (CANVAS * s + gap)
+        sheet.alpha_composite(big, (x, gap))
+        dark = Image.new("RGBA", big.size, (28, 28, 32, 255))
+        dark.alpha_composite(big)
+        sheet.alpha_composite(dark, (x, CANVAS * s + gap * 2))
+    return sheet
+
+
 def main():
     import sys
     global OUT, PARTS
@@ -1540,6 +1690,7 @@ def main():
     print(f"theme: {theme}")
     parts = build_parts()
     overlays = build_overlays()
+    BEHAVIOUR["typing"].update(key_behaviour(parts))
     atlas = crop_and_write(parts, overlays, build_hot_parts())
 
     # Contact sheet: the default pose at 1x/2x/4x/8x, on light and dark, plus the
@@ -1609,12 +1760,16 @@ def main():
     base = composite(parts)
     strip = Image.new("RGBA", (CANVAS * len(overlays), CANVAS), (0, 0, 0, 0))
     for i, name in enumerate(sorted(overlays)):
-        strip.paste(
-            Image.alpha_composite(base, overlays[name]["img"]), (CANVAS * i, 0))
+        under = overlays[name].get("under")
+        cell = (composite_under(parts, overlays[name]["img"], under) if under
+                else Image.alpha_composite(base, overlays[name]["img"]))
+        strip.paste(cell, (CANVAS * i, 0))
     dark = Image.new("RGBA", strip.size, (28, 28, 32, 255))
     Image.alpha_composite(dark, strip).resize(
         (strip.width * 4, strip.height * 4), Image.NEAREST
     ).save(os.path.join(OUT, "preview_overlays.png"))
+
+    preview_typing(parts, overlays).save(os.path.join(OUT, "preview_typing.png"))
 
     used = {p for p in atlas["parts"]}
     print(f"wrote {len(used)} parts -> {PARTS}")

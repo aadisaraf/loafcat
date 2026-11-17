@@ -94,7 +94,8 @@ public static class SelfInstall
         // The test entry points all start the app for real, and none of them should
         // leave anything behind on the machine that ran them.
         if (args.Contains("--portable") || args.Contains("--demo-drag")
-            || args.Contains("--demo-peek")) return InstallPlan.None;
+            || args.Contains("--demo-peek") || args.Contains("--demo-typing"))
+            return InstallPlan.None;
         if (Environment.GetEnvironmentVariable("LOAFCAT_NO_INSTALL") is { Length: > 0 })
             return InstallPlan.None;
 

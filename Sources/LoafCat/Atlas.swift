@@ -125,6 +125,13 @@ struct Atlas {
         /// in the corner; steam and hearts carry their own motion and follow
         /// nothing. Named in `cat.json`, so which is which is not a Swift decision.
         let follow: String?
+        /// The body part this sprite is drawn immediately BENEATH, if any, instead
+        /// of above the whole cat — the typing keys, which the paws stand on. Such
+        /// a sprite is also drawn only while that part is: a pose that replaces the
+        /// cat takes the keys away with the paws. Resolved at load against `order`,
+        /// so a name the theme does not draw degrades to an ordinary overlay rather
+        /// than to one that is never shown.
+        let under: String?
     }
     let overlays: [String: Overlay]
 
@@ -305,7 +312,10 @@ struct Atlas {
                 overlays[name] = Overlay(
                     part: try loadPart(named: name, def: def, in: dir),
                     slots: max(def["slots"] as? Int ?? 1, 1),
-                    follow: def["follow"] as? String)
+                    follow: def["follow"] as? String,
+                    under: (def["under"] as? String).flatMap {
+                        order.contains($0) && partDefs[$0] != nil ? $0 : nil
+                    })
             }
             for (name, def) in (ov["anims"] as? [String: [String: Any]] ?? [:]) {
                 overlayAnims[name] = OverlayAnimation(
