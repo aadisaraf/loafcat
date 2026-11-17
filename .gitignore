@@ -31,3 +31,7 @@ dist/
 # .NET build output — regenerate with windows/build.ps1
 [Bb]in/
 [Oo]bj/
+
+# Private themes — see the top of THEMES in tools/generate_art.py. The art such a
+# theme generates belongs in .git/info/exclude, so its name never lands here either.
+tools/themes_local.py
