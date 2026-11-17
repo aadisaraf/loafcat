@@ -21,7 +21,10 @@
     "bubble_paper": "#F5F5F8FF",
     "bubble_lit": "#FFFFFFFF",
     "bubble_text": "#2E2E38FF",
-    "calm": "#7FC79AFF"
+    "calm": "#7FC79AFF",
+    "key_top": "#ECE9F0FF",
+    "key_side": "#AAA6B6FF",
+    "key_sh": "#807A8EFF"
   },
   "order": [
     "shadow",
@@ -472,6 +475,46 @@
         "w": 9,
         "h": 8,
         "slots": 3
+      },
+      "key_l": {
+        "file": "parts/key_l.png",
+        "x": 11,
+        "y": 38,
+        "w": 13,
+        "h": 10,
+        "slots": 1,
+        "follow": "shadow",
+        "under": "paw_l"
+      },
+      "key_l_down": {
+        "file": "parts/key_l_down.png",
+        "x": 11,
+        "y": 39,
+        "w": 13,
+        "h": 9,
+        "slots": 1,
+        "follow": "shadow",
+        "under": "paw_l"
+      },
+      "key_r": {
+        "file": "parts/key_r.png",
+        "x": 25,
+        "y": 38,
+        "w": 13,
+        "h": 10,
+        "slots": 1,
+        "follow": "shadow",
+        "under": "paw_l"
+      },
+      "key_r_down": {
+        "file": "parts/key_r_down.png",
+        "x": 25,
+        "y": 39,
+        "w": 13,
+        "h": 9,
+        "slots": 1,
+        "follow": "shadow",
+        "under": "paw_l"
       },
       "sad_1": {
         "file": "parts/sad_1.png",
@@ -1072,6 +1115,10 @@
       "burst_keys": 5.0,
       "burst_window": 2.0,
       "decay": 0.16,
+      "key_down_below_px": 0.5,
+      "key_rest_px": 5,
+      "key_show_at": 0.5,
+      "key_travel_px": 1,
       "paw_lift": 2.4,
       "paw_period": 0.17,
       "paw_reach": 1.4,
